@@ -159,7 +159,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
   };
 
   const getCleanModelName = (modelId?: string, providerId?: string): string => {
-    if (!modelId) return providerId ? providerId.toUpperCase() : 'AI Model';
+    if (!modelId || typeof modelId !== 'string') return providerId ? providerId.toUpperCase() : 'AI Model';
     if (MODEL_DISPLAY_NAMES[modelId]) return MODEL_DISPLAY_NAMES[modelId];
     return modelId.replace(/^.*\//, '');
   };

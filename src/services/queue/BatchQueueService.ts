@@ -477,8 +477,8 @@ export class BatchQueueService {
       const queueItem: QueueItem = {
         id: rec.id,
         filename: rec.filename,
-        thumbnailBase64: rec.thumbnailBase64.replace(/^data:image\/[^;]+;base64,/, ''),
-        thumbnailDataUrl: rec.thumbnailBase64,
+        thumbnailBase64: (rec.thumbnailBase64 || '').replace(/^data:image\/[^;]+;base64,/, ''),
+        thumbnailDataUrl: rec.thumbnailBase64 || '',
         mediaType: rec.mediaType,
         videoDurationSeconds: rec.videoMeta?.durationSeconds,
         videoResolution: rec.videoMeta?.resolution,

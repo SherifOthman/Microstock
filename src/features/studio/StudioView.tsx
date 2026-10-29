@@ -532,7 +532,7 @@ export const StudioView: React.FC = () => {
           <SlidersHorizontal className="w-4 h-4 text-foreground" />
           <span className="font-semibold text-xs text-foreground">{t.marketplacesAndSettings}</span>
           <Badge variant="outline" className="text-[10px] py-0 font-mono">
-            {t.activeCount.replace('{count}', String(selectedPlatforms.length))}
+            {(t.activeCount || '{count} active').replace('{count}', String(selectedPlatforms.length))}
           </Badge>
         </div>
         <Button
@@ -838,7 +838,9 @@ export const StudioView: React.FC = () => {
           <div className="space-y-0.5">
             <span className="font-semibold text-foreground">{t.apiKeysWidget}</span>
             <p className="text-[11px] text-muted-foreground font-mono">
-              {healthyKeys.length > 0 ? t.readyRpm.replace('{count}', String(healthyKeys.length)).replace('{rpm}', String(combinedRpm)) : t.noActiveKeys}
+              {healthyKeys.length > 0
+                ? (t.readyRpm || '{count} Ready ({rpm} RPM)').replace('{count}', String(healthyKeys.length)).replace('{rpm}', String(combinedRpm))
+                : t.noActiveKeys}
             </p>
           </div>
           <Button
@@ -898,7 +900,7 @@ export const StudioView: React.FC = () => {
 
             {unifiedAssets.length > 0 && (
               <span className="text-xs text-muted-foreground font-mono ml-1">
-                {t.assetsCount
+                {(t.assetsCount || '{total} assets ({ready} ready, {queued} queued)')
                   .replace('{total}', String(unifiedAssets.length))
                   .replace('{ready}', String(completedCount))
                   .replace('{queued}', String(pendingCount))}
@@ -917,7 +919,7 @@ export const StudioView: React.FC = () => {
                 className="gap-1.5 text-xs font-semibold"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
-                {t.startGeneration.replace('{count}', String(pendingCount))}
+                {(t.startGeneration || 'Start Generation ({count})').replace('{count}', String(pendingCount))}
               </Button>
             )}
 
@@ -957,7 +959,7 @@ export const StudioView: React.FC = () => {
               className="gap-1.5 text-xs font-semibold"
             >
               <Download className="w-3.5 h-3.5" />
-              {t.exportCsvs.replace('{count}', String(completedCount))}
+              {(t.exportCsvs || 'Export CSVs ({count})').replace('{count}', String(completedCount))}
             </Button>
 
             {unifiedAssets.length > 0 && (
@@ -1109,7 +1111,7 @@ export const StudioView: React.FC = () => {
               </div>
 
               <span className="text-muted-foreground text-xs font-mono">
-                {t.assetsShown.replace('{count}', String(filteredAssets.length))}
+                {(t.assetsShown || '{count} assets shown').replace('{count}', String(filteredAssets.length))}
               </span>
             </div>
 

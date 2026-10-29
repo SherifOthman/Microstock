@@ -317,7 +317,7 @@ export const PriorityCascadeCard: React.FC<Props> = ({
                 <div className="border-t border-border bg-secondary/20 px-3.5 py-2.5 space-y-1.5 animate-in fade-in-50 duration-150">
                   {providerKeys.length === 0 ? (
                     <div className="flex items-center justify-between py-2 px-2 text-muted-foreground text-xs">
-                      <span>{t.noKeysForProvider.replace('{name}', meta.name)}</span>
+                      <span>{(t.noKeysForProvider || 'No keys added for {name} yet.').replace('{name}', meta.name)}</span>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -325,7 +325,7 @@ export const PriorityCascadeCard: React.FC<Props> = ({
                         className="h-6 text-xs text-foreground hover:bg-secondary cursor-pointer gap-1 px-2"
                       >
                         <Plus className="w-3 h-3" />
-                        <span>{t.addKey}</span>
+                        <span>{t.addKey || 'Add Key'}</span>
                       </Button>
                     </div>
                   ) : (
@@ -345,7 +345,7 @@ export const PriorityCascadeCard: React.FC<Props> = ({
                           className="h-6 text-[11px] text-muted-foreground hover:text-foreground hover:bg-secondary cursor-pointer gap-1 px-2"
                         >
                           <Plus className="w-3 h-3" />
-                          <span>{t.addProviderKey.replace('{name}', meta.name)}</span>
+                          <span>{(t.addProviderKey || 'Add {name} Key').replace('{name}', meta.name)}</span>
                         </Button>
                       </div>
                     </>

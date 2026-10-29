@@ -12,13 +12,21 @@ const LanguageContext = createContext<LanguageContextType | undefined>(undefined
 
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [language, setLanguageState] = useState<Language>(() => {
-    const saved = localStorage.getItem('stock_language');
-    if (saved === 'ar' || saved === 'en') return saved;
+    try {
+      const saved = localStorage.getItem('stock_language');
+      if (saved === 'ar' || saved === 'en') return saved;
+    } catch (e) {
+      // ignore
+    }
     return 'en';
   });
 
   useEffect(() => {
-    localStorage.setItem('stock_language', language);
+    try {
+      localStorage.setItem('stock_language', language);
+    } catch (e) {
+      // ignore
+    }
     if (language === 'ar') {
       document.documentElement.dir = 'rtl';
       document.documentElement.lang = 'ar';
@@ -32,7 +40,21 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setLanguageState(lang);
   };
 
-  const t = translations[language];
+  const currentTranslations = translations[language] || translations['en'];
+
+  // Create a Proxy around t so any missing key fallback to English or key itself, preventing undefined errors
+  const t = new Proxy(currentTranslations, {
+    get(target, prop: string) {
+      if (prop in target && target[prop as keyof typeof target] !== undefined) {
+        return target[prop as keyof typeof target];
+      }
+      if (prop in translations.en && translations.en[prop as keyof typeof translations.en] !== undefined) {
+        return translations.en[prop as keyof typeof translations.en];
+      }
+      return '';
+    },
+  });
+
   const isRtl = language === 'ar';
 
   return (
