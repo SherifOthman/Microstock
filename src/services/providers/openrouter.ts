@@ -66,6 +66,19 @@ export class OpenRouterAdapter implements IVisionProvider {
         };
       }
 
+      // Check whether response choices were returned
+      const data = await res.json().catch(() => null);
+      const choice = data?.choices?.[0]?.message;
+      if (!choice && data?.error) {
+        return {
+          success: false,
+          latencyMs,
+          statusCode: 400,
+          error: data.error.message || 'Model error',
+          modelUsed: targetModel,
+        };
+      }
+
       return {
         success: true,
         latencyMs,
@@ -253,7 +266,20 @@ export class OpenRouterAdapter implements IVisionProvider {
 
     const data = await res.json();
     const choice = data.choices?.[0]?.message;
-    const text = choice?.content || choice?.reasoning || (choice as any)?.text;
+    let text = choice?.content;
+    
+    // Fallback: If content is empty but model put output in reasoning / text
+    if (!text && choice?.reasoning) {
+      // Check if reasoning contains valid JSON block
+      const jsonMatch = choice.reasoning.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        text = jsonMatch[0];
+      } else {
+        text = choice.reasoning;
+      }
+    } else if (!text && (choice as any)?.text) {
+      text = (choice as any).text;
+    }
 
     if (!text) {
       throw new Error('OpenRouter returned an empty message content');

@@ -24,12 +24,12 @@ export const PROVIDERS_META: Record<ProviderType, ProviderMeta> = {
     name: 'OpenRouter',
     description: 'Unified AI gateway aggregating multiple free and low-cost vision providers.',
     badge: 'Aggregator',
-    defaultModelId: 'google/gemini-2.0-flash-exp:free',
+    defaultModelId: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
     recommendedVisionModels: [
-      'google/gemini-2.0-flash-exp:free',
-      'meta-llama/llama-3.2-11b-vision-instruct:free',
-      'qwen/qwen-2.5-vl-72b-instruct:free',
-      'mistralai/pixtral-12b:free',
+      'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
+      'nvidia/nemotron-3.5-super-vl:free',
+      'dots-studio/dots-3-note-preview:free',
+      'openrouter/free',
     ],
     defaultRpm: 20,
     defaultRpd: 1000,
@@ -97,11 +97,11 @@ export const MODEL_DISPLAY_NAMES: Record<string, string> = {
   'gemini-3.5-flash-lite': 'Gemini 3.5 Flash Lite (Free)',
   'gemini-3.6-flash': 'Gemini 3.6 Flash',
   
-  // OpenRouter Free Vision Models
-  'google/gemini-2.0-flash-exp:free': 'Gemini 2.0 Flash (OpenRouter Free)',
-  'meta-llama/llama-3.2-11b-vision-instruct:free': 'Llama 3.2 11B Vision (OpenRouter Free)',
-  'qwen/qwen-2.5-vl-72b-instruct:free': 'Qwen 2.5 VL 72B (OpenRouter Free)',
-  'mistralai/pixtral-12b:free': 'Pixtral 12B (OpenRouter Free)',
+  // OpenRouter Free Vision Models (Active Live Verified)
+  'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free': 'Nemotron 3 Nano Omni (OpenRouter Free)',
+  'nvidia/nemotron-3.5-super-vl:free': 'Nemotron 3.5 Super VL (OpenRouter Free)',
+  'dots-studio/dots-3-note-preview:free': 'Dots3-Note Vision (OpenRouter Free)',
+  'openrouter/free': 'OpenRouter Free Router (Auto)',
 
   // Groq Cloud (Multimodal Vision)
   'qwen/qwen3.8-27b': 'Qwen 3.8 27B Vision (30 RPM Free)',

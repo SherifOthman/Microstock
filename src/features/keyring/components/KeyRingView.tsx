@@ -89,7 +89,7 @@ export const KeyRingView: React.FC = () => {
 
       {/* Toolbar: Provider Filter Tabs & Add Key */}
       <div className="flex items-center justify-between gap-2 border-b border-border pb-2">
-        <div className="flex items-center gap-1 overflow-x-auto">
+        <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
           <button
             type="button"
             onClick={() => setSelectedProviderFilter('all')}

@@ -80,3 +80,12 @@
     -moz-osx-font-smoothing: grayscale;
   }
 }
+
+/* Hide scrollbar for clean horizontal tabs */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
