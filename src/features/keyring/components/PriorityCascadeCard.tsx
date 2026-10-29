@@ -137,45 +137,30 @@ export const PriorityCascadeCard: React.FC<Props> = ({
   const isPriorityMode = settings?.routingStrategy === 'priority_tiered';
 
   return (
-    <div className="p-3.5 bg-card rounded-xl border border-border space-y-3 text-xs">
+    <div className="p-3 bg-card rounded-xl border border-border space-y-2.5 text-xs">
       {/* Header with Title, Mode Indicator & Reset */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-border">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <div className="p-1 rounded-md border border-border bg-secondary/40 text-foreground">
-              <SlidersHorizontal className="w-3.5 h-3.5" />
-            </div>
-            <span className="font-semibold text-xs text-foreground">
-              Provider & Model Priority Cascade
+      <div className="flex items-center justify-between gap-2 pb-2 border-b border-border">
+        <div className="flex items-center gap-1.5">
+          <SlidersHorizontal className="w-3.5 h-3.5 text-foreground" />
+          <span className="font-semibold text-xs text-foreground">
+            Provider Priority & Failover
+          </span>
+          <Tooltip content="The AI generator starts with Provider #1. If it gets rate limited (429) or hits an error, it automatically falls back to #2, #3, etc. Drag ⠿ or click ▲/▼ to change priority.">
+            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-secondary/80 text-[10px] text-muted-foreground hover:text-foreground cursor-pointer font-bold">
+              i
             </span>
-            <Badge
-              variant="outline"
-              className={`text-[10px] py-0 font-mono ${
-                isPriorityMode
-                  ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10'
-                  : 'text-muted-foreground bg-muted/40'
-              }`}
-            >
-              {isPriorityMode ? 'Active (Priority Mode)' : 'Standby (Parallel Mode Active)'}
-            </Badge>
-          </div>
-          <p className="text-[11px] text-muted-foreground leading-relaxed">
-            The scheduler begins with Provider #1. If it hits a rate limit (429) or fails, it automatically cascades to #2, #3, etc.
-            <span className="text-foreground/80 font-medium ml-1">
-              Drag the ⠿ handle or click ▲/▼ to change priority order.
-            </span>
-          </p>
+          </Tooltip>
         </div>
 
         <Button
           variant="ghost"
           size="sm"
           onClick={handleResetDefault}
-          className="h-7 text-xs text-muted-foreground hover:text-foreground shrink-0 gap-1.5 self-start sm:self-auto"
+          className="h-6 text-[11px] text-muted-foreground hover:text-foreground shrink-0 gap-1 px-2"
           title="Reset to default order (Google Gemini #1)"
         >
           <RotateCcw className="w-3 h-3" />
-          <span>Reset (Gemini #1)</span>
+          <span>Reset Order</span>
         </Button>
       </div>
 

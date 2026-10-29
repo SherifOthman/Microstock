@@ -400,7 +400,6 @@ export const AddKeyDialog: React.FC<Props> = ({
       open={open}
       onClose={onClose}
       title="Add API Key"
-      description="Select provider, paste your key, and click Add. It will be verified and saved automatically."
       className="max-w-2xl"
     >
       <div className="space-y-4 text-xs">
@@ -468,9 +467,6 @@ export const AddKeyDialog: React.FC<Props> = ({
               className="h-8 text-xs font-mono bg-card"
             />
             {cfError && <p className="text-[11px] text-red-400 font-medium">{cfError}</p>}
-            <p className="text-[10px] text-muted-foreground">
-              Required for Workers AI inference. Saved locally in your browser storage.
-            </p>
           </div>
         )}
 

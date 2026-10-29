@@ -174,9 +174,8 @@ export function App() {
       <Dialog
         open={isKeyRingOpen}
         onClose={() => setIsKeyRingOpen(false)}
-        title="API Keys Manager & Model Priority"
-        description="Add, test, and set failover order across Gemini, OpenRouter, Groq, and Mistral."
-        className="max-w-3xl"
+        title="API Keys & Priority"
+        className="max-w-2xl"
       >
         <KeyRingView />
       </Dialog>

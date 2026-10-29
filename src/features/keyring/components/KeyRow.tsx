@@ -108,29 +108,20 @@ export const KeyRow: React.FC<Props> = ({ keyRecord }) => {
 
   return (
     <>
-      <div className="flex items-center justify-between p-3 rounded-lg border border-border bg-card/60 hover:bg-card transition text-xs">
-        {/* Left: Provider Tag, Label & Masked Key */}
-        <div className="flex items-center gap-3 min-w-0">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between p-2.5 rounded-lg border border-border bg-card/60 hover:bg-card transition text-xs gap-2">
+        {/* Left: Provider Tag & Masked Key */}
+        <div className="flex items-center gap-2.5 min-w-0">
           <Badge variant="outline" className="font-mono uppercase text-[10px] shrink-0">
             {keyRecord.providerId.slice(0, 3)}
           </Badge>
 
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <span className="font-medium text-foreground truncate">{keyRecord.label}</span>
-              {inFlight && (
-                <Badge variant="default" className="gap-1 text-[10px] py-0 px-1 bg-primary">
-                  <Flame className="w-2.5 h-2.5" /> in-flight
-                </Badge>
-              )}
-            </div>
-
-            <div className="flex items-center gap-1.5 text-muted-foreground font-mono text-[11px] mt-0.5">
-              <span>{showKey ? keyRecord.key : maskedKey}</span>
+            <div className="flex items-center gap-1.5 text-muted-foreground font-mono text-[11px]">
+              <span className="font-semibold text-foreground">{showKey ? keyRecord.key : maskedKey}</span>
               <button
                 type="button"
                 onClick={() => setShowKey(!showKey)}
-                className="hover:text-foreground cursor-pointer"
+                className="hover:text-foreground cursor-pointer p-0.5"
                 title={showKey ? 'Hide' : 'Reveal'}
               >
                 {showKey ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
@@ -138,7 +129,7 @@ export const KeyRow: React.FC<Props> = ({ keyRecord }) => {
               <button
                 type="button"
                 onClick={handleCopy}
-                className="hover:text-foreground cursor-pointer"
+                className="hover:text-foreground cursor-pointer p-0.5"
                 title="Copy"
               >
                 {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
@@ -147,60 +138,59 @@ export const KeyRow: React.FC<Props> = ({ keyRecord }) => {
           </div>
         </div>
 
-        {/* Center: Model Selector & Status */}
-        <div className="flex items-center gap-2.5">
+        {/* Right: Model Selector, Status & Actions */}
+        <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0 border-t sm:border-t-0 border-border/40 pt-1.5 sm:pt-0">
           <button
             type="button"
             onClick={() => setIsModelDialogOpen(true)}
-            className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-border bg-background hover:bg-accent font-mono text-[11px] text-muted-foreground hover:text-foreground transition cursor-pointer"
+            className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-border bg-background hover:bg-accent font-mono text-[11px] text-muted-foreground hover:text-foreground transition cursor-pointer max-w-[160px] truncate"
             title="Configure model"
           >
-            <span className="truncate max-w-[150px]">
+            <span className="truncate">
               {MODEL_DISPLAY_NAMES[keyRecord.modelId] || keyRecord.modelId}
             </span>
-            <Settings2 className="w-3 h-3 text-muted-foreground" />
+            <Settings2 className="w-3 h-3 text-muted-foreground shrink-0" />
           </button>
 
           <KeyStatusBadge keyRecord={keyRecord} />
-        </div>
 
-        {/* Right: Actions */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          {testResult && (
-            <span
-              className={`text-[11px] font-mono mr-1 ${
-                testResult.success ? 'text-emerald-400' : 'text-destructive'
-              }`}
-            >
-              {testResult.msg}
-            </span>
-          )}
-
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleTestKey}
-            disabled={isTesting || keyRecord.status === 'disabled'}
-            className="h-7 px-2 text-xs gap-1"
-            title="Test vision health"
-          >
-            {isTesting ? (
-              <Loader2 className="w-3 h-3 animate-spin" />
-            ) : (
-              <Play className="w-3 h-3 text-emerald-400" />
+          <div className="flex items-center gap-1">
+            {testResult && (
+              <span
+                className={`text-[11px] font-mono mr-1 ${
+                  testResult.success ? 'text-emerald-400' : 'text-destructive'
+                }`}
+              >
+                {testResult.msg}
+              </span>
             )}
-            Test
-          </Button>
 
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleDelete}
-            className="h-7 w-7 text-muted-foreground hover:text-destructive"
-            title="Delete"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleTestKey}
+              disabled={isTesting || keyRecord.status === 'disabled'}
+              className="h-7 px-2 text-xs gap-1"
+              title="Test key"
+            >
+              {isTesting ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <Play className="w-3 h-3 text-emerald-400" />
+              )}
+              Test
+            </Button>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleDelete}
+              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+              title="Delete key"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </Button>
+          </div>
         </div>
       </div>
 
