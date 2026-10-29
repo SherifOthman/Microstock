@@ -252,8 +252,9 @@ export const PriorityCascadeCard: React.FC<Props> = ({
 
                 {/* Right Group: Model Selector, Key Health Pill, Expand Chevron */}
                 <div
+                  dir="ltr"
                   onClick={(e) => e.stopPropagation()}
-                  className="flex items-center gap-2.5 shrink-0"
+                  className="flex items-center gap-2.5 shrink-0 text-left"
                 >
                   {/* Model Selector Dropdown */}
                   <Select
@@ -314,7 +315,7 @@ export const PriorityCascadeCard: React.FC<Props> = ({
 
               {/* Nested Keys Drawer (Expanded State) */}
               {isExpanded && (
-                <div className="border-t border-border bg-secondary/20 px-3.5 py-2.5 space-y-1.5 animate-in fade-in-50 duration-150">
+                <div dir="ltr" className="border-t border-border bg-secondary/20 px-3.5 py-2.5 space-y-1.5 animate-in fade-in-50 duration-150 text-left">
                   {providerKeys.length === 0 ? (
                     <div className="flex items-center justify-between py-2 px-2 text-muted-foreground text-xs">
                       <span>{(t.noKeysForProvider || 'No keys added for {name} yet.').replace('{name}', meta.name)}</span>

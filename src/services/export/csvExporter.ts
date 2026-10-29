@@ -78,7 +78,7 @@ export function generatePlatformCsv(
   options?: UniversalTransformOptions
 ): PlatformExportResult {
   const config = PLATFORMS_CONFIG[platformId];
-  const cleanBatchName = batchName.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+  const cleanBatchName = (batchName ?? '').replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
   const filename = `${cleanBatchName}_${config.filenameSuffix}`;
 
   if (records.length === 0) {
@@ -193,7 +193,7 @@ export async function downloadAllCsvsAsZip(
     throw new Error('No valid CSV files were generated to zip');
   }
 
-  const cleanBatchName = batchName.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+  const cleanBatchName = (batchName ?? '').replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
   const zipBlob = await zip.generateAsync({ type: 'blob' });
   saveAs(zipBlob, `${cleanBatchName}_all_platforms_csv.zip`);
 

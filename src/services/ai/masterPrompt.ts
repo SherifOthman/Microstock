@@ -17,6 +17,7 @@ UNIVERSAL SAFE-ZONE GUIDELINES:
 3. "ranked_keywords":
    - Array of exactly 42 to 48 relevant English keywords/tags.
    - Smart Microstock Mix (1 to 2 Words per Tag): Each tag can be either a strong single word (e.g. "foam", "yoga", "minimal", "texture") OR a natural 2-word industry phrase separated by a normal space (e.g. "foam roller", "resistance bands", "home gym", "copy space", "fitness equipment", "blurred background").
+   - Include at least 12 to 18 natural 2-word commercial phrases (e.g., "duffel bag", "water bottle", "wireless earbuds", "charging case", "copy space", "gym floor") mixed with strong single-word tags.
    - STRICT RULE: Maximum 2 words per tag. NEVER glue or concatenate multiple words together without a space (e.g., NEVER output "homegym", "fitnessequipment", "recoverytool", "stretchingtool"). Always put a normal space between two words in a compound tag.
    - STRICTLY ORDERED by search relevance: index 0 to 4 MUST be the top 5 most critical search terms describing the primary subject (vital for Vecteezy).
    - Include specific synonyms, visual styles, concepts, and copy space attributes.
@@ -89,7 +90,7 @@ export function buildVisionPrompt(
   } else if (keywordPhrasing === 'double') {
     prompt += '\nCRITICAL KEYWORD REQUIREMENT: Output 2-word compound phrases where appropriate (e.g. "copper metal", "brushed texture", "macro photograph", "metallic surface"). Maximum 2 words per tag. NEVER glue words together without spaces.';
   } else {
-    prompt += '\nCRITICAL KEYWORD REQUIREMENT: Smart Microstock Mix (1 to 2 Words per Tag). Generate 42 to 48 tags in "ranked_keywords". Each tag can be either a strong single word (e.g. "foam", "yoga", "minimal", "texture") OR a natural 2-word industry phrase separated by a normal space (e.g. "foam roller", "resistance bands", "home gym", "copy space", "fitness equipment", "blurred background"). Maximum 2 words per tag. NEVER glue or concatenate multiple words together without a space (e.g., NEVER output "homegym", "fitnessequipment", "recoverytool", "stretchingtool"). Always put a normal space between two words in a compound tag.';
+    prompt += '\nCRITICAL KEYWORD REQUIREMENT: Smart Microstock Mix (1 to 2 Words per Tag). Generate 42 to 48 tags in "ranked_keywords". Include at least 12 to 18 natural 2-word commercial phrases (e.g., "duffel bag", "water bottle", "wireless earbuds", "charging case", "copy space", "gym floor") mixed with strong single-word tags. Each tag can be either a strong single word (e.g. "foam", "yoga", "minimal", "texture") OR a natural 2-word industry phrase separated by a normal space (e.g. "foam roller", "resistance bands", "home gym", "copy space", "fitness equipment", "blurred background"). Maximum 2 words per tag. NEVER glue or concatenate multiple words together without a space (e.g., NEVER output "homegym", "fitnessequipment", "recoverytool", "stretchingtool"). Always put a normal space between two words in a compound tag.';
   }
 
   if (titleLengthPreset === 'short') {

@@ -82,21 +82,21 @@ export const AssetCard: React.FC<AssetCardProps> = ({
   }, [rec?.detailedDescription]);
 
   const handleBlurTitle = async () => {
-    if (rec && localTitle.trim() !== rec.baseTitle) {
-      await db.masterRecords.update(rec.id, { baseTitle: localTitle.trim() });
+    if (rec && (localTitle ?? '').trim() !== rec.baseTitle) {
+      await db.masterRecords.update(rec.id, { baseTitle: (localTitle ?? '').trim() });
     }
   };
 
   const handleBlurDesc = async () => {
-    if (rec && localDesc.trim() !== rec.detailedDescription) {
-      await db.masterRecords.update(rec.id, { detailedDescription: localDesc.trim() });
+    if (rec && (localDesc ?? '').trim() !== rec.detailedDescription) {
+      await db.masterRecords.update(rec.id, { detailedDescription: (localDesc ?? '').trim() });
     }
   };
 
   const handleRemoveKeyword = async (kwToRemove: string) => {
     if (!rec) return;
-    const updated = rec.rankedKeywords.filter(
-      (k) => k.toLowerCase() !== kwToRemove.toLowerCase()
+    const updated = (rec.rankedKeywords ?? []).filter(
+      (k) => (k ?? '').toLowerCase() !== (kwToRemove ?? '').toLowerCase()
     );
     await db.masterRecords.update(rec.id, { rankedKeywords: updated });
   };
@@ -107,7 +107,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
       setDragOverKwIndex(null);
       return;
     }
-    const current = [...rec.rankedKeywords];
+    const current = [...(rec.rankedKeywords ?? [])];
     const [moved] = current.splice(draggedKwIndex, 1);
     current.splice(targetIndex, 0, moved);
     await db.masterRecords.update(rec.id, { rankedKeywords: current });
@@ -117,9 +117,9 @@ export const AssetCard: React.FC<AssetCardProps> = ({
 
   const handleSaveRawKeywords = async () => {
     if (!rec) return;
-    const cleanKws = rawKwsInput
+    const cleanKws = (rawKwsInput ?? '')
       .split(',')
-      .map((k) => k.trim())
+      .map((k) => (k ?? '').trim())
       .filter((k) => k.length > 0);
     // Deduplicate
     const unique = Array.from(new Set(cleanKws.map((k) => k.toLowerCase()))).map(
@@ -130,21 +130,21 @@ export const AssetCard: React.FC<AssetCardProps> = ({
   };
 
   const handleAddTagSubmit = async () => {
-    if (!rec || !newTagInput.trim()) {
+    if (!rec || !(newTagInput ?? '').trim()) {
       setIsAddingTag(false);
       setNewTagInput('');
       return;
     }
-    const newKws = newTagInput
+    const newKws = (newTagInput ?? '')
       .split(',')
-      .map((k) => k.trim())
+      .map((k) => (k ?? '').trim())
       .filter((k) => k.length > 0);
 
-    const existingLower = new Set(rec.rankedKeywords.map((k) => k.toLowerCase()));
-    const toAdd = newKws.filter((k) => !existingLower.has(k.toLowerCase()));
+    const existingLower = new Set((rec.rankedKeywords ?? []).map((k) => (k ?? '').toLowerCase()));
+    const toAdd = newKws.filter((k) => !existingLower.has((k ?? '').toLowerCase()));
 
     if (toAdd.length > 0) {
-      const updated = [...rec.rankedKeywords, ...toAdd];
+      const updated = [...(rec.rankedKeywords ?? []), ...toAdd];
       await db.masterRecords.update(rec.id, { rankedKeywords: updated });
     }
     setNewTagInput('');
@@ -158,10 +158,21 @@ export const AssetCard: React.FC<AssetCardProps> = ({
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  const getCleanProviderName = (providerId?: string): string => {
+    if (!providerId) return 'AI Provider';
+    const lower = providerId.toLowerCase();
+    if (lower.includes('gemini') || lower === 'google') return 'Gemini';
+    if (lower.includes('mistral')) return 'Mistral';
+    if (lower.includes('groq')) return 'Groq';
+    if (lower.includes('openrouter')) return 'OpenRouter';
+    if (lower.includes('cloudflare')) return 'Cloudflare';
+    return providerId.charAt(0).toUpperCase() + providerId.slice(1);
+  };
+
   const getCleanModelName = (modelId?: string, providerId?: string): string => {
-    if (!modelId || typeof modelId !== 'string') return providerId ? providerId.toUpperCase() : 'AI Model';
+    if (!modelId || typeof modelId !== 'string') return providerId ? getCleanProviderName(providerId) : 'AI Model';
     if (MODEL_DISPLAY_NAMES[modelId]) return MODEL_DISPLAY_NAMES[modelId];
-    return modelId.replace(/^.*\//, '');
+    return (modelId ?? '').replace(/^.*\//, '');
   };
 
   const isCompleted = asset.status === 'completed' && !!rec;
@@ -256,15 +267,15 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             </div>
 
             <div className="flex items-center justify-between text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <span>{t.aiPayload}</span>
+              <span>{t.aiPayload}</span>
+              <div dir="ltr" className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
+                <span className="font-semibold text-sky-400">{formatBytes(compressedSize)}</span>
                 {savingsPercent !== null && (
                   <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-500 font-semibold border border-emerald-500/20">
                     -{savingsPercent}%
                   </span>
                 )}
-              </span>
-              <span className="font-semibold text-sky-400">{formatBytes(compressedSize)}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -319,31 +330,23 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 <span>{t.activeInference}</span>
               </div>
               <div className="text-[10px] text-muted-foreground font-mono">
-                Trying:{' '}
+                {t.provider || 'Provider:'}{' '}
                 <span className="text-foreground font-semibold">
-                  {getCleanModelName(asset.queueItem?.assignedModel, asset.queueItem?.assignedProvider)}
+                  {getCleanProviderName(asset.queueItem?.assignedProvider)}
                 </span>
               </div>
-              {asset.queueItem?.assignedProvider && (
-                <div className="text-[10px] text-muted-foreground font-mono">
-                  Provider:{' '}
-                  <span className="capitalize text-foreground">
-                    {asset.queueItem.assignedProvider}
-                  </span>
-                </div>
-              )}
             </div>
           )}
 
           {isCompleted && rec && (
             <div className="space-y-1">
               <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                <span>{t.model}</span>
+                <span>{t.provider || 'Provider:'}</span>
                 <span
                   className="font-semibold text-foreground truncate max-w-[130px]"
-                  title={rec.aiGenerationInfo?.model}
+                  title={rec.aiGenerationInfo?.provider}
                 >
-                  {getCleanModelName(rec.aiGenerationInfo?.model, rec.aiGenerationInfo?.provider)}
+                  {getCleanProviderName(rec.aiGenerationInfo?.provider)}
                 </span>
               </div>
               {rec.aiGenerationInfo?.latencyMs && (
@@ -354,27 +357,25 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                   </span>
                 </div>
               )}
-              {/* Failover / Retry History */}
+              {/* Clean Failover List on one compact line */}
               {rec.aiGenerationInfo?.attemptHistory &&
                 rec.aiGenerationInfo.attemptHistory.length > 1 && (
                   <div className="pt-1 border-t border-border/50 text-[10px] space-y-0.5">
-                    <span className="text-amber-500 font-medium">Failover / Retries:</span>
-                    {rec.aiGenerationInfo.attemptHistory.map((att, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-center gap-1 font-mono text-[9px] text-muted-foreground"
-                      >
-                        <span
-                          className={
-                            att.status === 'success' ? 'text-emerald-500' : 'text-destructive'
-                          }
-                        >
-                          {att.status === 'success' ? '✓' : '✕'}
-                        </span>
-                        <span>{att.provider}</span>
-                        <span>({att.model})</span>
-                      </div>
-                    ))}
+                    <span className="text-amber-500 font-medium">Failover:</span>
+                    <div className="flex items-center gap-1 font-mono text-[10px] text-muted-foreground flex-wrap">
+                      {rec.aiGenerationInfo.attemptHistory.map((att, idx) => (
+                        <React.Fragment key={idx}>
+                          {idx > 0 && <span className="text-muted-foreground/60">→</span>}
+                          <span
+                            className={
+                              att.status === 'success' ? 'text-emerald-500 font-medium' : 'text-destructive'
+                            }
+                          >
+                            {att.status === 'success' ? '✓' : '✗'} {getCleanProviderName(att.provider)}
+                          </span>
+                        </React.Fragment>
+                      ))}
+                    </div>
                   </div>
                 )}
             </div>
@@ -411,7 +412,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             <label className="font-semibold text-foreground flex items-center gap-1.5">
               <span>{t.title}</span>
               <span className="text-[10px] font-mono font-normal text-muted-foreground">
-                ({localTitle.length} chars)
+                ({(localTitle || '').length} chars)
               </span>
             </label>
             <button
@@ -450,7 +451,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             <label className="font-semibold text-foreground flex items-center gap-1.5">
               <span>{t.description}</span>
               <span className="text-[10px] font-mono font-normal text-muted-foreground">
-                ({localDesc.length} chars)
+                ({(localDesc || '').length} chars)
               </span>
             </label>
             <button

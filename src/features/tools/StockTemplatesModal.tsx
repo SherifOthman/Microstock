@@ -13,6 +13,7 @@ import {
   Info,
   ShieldAlert,
 } from 'lucide-react';
+import { useLanguage } from '../../context/LanguageContext';
 
 interface Props {
   open: boolean;
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export const StockTemplatesModal: React.FC<Props> = ({ open, onClose }) => {
+  const { isRtl } = useLanguage();
   const [selectedKey, setSelectedKey] = useState<string>('vecteezy');
   const [copied, setCopied] = useState<boolean>(false);
 
@@ -42,11 +44,15 @@ export const StockTemplatesModal: React.FC<Props> = ({ open, onClose }) => {
     <Dialog
       open={open}
       onClose={onClose}
-      title="Official Stock CSV Formats & Ingestion Rules"
-      description="Exact verified specifications, column schemas, and sample CSV files for all microstock platforms."
+      title={isRtl ? 'مواصفات وقواعد ملفات CSV الرسمية' : 'Official Stock CSV Formats & Ingestion Rules'}
+      description={
+        isRtl
+          ? 'المواصفات الدقيقة وقوالب الأعمدة المعتمدة لجميع منصات الميكروستوك'
+          : 'Exact verified specifications, column schemas, and sample CSV files for all microstock platforms.'
+      }
       className="max-w-4xl"
     >
-      <div className="space-y-4 text-xs">
+      <div dir="ltr" className="space-y-4 text-xs text-left">
         {/* Platform Selector Tabs */}
         <div className="flex items-center gap-1.5 p-1 rounded-lg bg-secondary/60 border border-border overflow-x-auto">
           {Object.values(STOCK_PLATFORMS_SPEC).map((p) => (

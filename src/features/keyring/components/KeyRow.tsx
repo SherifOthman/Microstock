@@ -96,7 +96,7 @@ export const KeyRow: React.FC<Props> = ({ keyRecord, index }) => {
 
   return (
     <>
-      <div className="h-9 px-2.5 rounded-md hover:bg-secondary/60 flex items-center justify-between text-xs transition-colors group">
+      <div dir="ltr" className="h-9 px-2.5 rounded-md hover:bg-secondary/60 flex items-center justify-between text-xs transition-colors group text-left">
         {/* Left: Key Index + Monospace Masked Key */}
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-[11px] font-mono text-muted-foreground font-medium shrink-0">

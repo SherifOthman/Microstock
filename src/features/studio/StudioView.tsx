@@ -72,7 +72,7 @@ import {
 } from 'lucide-react';
 
 export const StudioView: React.FC = () => {
-  const { t } = useLanguage();
+  const { t, isRtl } = useLanguage();
   // Queue & Database States
   const [queueState, setQueueState] = useState<QueueState>(batchQueueService.getState());
   const liveRecords = useLiveQuery(() => db.masterRecords.toArray(), []) || [];
@@ -100,6 +100,10 @@ export const StudioView: React.FC = () => {
 
   const [keywordPhrasing, setKeywordPhrasing] = useState<KeywordPhrasing>(() => {
     const saved = localStorage.getItem('stock_keyword_phrasing');
+    if (saved === 'single') {
+      localStorage.setItem('stock_keyword_phrasing', 'mixed');
+      return 'mixed';
+    }
     return (saved as KeywordPhrasing) || 'mixed';
   });
 
@@ -1142,8 +1146,12 @@ export const StudioView: React.FC = () => {
       <Dialog
         open={isKeyRingOpen}
         onClose={() => setIsKeyRingOpen(false)}
-        title="API Keys Manager"
-        description="Add, test, and pace multiple vision keys across Gemini, OpenRouter, Groq, and Mistral."
+        title={t.keysTitle || 'API Keys & Priority'}
+        description={
+          isRtl
+            ? 'إضافة واختبار وترتيب أولويات مفاتيح الرؤية لمختلف المزودين.'
+            : 'Add, test, and pace multiple vision keys across Gemini, OpenRouter, Groq, Mistral, and Cloudflare.'
+        }
         className="max-w-3xl"
       >
         <KeyRingView />

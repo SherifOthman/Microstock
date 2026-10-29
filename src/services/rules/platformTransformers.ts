@@ -29,20 +29,51 @@ const FORBIDDEN_AI_WORDS = [
   'generated',
 ];
 
+const DANGLING_TRAILING_WORDS = new Set([
+  'with',
+  'and',
+  'or',
+  'on',
+  'in',
+  'at',
+  'to',
+  'for',
+  'of',
+  'by',
+  'the',
+  'a',
+  'an',
+  'including',
+  'from',
+  'into',
+]);
+
 /**
  * Smart Semantic Truncation Engine (Zero Broken Words)
- * Scans backwards to the nearest full word boundary and strips trailing punctuation cleanly.
+ * Cuts cleanly at full word boundary before maxLength, strips trailing dangling conjunctions/prepositions,
+ * and appends a clean period if addPeriod is true (or requested via options).
  */
 export function smartTruncate(
   text: string,
   maxLength: number,
-  options: { appendEllipsis?: boolean } = {}
+  options: { appendEllipsis?: boolean; addPeriod?: boolean } | boolean = false
 ): string {
-  const trimmed = text.trim();
-  if (trimmed.length <= maxLength) return trimmed;
+  const addPeriod = typeof options === 'boolean' ? options : (options.addPeriod ?? false);
+  const appendEllipsis = typeof options === 'object' ? (options.appendEllipsis ?? false) : false;
 
-  const reserve = options.appendEllipsis ? 3 : 0;
-  const targetLen = Math.max(1, maxLength - reserve);
+  const trimmed = (text ?? '').trim();
+  if (!trimmed) return '';
+
+  const targetMax = addPeriod ? maxLength - 1 : maxLength;
+  if (trimmed.length <= targetMax) {
+    if (addPeriod && !trimmed.endsWith('.')) {
+      return `${trimmed}.`;
+    }
+    return trimmed;
+  }
+
+  const reserve = appendEllipsis ? 3 : 0;
+  const targetLen = Math.max(1, targetMax - reserve);
 
   let candidate = trimmed.slice(0, targetLen);
 
@@ -57,8 +88,18 @@ export function smartTruncate(
   // Strip trailing punctuation cleanly (periods, commas, colons, semicolons, hyphens)
   candidate = candidate.replace(/[,;:\s\-_.]+$/, '').trim();
 
-  if (options.appendEllipsis) {
+  // Strip trailing dangling conjunctions/prepositions (e.g. "photo of a dog with" -> "photo of a dog")
+  let words = candidate.split(/\s+/);
+  while (words.length > 0 && DANGLING_TRAILING_WORDS.has(words[words.length - 1].toLowerCase())) {
+    words.pop();
+  }
+  candidate = words.join(' ').replace(/[,;:\s\-_.]+$/, '').trim();
+
+  if (appendEllipsis) {
     return `${candidate}...`;
+  }
+  if (addPeriod) {
+    return `${candidate}.`;
   }
   return candidate;
 }
@@ -123,16 +164,16 @@ export function toTitleCase(str: string): string {
 // 1. Adobe Stock Transformer
 export function transformForAdobeStock(records: MasterMetadataRecord[]): PlatformExportRow[] {
   return records.map((rec) => {
-    const sanitized = sanitizeNonAiText(rec.baseTitle);
+    const sanitized = sanitizeNonAiText(rec.baseTitle ?? '');
     // Semantic truncate at 200 chars (zero broken words)
-    const cleanTitle = smartTruncate(sanitized, 200, { appendEllipsis: false });
-    const cleanKw = sanitizeKeywords(rec.rankedKeywords).slice(0, 49);
+    const cleanTitle = smartTruncate(sanitized, 200, false);
+    const cleanKw = sanitizeKeywords(rec.rankedKeywords ?? []).slice(0, 49);
 
     return {
-      Filename: rec.filename,
+      Filename: rec.filename ?? '',
       Title: cleanTitle,
       Keywords: cleanKw.join(', '),
-      Category: rec.categories.adobeCategoryId || 8,
+      Category: rec.categories?.adobeCategoryId || 8,
     };
   });
 }
@@ -169,9 +210,9 @@ export function transformForFreepik(
 ): PlatformExportRow[] {
   return records.map((rec) => {
     // 1. Semantic truncate at 200 chars
-    let cleanTitle = smartTruncate(rec.baseTitle, 200, { appendEllipsis: false });
+    let cleanTitle = smartTruncate(rec.baseTitle ?? '', 200, false);
     // 2. Replace hyphens with spaces to prevent Freepik from concatenating words (e.g. Snowy-Winter -> SnowyWinter)
-    cleanTitle = cleanTitle.replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
+    cleanTitle = (cleanTitle ?? '').replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
 
     const isAi = options?.isAiGenerated !== undefined ? options.isAiGenerated : rec.isAiGenerated;
 
@@ -182,7 +223,7 @@ export function transformForFreepik(
 
     // 4. Keywords: capped strictly at 49 for AI (Freepik auto-appends '_ai_generated'), or 50 for standard non-AI
     const maxKws = isAi ? 49 : 50;
-    const keywords = rec.rankedKeywords.slice(0, maxKws).join(', ');
+    const keywords = (rec.rankedKeywords ?? []).slice(0, maxKws).join(', ');
 
     // 5. Generative Prompt (populated only if AI generated)
     const prompt = isAi
@@ -190,7 +231,7 @@ export function transformForFreepik(
       : '';
 
     return {
-      'File name': rec.filename,
+      'File name': rec.filename ?? '',
       Title: cleanTitle,
       Keywords: keywords,
       Prompt: prompt,
@@ -204,14 +245,14 @@ export function transformForShutterstock(
   records: MasterMetadataRecord[]
 ): { rows: PlatformExportRow[]; isBlocked: boolean; blockedReason?: string } {
   const rows = records.map((rec) => {
-    const categoriesStr = rec.categories.shutterstockCategories.filter(Boolean).join(', ');
-    // Semantic truncate description at 200 chars
-    const cleanDesc = smartTruncate(rec.detailedDescription, 200, { appendEllipsis: false });
+    const categoriesStr = (rec.categories?.shutterstockCategories ?? []).filter(Boolean).join(', ');
+    // Semantic truncate description at 200 chars ending with a period
+    const cleanDesc = smartTruncate(rec.detailedDescription ?? '', 200, true);
 
     return {
-      Filename: rec.filename,
+      Filename: rec.filename ?? '',
       Description: cleanDesc,
-      Keywords: rec.rankedKeywords.slice(0, 50).join(', '),
+      Keywords: (rec.rankedKeywords ?? []).slice(0, 50).join(', '),
       Categories: categoriesStr || 'Miscellaneous',
       Illustration: 'No',
       'Mature Content': 'No',
@@ -250,23 +291,23 @@ export function transformForVecteezy(
   return records.map((rec) => {
     // 1. Filename: Apply Web Uploader parity (no underscores/spaces) by default
     const exportFilename = useWebParity
-      ? sanitizeForVecteezyWeb(rec.filename)
-      : rec.filename;
+      ? sanitizeForVecteezyWeb(rec.filename ?? '')
+      : (rec.filename ?? '');
 
     // 2. Strict Title: Title Case, max 100 chars, no special symbols, no trailing period/ellipsis
-    let titleCase = toTitleCase(rec.baseTitle);
-    titleCase = smartTruncate(titleCase, 100, { appendEllipsis: false });
-    titleCase = titleCase.replace(/[!@#$%\^&*~`+=<>?\\/|]/g, '');
-    titleCase = titleCase.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ');
-    titleCase = titleCase.replace(/[.,;: \-_…]+$/, '').trim();
+    let titleCase = toTitleCase(rec.baseTitle ?? '');
+    titleCase = smartTruncate(titleCase, 100, false);
+    titleCase = (titleCase ?? '').replace(/[!@#$%\^&*~`+=<>?\\/|]/g, '');
+    titleCase = (titleCase ?? '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ');
+    titleCase = (titleCase ?? '').replace(/[.,;: \-_…]+$/, '').trim();
 
     // 3. Clean single-line description (zero embedded \r or \n)
-    let cleanDescription = (rec.detailedDescription || titleCase).trim();
-    cleanDescription = cleanDescription.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+    let cleanDescription = (rec.detailedDescription || titleCase || '').trim();
+    cleanDescription = (cleanDescription ?? '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
 
     // 4. Top 5 priority keywords placed at index 0-4, total keywords capped between 10 and 45
-    const cleanKeywords = rec.rankedKeywords
-      .map((k) => k.replace(/[\r\n\t,]+/g, ' ').replace(/\s+/g, ' ').trim())
+    const cleanKeywords = (rec.rankedKeywords ?? [])
+      .map((k) => (k ?? '').replace(/[\r\n\t,]+/g, ' ').replace(/\s+/g, ' ').trim())
       .filter((k) => k.length >= 2 && !/^\d+$/.test(k));
     const keywords = cleanKeywords.slice(0, 45).join(', ');
 
@@ -293,7 +334,7 @@ export function transformForDreamstime(
   const srel = options?.srel !== undefined ? (options.srel ? 1 : 0) : 0;
 
   return records.map((rec) => {
-    let description = rec.detailedDescription.trim();
+    let description = (rec.detailedDescription ?? '').trim();
 
     // Rule 2: If AI generated, append mandatory AI disclosure
     const recordIsAi = options?.isAiGenerated !== undefined ? options.isAiGenerated : rec.isAiGenerated;
@@ -302,7 +343,7 @@ export function transformForDreamstime(
     }
 
     // Rule 1: Description MUST be strictly longer than Image Name
-    if (description.length <= rec.baseTitle.length) {
+    if (description.length <= (rec.baseTitle ?? '').length) {
       description = `${description} Detailed commercial stock visual asset with natural perspective.`;
     }
 
@@ -311,17 +352,17 @@ export function transformForDreamstime(
       description += '.';
     }
 
-    const cleanTitle = smartTruncate(rec.baseTitle, 250, { appendEllipsis: false });
-    const cleanDesc = smartTruncate(description, 756, { appendEllipsis: false });
+    const cleanTitle = smartTruncate(rec.baseTitle ?? '', 250, false);
+    const cleanDesc = smartTruncate(description, 756, true);
 
     return {
-      Filename: rec.filename,
+      Filename: rec.filename ?? '',
       'Image Name': cleanTitle,
       Description: cleanDesc,
-      'Category 1': rec.categories.dreamstimeCategory1 || 115,
-      'Category 2': rec.categories.dreamstimeCategory2 || 105,
-      'Category 3': recordIsAi ? 114 : rec.categories.dreamstimeCategory3 || 100, // 114 = AI-generated
-      keywords: rec.rankedKeywords.join(', '),
+      'Category 1': rec.categories?.dreamstimeCategory1 || 115,
+      'Category 2': rec.categories?.dreamstimeCategory2 || 105,
+      'Category 3': recordIsAi ? 114 : rec.categories?.dreamstimeCategory3 || 100, // 114 = AI-generated
+      keywords: (rec.rankedKeywords ?? []).join(', '),
       Free: isFree,
       'W-EL': wel, // Web Extended License
       'P-EL': pel, // Print Extended License
@@ -338,11 +379,11 @@ export function transformForDreamstime(
 export function transformFor123rf(records: MasterMetadataRecord[]): PlatformExportRow[] {
   return records.map((rec) => {
     // 123RF official column schema: "oldfilename","123rf_filename","description","keywords","country"
-    const cleanDesc = smartTruncate(rec.detailedDescription, 300, { appendEllipsis: false });
-    const keywords = rec.rankedKeywords.slice(0, 50).join(', ');
+    const cleanDesc = smartTruncate(rec.detailedDescription ?? '', 300, true);
+    const keywords = (rec.rankedKeywords ?? []).slice(0, 50).join(', ');
 
     return {
-      oldfilename: rec.filename,
+      oldfilename: rec.filename ?? '',
       '123rf_filename': '',
       description: cleanDesc,
       keywords: keywords,

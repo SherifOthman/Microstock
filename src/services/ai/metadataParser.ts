@@ -127,7 +127,7 @@ export function parseAndNormalizeAiMetadata(
 
   try {
     // 1. Clean markdown code fences if present
-    let cleaned = rawText.trim();
+    let cleaned = (rawText ?? '').trim();
     cleaned = cleaned.replace(/^```json\s*/i, '');
     cleaned = cleaned.replace(/^```\s*/i, '');
     cleaned = cleaned.replace(/\s*```$/i, '');
@@ -142,13 +142,13 @@ export function parseAndNormalizeAiMetadata(
     parsed = JSON.parse(cleaned);
   } catch (err) {
     console.warn(`JSON parse failed for "${filename}", attempting regex fallback extraction:`, err);
-    parsed = extractFallbackRegex(rawText);
+    parsed = extractFallbackRegex(rawText ?? '');
   }
 
   // 2. Normalize Title
   let baseTitle = (parsed.base_title || '').trim();
   if (!baseTitle) {
-    baseTitle = filename.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+    baseTitle = (filename ?? '').replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
     baseTitle = baseTitle.charAt(0).toUpperCase() + baseTitle.slice(1);
   }
   if (baseTitle.length > 200) baseTitle = baseTitle.substring(0, 197) + '...';
@@ -174,11 +174,13 @@ export function parseAndNormalizeAiMetadata(
 
   let rawList: string[] = [];
   if (Array.isArray(parsed.ranked_keywords)) {
-    rawList = parsed.ranked_keywords.map((k) => String(k).trim().toLowerCase()).filter(Boolean);
-  } else if (typeof parsed.ranked_keywords === 'string') {
     rawList = parsed.ranked_keywords
+      .map((k) => String(k ?? '').trim().toLowerCase())
+      .filter(Boolean);
+  } else if (typeof parsed.ranked_keywords === 'string') {
+    rawList = (parsed.ranked_keywords ?? '')
       .split(',')
-      .map((k) => k.trim().toLowerCase())
+      .map((k) => (k ?? '').trim().toLowerCase())
       .filter(Boolean);
   }
 
@@ -188,11 +190,12 @@ export function parseAndNormalizeAiMetadata(
     // SINGLE WORDS ONLY: Split any multi-word phrases, de-glue compounds, strip punctuation, discard stop words
     const singleSet = new Set<string>();
     for (const item of rawList) {
-      const deCamelled = item.replace(/([a-z])([A-Z])/g, '$1 $2');
+      if (!item) continue;
+      const deCamelled = (item ?? '').replace(/([a-z])([A-Z])/g, '$1 $2');
       const tokens = deCamelled
         .replace(/[^a-zA-Z0-9\s]/g, ' ')
         .split(/\s+/)
-        .map((w) => w.trim().toLowerCase())
+        .map((w) => (w ?? '').trim().toLowerCase())
         .filter(Boolean);
 
       for (const t of tokens) {
@@ -207,11 +210,15 @@ export function parseAndNormalizeAiMetadata(
         }
       }
     }
-  } else if (keywordPhrasing === 'double') {
-    // DOUBLE / MULTI-WORD PHRASES (Max 2 words per tag)
+  } else {
+    // SMART MICROSTOCK MIX (1 to 2 Words per Tag - DEFAULT & DOUBLE):
+    // Preserves 1 or 2-word phrases intact as single unit tags (e.g. "duffel bag", "water bottle", "wireless earbuds", "copy space", "fitness equipment").
+    // DO NOT split tags across whitespace!
     const phraseSet = new Set<string>();
     for (const item of rawList) {
-      const deCamelled = item.replace(/([a-z])([A-Z])/g, '$1 $2');
+      if (!item) continue;
+      // Clean internal punctuation while preserving whitespace between words
+      const deCamelled = (item ?? '').replace(/([a-z])([A-Z])/g, '$1 $2');
       const clean = deCamelled
         .replace(/[^a-zA-Z0-9\s]/g, ' ')
         .replace(/\s+/g, ' ')
@@ -219,46 +226,23 @@ export function parseAndNormalizeAiMetadata(
         .toLowerCase();
       if (!clean) continue;
 
-      // De-glue any words inside phrase
+      // De-glue any words inside phrase without breaking the phrase
       const parts = clean.split(' ').map((p) => deGlueCompoundWord(p)).join(' ').split(/\s+/).filter(Boolean);
-      // Chunk into max 2 words per tag
-      for (let i = 0; i < parts.length; i += 2) {
-        const tag = parts.slice(i, i + 2).join(' ').trim();
+      if (parts.length === 0) continue;
+
+      if (parts.length <= 2) {
+        // 1 or 2 words: KEEP INTACT AS A SINGLE TAG UNIT!
+        const tag = parts.join(' ');
         if (tag.length >= 2 && !phraseSet.has(tag) && !/^\d+$/.test(tag)) {
           phraseSet.add(tag);
           finalKeywords.push(tag);
         }
-      }
-    }
-  } else {
-    // SMART MICROSTOCK MIX (1 to 2 Words per Tag):
-    // Preserves single spaces in 2-word tags, trims tags > 2 words to max 2 words, auto-repairs glued compounds
-    const mixedSet = new Set<string>();
-    for (const item of rawList) {
-      const deCamelled = item.replace(/([a-z])([A-Z])/g, '$1 $2');
-      const clean = deCamelled
-        .replace(/[^a-zA-Z0-9\s]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .toLowerCase();
-      if (!clean) continue;
-
-      // Check if item contains glued words and expand them
-      const words = clean.split(' ').map((w) => deGlueCompoundWord(w)).join(' ').split(/\s+/).filter(Boolean);
-      if (words.length === 0) continue;
-
-      if (words.length <= 2) {
-        const tag = words.join(' ');
-        if (tag.length >= 2 && !mixedSet.has(tag) && !/^\d+$/.test(tag)) {
-          mixedSet.add(tag);
-          finalKeywords.push(tag);
-        }
       } else {
-        // Tag has > 2 words: chunk into 2-word phrases or single words
-        for (let i = 0; i < words.length; i += 2) {
-          const tag = words.slice(i, i + 2).join(' ').trim();
-          if (tag.length >= 2 && !mixedSet.has(tag) && !/^\d+$/.test(tag)) {
-            mixedSet.add(tag);
+        // Only if tag has > 2 words (e.g. 3 or 4 words): chunk into max 2 words per tag
+        for (let i = 0; i < parts.length; i += 2) {
+          const tag = parts.slice(i, i + 2).join(' ').trim();
+          if (tag.length >= 2 && !phraseSet.has(tag) && !/^\d+$/.test(tag)) {
+            phraseSet.add(tag);
             finalKeywords.push(tag);
           }
         }
@@ -287,13 +271,13 @@ export function parseAndNormalizeAiMetadata(
   let shutterCats: [string, string?] = ['Miscellaneous'];
   if (Array.isArray(parsed.category_shutterstock) && parsed.category_shutterstock.length > 0) {
     const valid = parsed.category_shutterstock
-      .map((c) => findClosestCategory(String(c).trim()))
+      .map((c) => findClosestCategory(String(c ?? '').trim()))
       .filter(Boolean) as string[];
     if (valid.length > 0) {
       shutterCats = [valid[0], valid[1]];
     }
   } else if (typeof parsed.category_shutterstock === 'string') {
-    const cat = findClosestCategory(parsed.category_shutterstock.trim());
+    const cat = findClosestCategory((parsed.category_shutterstock ?? '').trim());
     if (cat) shutterCats = [cat];
   }
 
@@ -305,8 +289,8 @@ export function parseAndNormalizeAiMetadata(
   return {
     id: crypto.randomUUID(),
     batchId,
-    filename,
-    thumbnailBase64,
+    filename: filename ?? '',
+    thumbnailBase64: thumbnailBase64 ?? '',
     isAiGenerated,
     baseTitle,
     detailedDescription,
@@ -330,7 +314,8 @@ export function parseAndNormalizeAiMetadata(
 }
 
 function findClosestCategory(input: string): string | null {
-  const normalized = input.toLowerCase();
+  if (!input) return null;
+  const normalized = (input ?? '').toLowerCase();
   for (const official of SHUTTERSTOCK_OFFICIAL_CATEGORIES) {
     if (official.toLowerCase() === normalized) return official;
   }
@@ -344,6 +329,7 @@ function findClosestCategory(input: string): string | null {
 
 function extractFallbackRegex(text: string): RawAiOutput {
   const result: RawAiOutput = {};
+  if (!text) return result;
 
   const titleMatch = text.match(/"base_title"\s*:\s*"([^"]+)"/i);
   if (titleMatch) result.base_title = titleMatch[1];
@@ -353,9 +339,9 @@ function extractFallbackRegex(text: string): RawAiOutput {
 
   const kwMatch = text.match(/"ranked_keywords"\s*:\s*\[([^\]]+)\]/i);
   if (kwMatch) {
-    result.ranked_keywords = kwMatch[1]
+    result.ranked_keywords = (kwMatch[1] ?? '')
       .split(',')
-      .map((k) => k.replace(/["']/g, '').trim())
+      .map((k) => (k ?? '').replace(/["']/g, '').trim())
       .filter(Boolean);
   }
 

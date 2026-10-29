@@ -20,6 +20,7 @@ export const translations = {
     testAll: 'Test All',
     testing: 'Testing...',
     addKey: 'Add Key',
+    testingAndAdding: 'Testing & Adding...',
     primary: 'Primary',
     keys: 'keys',
     noKeysForProvider: 'No keys added for {name} yet.',
@@ -96,6 +97,7 @@ export const translations = {
     // Asset Card
     originalSize: 'Original Size:',
     aiPayload: 'AI Payload:',
+    provider: 'Provider:',
     photo: 'PHOTO',
     vector: 'EPS Vector',
     video: 'Video',
@@ -144,6 +146,7 @@ export const translations = {
     testAll: 'اختبار الكل',
     testing: 'جارٍ الاختبار...',
     addKey: 'إضافة مفتاح',
+    testingAndAdding: 'جارٍ الفحص والإضافة...',
     primary: 'أساسي',
     keys: 'مفاتيح',
     noKeysForProvider: 'لم يتم إضافة مفاتيح لـ {name} بعد.',
@@ -219,7 +222,8 @@ export const translations = {
 
     // Asset Card
     originalSize: 'الحجم الأصلي:',
-    aiPayload: 'حجم الصورة المضغوط:',
+    aiPayload: 'بعد الضغط:',
+    provider: 'المزود:',
     photo: 'صورة',
     vector: 'متجه EPS',
     video: 'فيديو',

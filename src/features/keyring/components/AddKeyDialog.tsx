@@ -26,6 +26,7 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
+import { useLanguage } from '../../../context/LanguageContext';
 
 interface KeyEntry {
   id: string;
@@ -55,6 +56,7 @@ export const AddKeyDialog: React.FC<Props> = ({
   onClose,
   onSuccess,
 }) => {
+  const { t, isRtl } = useLanguage();
   const [providerId, setProviderId] = useState<ProviderType>(initialProvider);
   const [inputKeysText, setInputKeysText] = useState<string>('');
   const [keysList, setKeysList] = useState<KeyEntry[]>([]);
@@ -399,14 +401,14 @@ export const AddKeyDialog: React.FC<Props> = ({
     <Dialog
       open={open}
       onClose={onClose}
-      title="Add API Key"
+      title={isRtl ? 'إضافة مفتاح API' : 'Add API Key'}
       className="max-w-2xl"
     >
       <div className="space-y-4 text-xs">
         {/* 1. Provider Select (Clean, no confusing generic RPM labels) */}
         <div className="space-y-1.5">
-          <label className="font-medium text-foreground block">AI Provider</label>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          <label className="font-medium text-foreground block">{t.aiProvider || 'AI Provider'}</label>
+          <div dir="ltr" className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-left">
             {PROVIDER_ORDER.map((pid) => {
               const meta = PROVIDERS_META[pid];
               const isSelected = providerId === pid;
@@ -444,7 +446,7 @@ export const AddKeyDialog: React.FC<Props> = ({
           <div className="space-y-1.5 p-3 rounded-lg border border-border bg-secondary/25">
             <div className="flex items-center justify-between">
               <label className="font-semibold text-foreground flex items-center gap-1.5">
-                <span>Cloudflare Account ID</span>
+                <span>{t.cfAccountId || 'Cloudflare Account ID'}</span>
                 <span className="text-red-400">*</span>
               </label>
               <a
@@ -453,18 +455,19 @@ export const AddKeyDialog: React.FC<Props> = ({
                 rel="noopener noreferrer"
                 className="text-[11px] text-muted-foreground hover:text-foreground underline"
               >
-                Find in Cloudflare Dashboard
+                {t.findCfDashboard || 'Find in Cloudflare Dashboard'}
               </a>
             </div>
             <Input
+              dir="ltr"
               type="text"
-              placeholder="e.g. 724b4f792d39b271ed1b3b15364f1ce2"
+              placeholder={t.cfAccountPlaceholder || 'e.g. 724b4f792d39b271ed1b3b15364f1ce2'}
               value={cfAccountId}
               onChange={(e) => {
-                setCfAccountId(e.target.value.trim());
+                setCfAccountId((e.target.value ?? '').trim());
                 if (cfError) setCfError(null);
               }}
-              className="h-8 text-xs font-mono bg-card"
+              className="h-8 text-xs font-mono bg-card text-left"
             />
             {cfError && <p className="text-[11px] text-red-400 font-medium">{cfError}</p>}
           </div>
@@ -474,7 +477,9 @@ export const AddKeyDialog: React.FC<Props> = ({
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
             <label className="font-medium text-foreground">
-              {providerId === 'cloudflare' ? 'Cloudflare API Token' : 'API Secret Key'}
+              {providerId === 'cloudflare'
+                ? (t.cfApiToken || 'Cloudflare API Token')
+                : (t.apiSecretKey || 'API Secret Key')}
             </label>
             <a
               href={currentMeta.signupUrl}
@@ -482,10 +487,10 @@ export const AddKeyDialog: React.FC<Props> = ({
               rel="noopener noreferrer"
               className="text-[11px] text-muted-foreground hover:text-foreground underline"
             >
-              Get free key from {currentMeta.name}
+              {(t.getFreeKeyFrom || 'Get free key from {name}').replace('{name}', currentMeta.name)}
             </a>
           </div>
-          <div className="flex flex-col sm:flex-row gap-2">
+          <div dir="ltr" className="flex flex-col sm:flex-row gap-2 text-left">
             <textarea
               rows={2}
               placeholder={
@@ -501,24 +506,24 @@ export const AddKeyDialog: React.FC<Props> = ({
                   handleAddAndTestKey();
                 }
               }}
-              className="flex-1 p-2 text-xs font-mono rounded-md border border-border bg-card text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring resize-none w-full"
+              className="flex-1 p-2 text-xs font-mono rounded-md border border-border bg-card text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring resize-none w-full text-left"
             />
             <Button
               type="button"
               size="sm"
               onClick={handleAddAndTestKey}
-              disabled={!inputKeysText.trim() || isProcessing}
+              disabled={!(inputKeysText ?? '').trim() || isProcessing}
               className="w-full sm:w-auto self-stretch sm:self-end h-8 gap-1.5 text-xs font-semibold px-3"
             >
               {isProcessing ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  Testing & Adding...
+                  {t.testingAndAdding || 'Testing & Adding...'}
                 </>
               ) : (
                 <>
                   <Plus className="w-3.5 h-3.5" />
-                  Add Key
+                  {t.addKey || 'Add Key'}
                 </>
               )}
             </Button>
@@ -528,7 +533,7 @@ export const AddKeyDialog: React.FC<Props> = ({
         {/* 3. Vision Model Selector with Official shadcn Select */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
-            <label className="font-medium text-foreground">Vision Model</label>
+            <label className="font-medium text-foreground">{t.visionModel || 'Vision Model'}</label>
             {isFetchingModels && (
               <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-mono">
                 <Loader2 className="w-2.5 h-2.5 animate-spin" /> Fetching models...
@@ -541,55 +546,59 @@ export const AddKeyDialog: React.FC<Props> = ({
             )}
           </div>
 
-          <Select
-            value={selectedModel}
-            onValueChange={(val) => {
-              setSelectedModel(val);
-              setKeysList((prev) =>
-                prev.map((k) => (k.providerId === providerId ? { ...k, model: val } : k))
-              );
-            }}
-          >
-            <SelectTrigger className="h-8 text-xs bg-card">
-              <SelectValue placeholder="Select a vision model" />
-            </SelectTrigger>
-            <SelectContent className="max-h-64">
-              {availableModels.map((m) => {
-                const isDefault = m === currentMeta.defaultModelId;
-                const isFree =
-                  m.includes(':free') ||
-                  m.startsWith('openrouter/free') ||
-                  m.includes('flash-lite') ||
-                  m.includes('qwen');
-                const displayName = MODEL_DISPLAY_NAMES[m] || m;
-
-                return (
-                  <SelectItem key={m} value={m} className="text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono">{displayName}</span>
-                      {isDefault && (
-                        <Badge variant="outline" className="text-[9px] py-0 px-1">
-                          Recommended
-                        </Badge>
-                      )}
-                      {isFree && (
-                        <Badge variant="secondary" className="text-[9px] py-0 px-1 font-mono">
-                          Free
-                        </Badge>
-                      )}
-                    </div>
-                  </SelectItem>
+          <div dir="ltr" className="text-left">
+            <Select
+              value={selectedModel}
+              onValueChange={(val) => {
+                setSelectedModel(val);
+                setKeysList((prev) =>
+                  prev.map((k) => (k.providerId === providerId ? { ...k, model: val } : k))
                 );
-              })}
-            </SelectContent>
-          </Select>
+              }}
+            >
+              <SelectTrigger className="h-8 text-xs bg-card text-left">
+                <SelectValue placeholder="Select a vision model" />
+              </SelectTrigger>
+              <SelectContent className="max-h-64 text-left">
+                {availableModels.map((m) => {
+                  const isDefault = m === currentMeta.defaultModelId;
+                  const isFree =
+                    m.includes(':free') ||
+                    m.startsWith('openrouter/free') ||
+                    m.includes('flash-lite') ||
+                    m.includes('qwen');
+                  const displayName = MODEL_DISPLAY_NAMES[m] || m;
+
+                  return (
+                    <SelectItem key={m} value={m} className="text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono">{displayName}</span>
+                        {isDefault && (
+                          <Badge variant="outline" className="text-[9px] py-0 px-1">
+                            Recommended
+                          </Badge>
+                        )}
+                        {isFree && (
+                          <Badge variant="secondary" className="text-[9px] py-0 px-1 font-mono">
+                            Free
+                          </Badge>
+                        )}
+                      </div>
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         {/* 4. Active / Tested Keys List for Selected Provider */}
         <div className="space-y-2 pt-2 border-t border-border">
           <div className="flex items-center justify-between">
             <span className="font-medium text-foreground text-xs">
-              {currentMeta.name} Keys ({currentProviderKeys.length})
+              {(t.registeredKeys || '{name} Keys ({count})')
+                .replace('{name}', currentMeta.name)
+                .replace('{count}', String(currentProviderKeys.length))}
             </span>
             {currentProviderKeys.length > 0 && (
               <Button
@@ -599,13 +608,13 @@ export const AddKeyDialog: React.FC<Props> = ({
                 className="h-7 text-xs gap-1"
               >
                 <RefreshCw className="w-3 h-3" />
-                Test {currentMeta.name} Keys
+                {(t.testProviderKeys || 'Test {name} Keys').replace('{name}', currentMeta.name)}
               </Button>
             )}
           </div>
 
           {currentProviderKeys.length > 0 ? (
-            <div className="max-h-48 overflow-y-auto space-y-1.5 rounded-lg border border-border p-2 bg-card">
+            <div dir="ltr" className="max-h-48 overflow-y-auto space-y-1.5 rounded-lg border border-border p-2 bg-card text-left">
               {currentProviderKeys.map((entry, index) => {
                 const isLastAdded =
                   index === currentProviderKeys.length - 1 && currentProviderKeys.length > 1;
@@ -713,15 +722,17 @@ export const AddKeyDialog: React.FC<Props> = ({
             </div>
           ) : (
             <div className="p-4 rounded-lg border border-dashed border-border bg-muted/10 text-center text-xs text-muted-foreground">
-              No keys registered for {currentMeta.name} yet. Paste your key above and click &quot;+ Add Key&quot;.
+              {isRtl
+                ? `لم يتم تسجيل مفاتيح لـ ${currentMeta.name} بعد. الصق مفتاحك بالأعلى واضغط على "إضافة مفتاح".`
+                : `No keys registered for ${currentMeta.name} yet. Paste your key above and click "+ Add Key".`}
             </div>
           )}
         </div>
 
-        {/* Clean Footer: Redundant "Save Keys" button completely removed! */}
+        {/* Clean Footer */}
         <div className="flex items-center justify-end pt-2 border-t border-border">
           <Button size="sm" onClick={onClose} className="px-6 font-semibold">
-            Done
+            {t.done || 'Done'}
           </Button>
         </div>
       </div>
