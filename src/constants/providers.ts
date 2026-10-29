@@ -76,12 +76,13 @@ export const PROVIDERS_META: Record<ProviderType, ProviderMeta> = {
     defaultModelId: '@cf/meta/llama-3.2-11b-vision-instruct',
     recommendedVisionModels: [
       '@cf/meta/llama-3.2-11b-vision-instruct',
+      '@cf/llava-hf/llava-1.5-7b-hf',
     ],
     defaultRpm: 30,
     defaultRpd: 5000,
     docsUrl: 'https://developers.cloudflare.com/workers-ai/',
     signupUrl: 'https://dash.cloudflare.com/',
-    supportsDynamicModels: false,
+    supportsDynamicModels: true,
   },
 };
 
@@ -101,7 +102,6 @@ export const MODEL_DISPLAY_NAMES: Record<string, string> = {
   'meta-llama/llama-3.2-11b-vision-instruct:free': 'Llama 3.2 11B Vision (OpenRouter Free)',
   'qwen/qwen-2.5-vl-72b-instruct:free': 'Qwen 2.5 VL 72B (OpenRouter Free)',
   'mistralai/pixtral-12b:free': 'Pixtral 12B (OpenRouter Free)',
-  'openrouter/free': 'OpenRouter Free Router (Auto)',
 
   // Groq Cloud (Multimodal Vision)
   'qwen/qwen3.8-27b': 'Qwen 3.8 27B Vision (30 RPM Free)',
@@ -110,8 +110,9 @@ export const MODEL_DISPLAY_NAMES: Record<string, string> = {
   'pixtral-12b-2409': 'Pixtral 12B (Free Tier)',
   'pixtral-large-2411': 'Pixtral Large',
 
-  // Cloudflare
-  '@cf/meta/llama-3.2-11b-vision-instruct': 'Llama 3.2 11B Vision (Free Edge)',
+  // Cloudflare Workers AI
+  '@cf/meta/llama-3.2-11b-vision-instruct': 'Llama 3.2 11B Vision (Cloudflare Workers AI)',
+  '@cf/llava-hf/llava-1.5-7b-hf': 'LLaVA 1.5 7B Vision (Cloudflare Workers AI)',
 };
 
 // 64x64 valid PNG (white square) to satisfy minimum dimension requirements (e.g. >= 32px) on all vision providers

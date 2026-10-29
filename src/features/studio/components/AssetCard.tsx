@@ -3,21 +3,34 @@ import { MasterMetadataRecord } from '../../../types';
 import { db } from '../../../db';
 import { QueueItem } from '../../../services/queue/BatchQueueService';
 import { MODEL_DISPLAY_NAMES } from '../../../constants/providers';
-import { getAdobeCategoryName, getDreamstimeCategoryName } from '../../../constants/categories';
+import { getAdobeCategoryName, getDreamstimeCategoryName, FREEPIK_BASE_MODELS } from '../../../constants/categories';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Textarea } from '../../../components/ui/textarea';
+import { Switch } from '../../../components/ui/switch';
+import { Tooltip } from '../../../components/ui/tooltip';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../../../components/ui/select';
 import {
   AlertTriangle,
+  Box,
   Camera,
   Check,
   Copy,
   Edit3,
   Film,
   FileText,
+  HelpCircle,
   Image as ImageIcon,
+  Info,
   Layers,
   Loader2,
+  Pencil,
   Plus,
   RefreshCw,
   Tag,
@@ -57,6 +70,9 @@ export const AssetCard: React.FC<AssetCardProps> = ({
 }) => {
   const [localTitle, setLocalTitle] = useState(rec?.baseTitle || '');
   const [localDesc, setLocalDesc] = useState(rec?.detailedDescription || '');
+  const [isAiGenerated, setIsAiGenerated] = useState<boolean>(rec?.isAiGenerated ?? true);
+  const [localPrompt, setLocalPrompt] = useState<string>(rec?.aiGenerationInfo?.prompt || '');
+  const [localModel, setLocalModel] = useState<string>(rec?.aiGenerationInfo?.model || 'Google Nano Banana');
   const [isEditingKws, setIsEditingKws] = useState(false);
   const [rawKwsInput, setRawKwsInput] = useState('');
   const [isAddingTag, setIsAddingTag] = useState(false);
@@ -74,6 +90,56 @@ export const AssetCard: React.FC<AssetCardProps> = ({
       setLocalDesc(rec.detailedDescription);
     }
   }, [rec?.detailedDescription]);
+
+  useEffect(() => {
+    if (rec?.isAiGenerated !== undefined) {
+      setIsAiGenerated(rec.isAiGenerated);
+    }
+  }, [rec?.isAiGenerated]);
+
+  useEffect(() => {
+    if (rec?.aiGenerationInfo?.prompt !== undefined) {
+      setLocalPrompt(rec.aiGenerationInfo.prompt);
+    }
+  }, [rec?.aiGenerationInfo?.prompt]);
+
+  useEffect(() => {
+    if (rec?.aiGenerationInfo?.model !== undefined) {
+      setLocalModel(rec.aiGenerationInfo.model);
+    }
+  }, [rec?.aiGenerationInfo?.model]);
+
+  const handleToggleAi = async (checked: boolean) => {
+    setIsAiGenerated(checked);
+    if (rec) {
+      await db.masterRecords.update(rec.id, { isAiGenerated: checked });
+    }
+  };
+
+  const handleBlurPrompt = async () => {
+    if (rec && localPrompt.trim() !== rec.aiGenerationInfo?.prompt) {
+      await db.masterRecords.update(rec.id, {
+        aiGenerationInfo: {
+          ...rec.aiGenerationInfo,
+          prompt: localPrompt.trim(),
+          model: rec.aiGenerationInfo?.model || localModel,
+        },
+      });
+    }
+  };
+
+  const handleModelChange = async (val: string) => {
+    setLocalModel(val);
+    if (rec) {
+      await db.masterRecords.update(rec.id, {
+        aiGenerationInfo: {
+          ...rec.aiGenerationInfo,
+          prompt: localPrompt || rec.aiGenerationInfo?.prompt || '',
+          model: val,
+        },
+      });
+    }
+  };
 
   const handleBlurTitle = async () => {
     if (rec && localTitle.trim() !== rec.baseTitle) {
@@ -381,6 +447,92 @@ export const AssetCard: React.FC<AssetCardProps> = ({
       {/* RIGHT COLUMN: Title, Description, Keywords, Actions       */}
       {/* ======================================================== */}
       <div className="flex-1 w-full flex flex-col gap-3.5">
+        {/* AI GENERATED SWITCH ROW (Matching Contributor Portal Standards) */}
+        <div className="flex items-center justify-between pb-2 border-b border-border/60">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-semibold text-foreground">AI Generated</span>
+            <Tooltip content="Indicates whether this asset was generated with AI. When enabled, Freepik and Dreamstime AI metadata (Prompt & Model) are automatically included.">
+              <Info className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground cursor-pointer" />
+            </Tooltip>
+          </div>
+          <Switch
+            checked={isAiGenerated}
+            onCheckedChange={handleToggleAi}
+            aria-label="Toggle AI Generated status"
+          />
+        </div>
+
+        {/* PROMPT & BASE MODEL ROW (Visible when AI Generated is ON - Freepik Parity) */}
+        {isAiGenerated && (
+          <div className="space-y-1.5 p-2.5 rounded-lg border border-border/80 bg-secondary/15">
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-1.5 font-semibold text-foreground">
+                <Pencil className="w-3.5 h-3.5 text-sky-400" />
+                <span>Prompt</span>
+                <Tooltip content="The AI generation prompt used to create this image (satisfies Freepik Contributor Portal requirements).">
+                  <HelpCircle className="w-3 h-3 text-muted-foreground hover:text-foreground cursor-pointer" />
+                </Tooltip>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* Freepik Base Model Selector */}
+                <div className="flex items-center gap-1">
+                  <Box className="w-3.5 h-3.5 text-muted-foreground" />
+                  <Select
+                    value={localModel}
+                    onValueChange={handleModelChange}
+                  >
+                    <SelectTrigger className="h-7 text-xs bg-background/80 border-border min-w-[150px] max-w-[210px]">
+                      <SelectValue placeholder="Base model" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-60">
+                      {FREEPIK_BASE_MODELS.map((m) => (
+                        <SelectItem key={m} value={m} className="text-xs">
+                          {m}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => rec && onCopyText(localPrompt, `${asset.id}_prompt`)}
+                  disabled={!rec || !localPrompt}
+                  className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md border border-border bg-secondary/50 text-foreground hover:bg-secondary transition cursor-pointer disabled:opacity-40"
+                  title="Copy Prompt"
+                >
+                  {copiedKey === `${asset.id}_prompt` ? (
+                    <>
+                      <Check className="w-3 h-3 text-emerald-400" />
+                      <span className="text-emerald-400">Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3 h-3 text-muted-foreground" />
+                      <span>Copy</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {rec ? (
+              <Textarea
+                value={localPrompt}
+                onChange={(e) => setLocalPrompt(e.target.value)}
+                onBlur={handleBlurPrompt}
+                placeholder="Enter AI generation prompt..."
+                className="text-xs min-h-[52px] bg-secondary/20 border-border leading-relaxed resize-y focus:border-sky-500 font-mono"
+              />
+            ) : (
+              <div className="h-12 rounded-lg border border-dashed border-border bg-muted/20 flex items-center px-3 text-xs text-muted-foreground italic">
+                {isProcessing ? 'Generating AI prompt...' : 'Waiting in queue...'}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* TITLE ROW */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
@@ -602,37 +754,45 @@ export const AssetCard: React.FC<AssetCardProps> = ({
 
         {/* BOTTOM ACTION BAR: Categories & Regenerate Button */}
         <div className="pt-2 border-t border-border flex flex-wrap items-center justify-between gap-3 text-xs">
-          {/* Left: Category info & Copy all */}
+          {/* Left: Category info & Copy all matching reference screenshot */}
           <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
             {rec ? (
               <>
-                <span className="font-mono text-[10px] bg-secondary/60 px-2 py-0.5 rounded-md border border-border" title="Official Adobe Stock Category">
+                <span
+                  className="font-mono text-[10px] bg-secondary/60 px-2 py-0.5 rounded-md border border-border"
+                  title={getAdobeCategoryName(rec.categories.adobeCategoryId)}
+                >
                   Adobe:{' '}
                   <span className="text-foreground font-semibold">
-                    {getAdobeCategoryName(rec.categories.adobeCategoryId)}
+                    #{rec.categories.adobeCategoryId || 8}
                   </span>
                 </span>
-                <span className="font-mono text-[10px] bg-secondary/60 px-2 py-0.5 rounded-md border border-border" title="Official Shutterstock Category">
+                <span
+                  className="font-mono text-[10px] bg-secondary/60 px-2 py-0.5 rounded-md border border-border"
+                  title="Official Shutterstock Category"
+                >
                   Shutterstock:{' '}
                   <span className="text-foreground font-semibold">
-                    {rec.categories.shutterstockCategories[0] || 'General'}
+                    {rec.categories.shutterstockCategories[0] || 'Objects'}
                   </span>
                 </span>
-                <span className="font-mono text-[10px] bg-secondary/60 px-2 py-0.5 rounded-md border border-border" title="Official Dreamstime Category">
+                <span
+                  className="font-mono text-[10px] bg-secondary/60 px-2 py-0.5 rounded-md border border-border"
+                  title={getDreamstimeCategoryName(rec.categories.dreamstimeCategory1)}
+                >
                   Dreamstime:{' '}
                   <span className="text-foreground font-semibold">
-                    {getDreamstimeCategoryName(rec.categories.dreamstimeCategory1)}
+                    #{rec.categories.dreamstimeCategory1 || 114}
                   </span>
                 </span>
                 <button
                   type="button"
                   onClick={() => onCopyAll(rec)}
-                  className="text-[11px] font-medium text-foreground/80 hover:text-foreground hover:bg-secondary/60 px-2 py-0.5 rounded-md border border-border/80 transition cursor-pointer flex items-center gap-1.5 ml-1"
+                  className="text-[11px] font-medium text-foreground/90 hover:text-foreground underline transition cursor-pointer flex items-center gap-1 ml-1"
                   title="Copy Title, Description, and Keywords to clipboard"
                 >
-                  <Copy className="w-3 h-3 text-muted-foreground" />
                   {copiedKey === `${rec.id}_all` ? (
-                    <span className="text-emerald-400 font-semibold">Copied All!</span>
+                    <span className="text-emerald-400 font-semibold no-underline">Copied All!</span>
                   ) : (
                     <span>Copy All</span>
                   )}

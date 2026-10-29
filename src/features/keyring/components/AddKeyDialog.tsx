@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { ApiKeyRecord, ProviderType } from '../../../types';
 import { MODEL_DISPLAY_NAMES, PROVIDERS_META, PROVIDER_ORDER } from '../../../constants/providers';
-import { createApiKeyRecord, saveApiKey, removeApiKey, getAllApiKeys } from '../../../db';
+import { createApiKeyRecord, saveApiKey, updateApiKey, removeApiKey, getAllApiKeys } from '../../../db';
 import { keyRingScheduler } from '../../../services/scheduler/KeyRingScheduler';
 import { getProviderAdapter } from '../../../services/providers';
 import { Dialog } from '../../../components/ui/dialog';
 import { Button } from '../../../components/ui/button';
+import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
 import {
   Select,
@@ -67,6 +68,17 @@ export const AddKeyDialog: React.FC<Props> = ({
   const [isFetchingModels, setIsFetchingModels] = useState<boolean>(false);
   const [fetchNotice, setFetchNotice] = useState<string | null>(null);
 
+  const [cfAccountId, setCfAccountId] = useState<string>(() => {
+    return localStorage.getItem('stock_cf_account_id') || '';
+  });
+  const [cfError, setCfError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (cfAccountId) {
+      localStorage.setItem('stock_cf_account_id', cfAccountId);
+    }
+  }, [cfAccountId]);
+
   const currentMeta = PROVIDERS_META[providerId];
 
   // Reset or switch provider
@@ -76,6 +88,7 @@ export const AddKeyDialog: React.FC<Props> = ({
     setAvailableModels(meta.recommendedVisionModels);
     setSelectedModel(meta.defaultModelId);
     setFetchNotice(null);
+    setCfError(null);
   };
 
   // Pre-load all saved keys from database when dialog opens
@@ -122,6 +135,10 @@ export const AddKeyDialog: React.FC<Props> = ({
       }
       if ((first.startsWith('AQ.') || first.startsWith('AIza')) && providerId !== 'gemini') {
         handleProviderSelect('gemini');
+        return;
+      }
+      if (first.startsWith('cfut_') && providerId !== 'cloudflare') {
+        handleProviderSelect('cloudflare');
         return;
       }
 
@@ -187,6 +204,15 @@ export const AddKeyDialog: React.FC<Props> = ({
 
     if (lines.length === 0) return;
 
+    if (providerId === 'cloudflare' && !cfAccountId.trim()) {
+      const hasEmbedded = lines.some((l) => l.includes(':'));
+      if (!hasEmbedded) {
+        setCfError('Please enter your Cloudflare Account ID.');
+        return;
+      }
+    }
+    setCfError(null);
+
     setIsProcessing(true);
     const adapter = getProviderAdapter(providerId);
     const newEntries: KeyEntry[] = [];
@@ -194,7 +220,10 @@ export const AddKeyDialog: React.FC<Props> = ({
     const baseNow = Date.now();
 
     for (let i = 0; i < lines.length; i++) {
-      const rawKey = lines[i];
+      let rawKey = lines[i];
+      if (providerId === 'cloudflare' && !rawKey.includes(':') && cfAccountId.trim()) {
+        rawKey = `${cfAccountId.trim()}:${rawKey.trim()}`;
+      }
       const entryId = crypto.randomUUID();
       const itemCreatedAt = baseNow + i;
 
@@ -288,6 +317,21 @@ export const AddKeyDialog: React.FC<Props> = ({
       const adapter = getProviderAdapter(target.providerId);
       const res = await adapter.testKey(target.key, target.model);
 
+      const newStatus = res.success
+        ? 'healthy'
+        : res.statusCode === 429
+        ? 'cooling_down'
+        : 'invalid';
+      const cooldown = res.statusCode === 429 ? Date.now() + 30000 : undefined;
+
+      await updateApiKey(target.id, {
+        status: newStatus,
+        lastLatencyMs: res.latencyMs,
+        lastError: res.success ? '' : (res.error || 'Verification failed'),
+        cooldownUntil: cooldown,
+      });
+      await keyRingScheduler.refreshKeys();
+
       setKeysList((prev) =>
         prev.map((item) =>
           item.id === entryId
@@ -296,13 +340,19 @@ export const AddKeyDialog: React.FC<Props> = ({
                 isTesting: false,
                 testStatus: res.success ? 'success' : 'failed',
                 latencyMs: res.latencyMs,
-                error: res.error,
+                error: res.success ? undefined : (res.error || 'Verification failed'),
                 warning: res.warning,
               }
             : item
         )
       );
     } catch (err: any) {
+      await updateApiKey(target.id, {
+        status: 'invalid',
+        lastError: err.message || 'Verification failed',
+      });
+      await keyRingScheduler.refreshKeys();
+
       setKeysList((prev) =>
         prev.map((item) =>
           item.id === entryId
@@ -335,6 +385,12 @@ export const AddKeyDialog: React.FC<Props> = ({
   };
 
   const maskKey = (key: string) => {
+    if (key.includes(':')) {
+      const [acc, tok] = key.split(':');
+      const maskedAcc = acc.length > 8 ? `${acc.slice(0, 4)}...${acc.slice(-4)}` : acc;
+      const maskedTok = tok.length > 10 ? `${tok.slice(0, 5)}••••${tok.slice(-4)}` : '••••••••';
+      return `Account: ${maskedAcc} • Token: ${maskedTok}`;
+    }
     if (key.length <= 10) return '••••••••';
     return `${key.slice(0, 6)}••••${key.slice(-4)}`;
   };
@@ -384,10 +440,46 @@ export const AddKeyDialog: React.FC<Props> = ({
           </div>
         </div>
 
+        {/* Dedicated Cloudflare Account ID Field */}
+        {providerId === 'cloudflare' && (
+          <div className="space-y-1.5 p-3 rounded-lg border border-border bg-secondary/25">
+            <div className="flex items-center justify-between">
+              <label className="font-semibold text-foreground flex items-center gap-1.5">
+                <span>Cloudflare Account ID</span>
+                <span className="text-red-400">*</span>
+              </label>
+              <a
+                href="https://dash.cloudflare.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] text-muted-foreground hover:text-foreground underline"
+              >
+                Find in Cloudflare Dashboard
+              </a>
+            </div>
+            <Input
+              type="text"
+              placeholder="e.g. 724b4f792d39b271ed1b3b15364f1ce2"
+              value={cfAccountId}
+              onChange={(e) => {
+                setCfAccountId(e.target.value.trim());
+                if (cfError) setCfError(null);
+              }}
+              className="h-8 text-xs font-mono bg-card"
+            />
+            {cfError && <p className="text-[11px] text-red-400 font-medium">{cfError}</p>}
+            <p className="text-[10px] text-muted-foreground">
+              Required for Workers AI inference. Saved locally in your browser storage.
+            </p>
+          </div>
+        )}
+
         {/* 2. Key Input Area with Instant Auto-Verify Button */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
-            <label className="font-medium text-foreground">API Secret Key</label>
+            <label className="font-medium text-foreground">
+              {providerId === 'cloudflare' ? 'Cloudflare API Token' : 'API Secret Key'}
+            </label>
             <a
               href={currentMeta.signupUrl}
               target="_blank"
@@ -400,7 +492,11 @@ export const AddKeyDialog: React.FC<Props> = ({
           <div className="flex gap-2">
             <textarea
               rows={2}
-              placeholder="Paste your API key here (or multiple keys, one per line)..."
+              placeholder={
+                providerId === 'cloudflare'
+                  ? 'Paste your Cloudflare API Token (e.g. cfut_...)...'
+                  : 'Paste your API key here (or multiple keys, one per line)...'
+              }
               value={inputKeysText}
               onChange={(e) => setInputKeysText(e.target.value)}
               onKeyDown={(e) => {
@@ -551,12 +647,14 @@ export const AddKeyDialog: React.FC<Props> = ({
                         {entry.warning}
                       </p>
                     )}
-                    {entry.error && (
+                    {entry.error && entry.testStatus !== 'success' && (
                       <p
                         className="text-[10px] text-destructive truncate max-w-sm"
                         title={entry.error}
                       >
-                        {entry.error}
+                        {entry.error.toLowerCase().includes('timed out')
+                          ? 'Verification timed out. The provider endpoint was unreachable or slow.'
+                          : entry.error}
                       </p>
                     )}
                   </div>

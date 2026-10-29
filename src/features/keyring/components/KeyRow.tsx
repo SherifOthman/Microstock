@@ -60,7 +60,7 @@ export const KeyRow: React.FC<Props> = ({ keyRecord }) => {
       await updateApiKey(keyRecord.id, {
         status: newStatus,
         lastLatencyMs: res.latencyMs,
-        lastError: res.error,
+        lastError: res.success ? '' : (res.error || 'Verification failed'),
         cooldownUntil: cooldown,
       });
 
@@ -92,10 +92,16 @@ export const KeyRow: React.FC<Props> = ({ keyRecord }) => {
     await keyRingScheduler.refreshKeys();
   };
 
-  const maskedKey =
-    keyRecord.key.length > 10
-      ? `${keyRecord.key.slice(0, 7)}•••${keyRecord.key.slice(-4)}`
-      : '••••••••';
+  const maskedKey = keyRecord.key.includes(':')
+    ? (() => {
+        const [acc, tok] = keyRecord.key.split(':');
+        const maskedAcc = acc.length > 8 ? `${acc.slice(0, 4)}...${acc.slice(-4)}` : acc;
+        const maskedTok = tok.length > 10 ? `${tok.slice(0, 5)}•••${tok.slice(-4)}` : '••••••••';
+        return `Account: ${maskedAcc} • Token: ${maskedTok}`;
+      })()
+    : keyRecord.key.length > 10
+    ? `${keyRecord.key.slice(0, 7)}•••${keyRecord.key.slice(-4)}`
+    : '••••••••';
 
   const inFlight = keyRecord.activeRequests > 0;
   const recentCalls = keyRecord.requestsInWindow?.length || 0;

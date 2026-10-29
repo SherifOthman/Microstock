@@ -356,9 +356,10 @@ export class BatchQueueService {
         status: 'success',
       });
 
+      const parsedPrompt = masterRecord.aiGenerationInfo?.prompt;
       masterRecord.aiGenerationInfo = {
-        prompt: userPrompt || 'Standard stock metadata prompt',
-        model: keyRecord.modelId,
+        prompt: userPrompt || parsedPrompt || masterRecord.baseTitle,
+        model: defaultModelName || 'Google Nano Banana',
         provider: keyRecord.providerId,
         latencyMs,
         attemptHistory: [...item.attemptHistory],

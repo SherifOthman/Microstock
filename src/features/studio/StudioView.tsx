@@ -352,7 +352,9 @@ export const StudioView: React.FC = () => {
   };
 
   const handleStartQueue = () => {
-    batchQueueService.start(isAiGenerated, '', 'Nano Banana', keywordPhrasing, titleLengthPreset);
+    const finalFreepikModel =
+      freepikModel === 'Other' ? customFreepikModel.trim() || 'Google Nano Banana' : freepikModel;
+    batchQueueService.start(isAiGenerated, '', finalFreepikModel, keywordPhrasing, titleLengthPreset);
   };
 
   const handleCopyText = (text: string, keyIdentifier: string) => {
@@ -362,8 +364,18 @@ export const StudioView: React.FC = () => {
   };
 
   const handleCopyAllRecord = (rec: MasterMetadataRecord) => {
-    const text = `Title: ${rec.baseTitle}\n\nDescription: ${rec.detailedDescription}\n\nKeywords: ${rec.rankedKeywords.join(', ')}`;
-    handleCopyText(text, `${rec.id}_all`);
+    const lines = [
+      `Title: ${rec.baseTitle}`,
+      `Description: ${rec.detailedDescription}`,
+      `Keywords: ${rec.rankedKeywords.join(', ')}`,
+    ];
+    if (rec.isAiGenerated && rec.aiGenerationInfo?.prompt) {
+      lines.push(`Prompt: ${rec.aiGenerationInfo.prompt}`);
+    }
+    if (rec.isAiGenerated && rec.aiGenerationInfo?.model) {
+      lines.push(`Model: ${rec.aiGenerationInfo.model}`);
+    }
+    handleCopyText(lines.join('\n\n'), `${rec.id}_all`);
   };
 
   const handleDeleteAsset = (id: string, filename: string) => {
@@ -385,7 +397,9 @@ export const StudioView: React.FC = () => {
   };
 
   const handleRegenerateSingle = async (id: string) => {
-    await batchQueueService.reprocessItem(id, isAiGenerated, '', 'Nano Banana', keywordPhrasing, titleLengthPreset);
+    const finalFreepikModel =
+      freepikModel === 'Other' ? customFreepikModel.trim() || 'Google Nano Banana' : freepikModel;
+    await batchQueueService.reprocessItem(id, isAiGenerated, '', finalFreepikModel, keywordPhrasing, titleLengthPreset);
   };
 
   const handlePreviewCsv = (pid: SupportedPlatform) => {
@@ -877,7 +891,11 @@ export const StudioView: React.FC = () => {
             {isPaused && (
               <Button
                 size="sm"
-                onClick={() => batchQueueService.resume(isAiGenerated, '', 'gemini-3.8-flash')}
+                onClick={() => {
+                  const finalFreepikModel =
+                    freepikModel === 'Other' ? customFreepikModel.trim() || 'Google Nano Banana' : freepikModel;
+                  batchQueueService.resume(isAiGenerated, '', finalFreepikModel);
+                }}
                 className="gap-1.5 text-xs"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
@@ -931,15 +949,17 @@ export const StudioView: React.FC = () => {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() =>
+                      onClick={() => {
+                        const finalFreepikModel =
+                          freepikModel === 'Other' ? customFreepikModel.trim() || 'Google Nano Banana' : freepikModel;
                         batchQueueService.retryFailed(
                           isAiGenerated,
                           '',
-                          'Nano Banana',
+                          finalFreepikModel,
                           keywordPhrasing,
                           titleLengthPreset
-                        )
-                      }
+                        );
+                      }}
                       className="h-6 text-[10px] px-2 gap-1 cursor-pointer"
                     >
                       <RotateCcw className="w-2.5 h-2.5" />

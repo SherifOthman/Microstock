@@ -448,7 +448,7 @@ export class KeyRingScheduler {
 
       keyRecord.status = updatedStatus;
       keyRecord.lastLatencyMs = testRes.latencyMs;
-      keyRecord.lastError = testRes.error;
+      keyRecord.lastError = testRes.success ? '' : (testRes.error || '');
       keyRecord.cooldownUntil =
         testRes.statusCode === 429 ? Date.now() + 30000 : undefined;
 

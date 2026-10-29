@@ -6,7 +6,10 @@ export class OpenRouterAdapter implements IVisionProvider {
   readonly providerId: ProviderType = 'openrouter';
 
   async testKey(apiKey: string, modelId?: string): Promise<ProviderTestResult> {
-    const targetModel = modelId || PROVIDERS_META.openrouter.defaultModelId;
+    let targetModel = modelId || PROVIDERS_META.openrouter.defaultModelId;
+    if (targetModel.startsWith('openrouter/free')) {
+      targetModel = PROVIDERS_META.openrouter.defaultModelId;
+    }
     const cleanKey = apiKey.trim();
     const startTime = performance.now();
 
@@ -102,7 +105,9 @@ export class OpenRouterAdapter implements IVisionProvider {
     const rawModels: any[] = data.data || [];
 
     // Filter to vision models: input_modalities includes 'image', or description/name has vision/multimodal
+    // Explicitly exclude 'openrouter/free' because it is a text-only dynamic router
     const visionModels = rawModels.filter((m) => {
+      if ((m.id || '').startsWith('openrouter/free')) return false;
       const modalities = m.architecture?.input_modalities || [];
       const idLower = (m.id || '').toLowerCase();
       const descLower = (m.description || '').toLowerCase();
@@ -122,7 +127,6 @@ export class OpenRouterAdapter implements IVisionProvider {
     const freeVisionModels = visionModels.filter(
       (m) =>
         m.id.includes(':free') ||
-        m.id.startsWith('openrouter/free') ||
         (m.pricing && m.pricing.prompt === '0' && m.pricing.completion === '0')
     );
 
@@ -130,7 +134,7 @@ export class OpenRouterAdapter implements IVisionProvider {
 
     return candidates
       .map((m) => {
-        const isFree = m.pricing?.prompt === '0' || m.id.includes(':free') || m.id.startsWith('openrouter/free');
+        const isFree = m.pricing?.prompt === '0' || m.id.includes(':free');
         const priceTag = isFree
           ? 'Free'
           : `$${Number(m.pricing?.prompt || 0) * 1000000}/M tokens`;
@@ -161,7 +165,6 @@ export class OpenRouterAdapter implements IVisionProvider {
         if (idxA !== -1) return -1;
         if (idxB !== -1) return 1;
 
-        // Then other :free models (deprecate openrouter/free because it routes to text-only)
         if (a.id.includes(':free') && !b.id.includes(':free')) return -1;
         if (!a.id.includes(':free') && b.id.includes(':free')) return 1;
         return a.id.localeCompare(b.id);
@@ -176,7 +179,10 @@ export class OpenRouterAdapter implements IVisionProvider {
     systemPrompt?: string
   ): Promise<string> {
     const cleanKey = apiKey.trim();
-    const targetModel = modelId || PROVIDERS_META.openrouter.defaultModelId;
+    let targetModel = modelId || PROVIDERS_META.openrouter.defaultModelId;
+    if (targetModel.startsWith('openrouter/free')) {
+      targetModel = PROVIDERS_META.openrouter.defaultModelId;
+    }
     const url = 'https://openrouter.ai/api/v1/chat/completions';
 
     const messages: any[] = [];
