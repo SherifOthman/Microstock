@@ -96,6 +96,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   thumbnailMaxSize: 512,
   defaultAiPrompt: 'professional microstock photo, high resolution, commercial quality',
   defaultAiModelName: 'Midjourney v6',
+  providerModels: {
+    gemini: 'gemini-3.1-flash-lite',
+    groq: 'qwen/qwen3.8-27b',
+    openrouter: 'google/gemini-2.0-flash-exp:free',
+    mistral: 'pixtral-12b-2409',
+    cloudflare: '@cf/meta/llama-3.2-11b-vision-instruct',
+  },
 };
 
 // Settings API

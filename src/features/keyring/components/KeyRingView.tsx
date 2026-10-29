@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ApiKeyRecord, AppSettings, ProviderType } from '../../../types';
 import { KeyRow } from './KeyRow';
 import { AddKeyDialog } from './AddKeyDialog';
+import { PriorityCascadeCard } from './PriorityCascadeCard';
 import { MODEL_DISPLAY_NAMES, PROVIDERS_META, PROVIDER_ORDER } from '../../../constants/providers';
 import {
   exportKeyRingBackup,
@@ -271,22 +272,17 @@ export const KeyRingView: React.FC = () => {
         </div>
       </div>
 
-      {/* Sleek 1-line Auto-Cascading Priority Indicator */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-secondary/30 border border-border/70 text-xs">
-        <div className="flex items-center gap-2">
-          <Badge variant="outline" className="text-[10px] py-0 font-mono text-emerald-400 border-emerald-500/30 bg-emerald-500/10">
-            Priority #1: Google Gemini
-          </Badge>
-          <span className="text-[11px] text-muted-foreground hidden sm:inline">
-            Automatic failover: Google Gemini (#1) → Groq (#2) → OpenRouter (#3) → Mistral (#4)
-          </span>
-        </div>
-        <div className="flex items-center gap-2 text-[11px] text-muted-foreground font-mono">
-          <span>{healthyCount} active key{healthyCount === 1 ? '' : 's'}</span>
-          <span>•</span>
-          <span className="text-foreground font-semibold">{combinedRpm} total RPM</span>
-        </div>
-      </div>
+      {/* Interactive Drag & Drop Priority Cascade Configuration */}
+      <PriorityCascadeCard
+        settings={settings}
+        keys={keys}
+        onSettingsUpdate={(updated) => setSettings(updated)}
+        onAddKey={(p) => {
+          setBulkProviderTarget(p);
+          setIsAddKeyDialogOpen(true);
+        }}
+        onFilterProvider={(p) => setSelectedProviderFilter(p)}
+      />
 
       {/* Provider Filter Tabs */}
       <div className="flex items-center gap-1 border-b border-border pb-1 overflow-x-auto">

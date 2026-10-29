@@ -152,4 +152,5 @@ export interface AppSettings {
   defaultAiPrompt: string;
   defaultAiModelName: string;
   platformLimits?: Record<SupportedPlatform, number>;
+  providerModels?: Partial<Record<ProviderType, string>>;
 }
