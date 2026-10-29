@@ -25,6 +25,15 @@ export class CloudflareAdapter implements IVisionProvider {
     return { accountId: '', apiToken: trimmed };
   }
 
+  private getBaseUrl(): string {
+    // When executing in browser, route via the reverse proxy (/api/cloudflare)
+    // to bypass Cloudflare's server-only CORS restriction (which returns 405 on browser preflight OPTIONS)
+    if (typeof window !== 'undefined') {
+      return '/api/cloudflare';
+    }
+    return 'https://api.cloudflare.com/client/v4';
+  }
+
   async testKey(apiKey: string, modelId?: string): Promise<ProviderTestResult> {
     const targetModel = modelId || PROVIDERS_META.cloudflare.defaultModelId;
     const { accountId, apiToken } = this.parseCredentials(apiKey);
@@ -40,7 +49,7 @@ export class CloudflareAdapter implements IVisionProvider {
     }
 
     try {
-      const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${targetModel}`;
+      const url = `${this.getBaseUrl()}/accounts/${accountId}/ai/run/${targetModel}`;
       const payload = {
         prompt: 'Reply with OK if you see this 1x1 image.',
         image: Array.from(Uint8Array.from(atob(TEST_PIXEL_BASE64), (c) => c.charCodeAt(0))),
@@ -149,7 +158,7 @@ export class CloudflareAdapter implements IVisionProvider {
     if (!accountId || !apiToken) return verifiedModels;
 
     try {
-      const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/models/search`;
+      const url = `${this.getBaseUrl()}/accounts/${accountId}/ai/models/search`;
       const res = await fetch(url, {
         headers: {
           Authorization: `Bearer ${apiToken}`,
@@ -197,7 +206,7 @@ export class CloudflareAdapter implements IVisionProvider {
       throw new Error('Cloudflare requires both Account ID and API Token.');
     }
 
-    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${targetModel}`;
+    const url = `${this.getBaseUrl()}/accounts/${accountId}/ai/run/${targetModel}`;
     const payload = {
       prompt,
       image: Array.from(Uint8Array.from(atob(imageBase64), (c) => c.charCodeAt(0))),

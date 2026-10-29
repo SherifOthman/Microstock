@@ -1,9 +1,8 @@
 {
-  "framework": "vite",
   "rewrites": [
     {
-      "source": "/(.*)",
-      "destination": "/"
+      "source": "/api/cloudflare/:path*",
+      "destination": "https://api.cloudflare.com/client/v4/:path*"
     }
   ]
 }
