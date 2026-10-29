@@ -1,47 +1,40 @@
 import React, { useState } from 'react';
 import { ApiKeyRecord } from '../../../types';
-import { KeyStatusBadge } from './KeyStatusBadge';
-import { ModelSelectDialog } from './ModelSelectDialog';
-import { MODEL_DISPLAY_NAMES, PROVIDERS_META } from '../../../constants/providers';
 import { getProviderAdapter } from '../../../services/providers';
 import { updateApiKey, removeApiKey } from '../../../db';
 import { keyRingScheduler } from '../../../services/scheduler/KeyRingScheduler';
-import { Button } from '../../../components/ui/button';
-import { Badge } from '../../../components/ui/badge';
 import { ConfirmDialog } from '../../../components/ui/alert-dialog';
 import {
   Check,
   Copy,
   Eye,
   EyeOff,
-  Flame,
   Loader2,
   Play,
-  Settings2,
   Trash2,
 } from 'lucide-react';
 
 interface Props {
   keyRecord: ApiKeyRecord;
+  index: number;
 }
 
-export const KeyRow: React.FC<Props> = ({ keyRecord }) => {
+export const KeyRow: React.FC<Props> = ({ keyRecord, index }) => {
   const [showKey, setShowKey] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [isModelDialogOpen, setIsModelDialogOpen] = useState(false);
   const [testResult, setTestResult] = useState<{ success?: boolean; msg?: string } | null>(null);
 
-  const providerMeta = PROVIDERS_META[keyRecord.providerId];
-
-  const handleCopy = () => {
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
     navigator.clipboard.writeText(keyRecord.key);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
 
-  const handleTestKey = async () => {
+  const handleTestKey = async (e: React.MouseEvent) => {
+    e.stopPropagation();
     setIsTesting(true);
     setTestResult(null);
 
@@ -70,7 +63,7 @@ export const KeyRow: React.FC<Props> = ({ keyRecord }) => {
         success: res.success,
         msg: res.success ? `${res.latencyMs}ms` : 'Failed',
       });
-    } catch (err: any) {
+    } catch {
       setTestResult({ success: false, msg: 'Error' });
     } finally {
       setIsTesting(false);
@@ -78,12 +71,8 @@ export const KeyRow: React.FC<Props> = ({ keyRecord }) => {
     }
   };
 
-  const handleSaveModel = async (newModelId: string) => {
-    await updateApiKey(keyRecord.id, { modelId: newModelId });
-    await keyRingScheduler.refreshKeys();
-  };
-
-  const handleDelete = () => {
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
     setIsDeleteDialogOpen(true);
   };
 
@@ -103,96 +92,109 @@ export const KeyRow: React.FC<Props> = ({ keyRecord }) => {
     ? `${keyRecord.key.slice(0, 7)}•••${keyRecord.key.slice(-4)}`
     : '••••••••';
 
-  const inFlight = keyRecord.activeRequests > 0;
-  const recentCalls = keyRecord.requestsInWindow?.length || 0;
-
   return (
     <>
-      <div className="flex items-center justify-between p-2 rounded-lg border border-border bg-card/60 hover:bg-card transition text-xs gap-2">
-        {/* Left: Provider Tag & Masked Key */}
+      <div className="h-9 px-2.5 rounded-md hover:bg-zinc-900/80 flex items-center justify-between text-xs transition-colors group">
+        {/* Left: Key Index + Monospace Masked Key */}
         <div className="flex items-center gap-2 min-w-0">
-          <Badge variant="outline" className="font-mono uppercase text-[10px] shrink-0">
-            {keyRecord.providerId.slice(0, 3)}
-          </Badge>
-
-          <div className="flex items-center gap-1.5 text-muted-foreground font-mono text-[11px] truncate">
-            <span className="font-semibold text-foreground truncate">{showKey ? keyRecord.key : maskedKey}</span>
-            <button
-              type="button"
-              onClick={() => setShowKey(!showKey)}
-              className="hover:text-foreground cursor-pointer p-0.5 shrink-0"
-              title={showKey ? 'Hide' : 'Reveal'}
-            >
-              {showKey ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-            </button>
-            <button
-              type="button"
-              onClick={handleCopy}
-              className="hover:text-foreground cursor-pointer p-0.5 shrink-0"
-              title="Copy"
-            >
-              {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-            </button>
-          </div>
+          <span className="text-[11px] font-mono text-zinc-500 font-medium shrink-0">
+            #{index + 1}
+          </span>
+          <span className="font-mono text-xs text-zinc-300 truncate">
+            {showKey ? keyRecord.key : maskedKey}
+          </span>
         </div>
 
-        {/* Right: Status & Actions (No duplicate model name!) */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          <KeyStatusBadge keyRecord={keyRecord} />
-
-          {testResult && (
+        {/* Right: Latency/Status + Quick Action Icons */}
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Status / Latency indicator */}
+          {testResult ? (
             <span
-              className={`text-[11px] font-mono mr-0.5 ${
-                testResult.success ? 'text-emerald-400' : 'text-destructive'
+              className={`text-xs font-mono ${
+                testResult.success ? 'text-emerald-400' : 'text-red-400'
               }`}
             >
               {testResult.msg}
             </span>
+          ) : keyRecord.status === 'healthy' && keyRecord.lastLatencyMs ? (
+            <span className="flex items-center gap-1 text-xs font-mono text-emerald-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span>{keyRecord.lastLatencyMs}ms</span>
+            </span>
+          ) : keyRecord.status === 'healthy' ? (
+            <span className="flex items-center gap-1 text-xs font-mono text-emerald-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span>Ready</span>
+            </span>
+          ) : keyRecord.status === 'cooling_down' ? (
+            <span className="flex items-center gap-1 text-xs font-mono text-amber-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+              <span>Cooldown</span>
+            </span>
+          ) : keyRecord.status === 'invalid' ? (
+            <span className="flex items-center gap-1 text-xs font-mono text-red-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+              <span>Invalid</span>
+            </span>
+          ) : (
+            <span className="text-xs font-mono text-zinc-500">Untested</span>
           )}
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleTestKey}
-            disabled={isTesting || keyRecord.status === 'disabled'}
-            className="h-6 px-2 text-[11px] gap-1 cursor-pointer"
-            title="Test key"
-          >
-            {isTesting ? (
-              <Loader2 className="w-3 h-3 animate-spin" />
-            ) : (
-              <Play className="w-3 h-3 text-emerald-400" />
-            )}
-            Test
-          </Button>
+          {/* Action Icons (Grouped tightly) */}
+          <div className="flex items-center gap-0.5 ml-1">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowKey(!showKey);
+              }}
+              className="p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition cursor-pointer"
+              title={showKey ? 'Hide' : 'Reveal'}
+            >
+              {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            </button>
 
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleDelete}
-            className="h-6 w-6 text-muted-foreground hover:text-destructive cursor-pointer"
-            title="Delete key"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </Button>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition cursor-pointer"
+              title="Copy Key"
+            >
+              {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleTestKey}
+              disabled={isTesting}
+              className="p-1 rounded text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800 transition cursor-pointer disabled:opacity-30"
+              title="Test Key"
+            >
+              {isTesting ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+              ) : (
+                <Play className="w-3.5 h-3.5" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleDelete}
+              className="p-1 rounded text-zinc-400 hover:text-red-400 hover:bg-red-950/30 transition cursor-pointer"
+              title="Delete Key"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       </div>
-
-      {isModelDialogOpen && (
-        <ModelSelectDialog
-          keyRecord={keyRecord}
-          open={isModelDialogOpen}
-          onClose={() => setIsModelDialogOpen(false)}
-          onSave={handleSaveModel}
-        />
-      )}
 
       <ConfirmDialog
         open={isDeleteDialogOpen}
         onOpenChange={setIsDeleteDialogOpen}
         title="Delete API Key"
-        description={`Are you sure you want to delete "${keyRecord.label}"? Any active rotation using this key will immediately stop.`}
-        confirmText="Delete Key"
+        description="Are you sure you want to delete this API key?"
+        confirmText="Delete"
         variant="destructive"
         onConfirm={handleConfirmDelete}
       />

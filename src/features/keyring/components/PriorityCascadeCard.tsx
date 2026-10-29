@@ -3,7 +3,6 @@ import { ApiKeyRecord, AppSettings, ProviderType } from '../../../types';
 import { MODEL_DISPLAY_NAMES, PROVIDERS_META, PROVIDER_ORDER } from '../../../constants/providers';
 import { saveAppSettings, updateApiKey } from '../../../db';
 import { keyRingScheduler } from '../../../services/scheduler/KeyRingScheduler';
-import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { Tooltip } from '../../../components/ui/tooltip';
 import {
@@ -13,13 +12,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../../../components/ui/select';
+import { KeyRow } from './KeyRow';
 import {
   ChevronDown,
-  ChevronUp,
   GripVertical,
+  Play,
   Plus,
   RotateCcw,
-  SlidersHorizontal,
 } from 'lucide-react';
 
 interface Props {
@@ -27,7 +26,8 @@ interface Props {
   keys: ApiKeyRecord[];
   onSettingsUpdate: (settings: AppSettings) => void;
   onAddKey: (provider: ProviderType) => void;
-  onFilterProvider?: (provider: ProviderType) => void;
+  onTestAll: () => void;
+  isTestingAll: boolean;
 }
 
 export const PriorityCascadeCard: React.FC<Props> = ({
@@ -35,12 +35,27 @@ export const PriorityCascadeCard: React.FC<Props> = ({
   keys,
   onSettingsUpdate,
   onAddKey,
-  onFilterProvider,
+  onTestAll,
+  isTestingAll,
 }) => {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [expandedProviders, setExpandedProviders] = useState<Record<ProviderType, boolean>>({
+    gemini: false,
+    groq: false,
+    openrouter: false,
+    mistral: false,
+    cloudflare: false,
+  });
 
-  // Reconstruct current priority list (safeguarding against missing providers)
+  const toggleExpand = (provider: ProviderType) => {
+    setExpandedProviders((prev) => ({
+      ...prev,
+      [provider]: !prev[provider],
+    }));
+  };
+
+  // Reconstruct current priority list
   const currentPriority: ProviderType[] = React.useMemo(() => {
     const saved = settings?.providerPriority || [];
     const set = new Set(saved);
@@ -57,29 +72,11 @@ export const PriorityCascadeCard: React.FC<Props> = ({
     await keyRingScheduler.refreshKeys();
   };
 
-  const handleMoveUp = (index: number) => {
-    if (index <= 0) return;
-    const newOrder = [...currentPriority];
-    const temp = newOrder[index - 1];
-    newOrder[index - 1] = newOrder[index];
-    newOrder[index] = temp;
-    handleReorder(newOrder);
-  };
-
-  const handleMoveDown = (index: number) => {
-    if (index >= currentPriority.length - 1) return;
-    const newOrder = [...currentPriority];
-    const temp = newOrder[index + 1];
-    newOrder[index + 1] = newOrder[index];
-    newOrder[index] = temp;
-    handleReorder(newOrder);
-  };
-
   const handleResetDefault = () => {
     handleReorder(['gemini', 'groq', 'openrouter', 'mistral', 'cloudflare']);
   };
 
-  // Drag and Drop event handlers
+  // Drag and Drop
   const handleDragStart = (e: React.DragEvent, index: number) => {
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = 'move';
@@ -101,7 +98,6 @@ export const PriorityCascadeCard: React.FC<Props> = ({
       setDraggedIndex(null);
       return;
     }
-
     const newOrder = [...currentPriority];
     const [moved] = newOrder.splice(draggedIndex, 1);
     newOrder.splice(targetIndex, 0, moved);
@@ -114,7 +110,6 @@ export const PriorityCascadeCard: React.FC<Props> = ({
     setDragOverIndex(null);
   };
 
-  // Model Selection per Provider
   const handleModelChange = async (provider: ProviderType, modelId: string) => {
     if (!settings) return;
     const currentModels = settings.providerModels || {};
@@ -126,7 +121,6 @@ export const PriorityCascadeCard: React.FC<Props> = ({
     });
     onSettingsUpdate(updated);
 
-    // Also update any existing keys of this provider in DB
     const matchingKeys = keys.filter((k) => k.providerId === provider);
     for (const k of matchingKeys) {
       await updateApiKey(k.id, { modelId });
@@ -134,64 +128,64 @@ export const PriorityCascadeCard: React.FC<Props> = ({
     await keyRingScheduler.refreshKeys();
   };
 
-  const isPriorityMode = settings?.routingStrategy === 'priority_tiered';
-
   return (
-    <div className="p-3 bg-card rounded-xl border border-border space-y-2.5 text-xs">
-      {/* Header with Title, Mode Indicator & Reset */}
-      <div className="flex items-center justify-between gap-2 pb-2 border-b border-border">
-        <div className="flex items-center gap-1.5">
-          <SlidersHorizontal className="w-3.5 h-3.5 text-foreground" />
-          <span className="font-semibold text-xs text-foreground">
+    <div className="space-y-3 text-xs">
+      {/* Top Modal Action Bar (Clean Linear/Vercel style) */}
+      <div className="flex items-center justify-between gap-2 pb-2 border-b border-zinc-800">
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-sm text-zinc-100">
             Provider Priority & Failover
           </span>
-          <Tooltip content="The AI generator starts with Provider #1. If it gets rate limited (429) or hits an error, it automatically falls back to #2, #3, etc. Drag ⠿ or click ▲/▼ to change priority.">
-            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-secondary/80 text-[10px] text-muted-foreground hover:text-foreground cursor-pointer font-bold">
+          <Tooltip content="The AI begins with #1. If it hits rate limits or errors, it cascades sequentially down the list. Drag rows to reorder.">
+            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-zinc-800 text-[10px] text-zinc-400 hover:text-zinc-200 cursor-pointer font-bold">
               i
             </span>
           </Tooltip>
+          <button
+            type="button"
+            onClick={handleResetDefault}
+            className="text-[11px] text-zinc-400 hover:text-zinc-200 hover:underline cursor-pointer ml-1 flex items-center gap-1"
+            title="Reset to Gemini #1"
+          >
+            <RotateCcw className="w-3 h-3" />
+            <span>Reset Order</span>
+          </button>
         </div>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleResetDefault}
-          className="h-6 text-[11px] text-muted-foreground hover:text-foreground shrink-0 gap-1 px-2"
-          title="Reset to default order (Google Gemini #1)"
-        >
-          <RotateCcw className="w-3 h-3" />
-          <span>Reset Order</span>
-        </Button>
+        <div className="flex items-center gap-2">
+          {keys.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onTestAll}
+              disabled={isTestingAll}
+              className="h-7 text-xs gap-1.5 px-3 border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800 cursor-pointer"
+            >
+              <Play className="w-3 h-3 text-emerald-400" />
+              <span>{isTestingAll ? 'Testing...' : 'Test All'}</span>
+            </Button>
+          )}
+
+          <Button
+            size="sm"
+            onClick={() => onAddKey('gemini')}
+            className="h-7 text-xs font-semibold px-3.5 bg-zinc-100 text-zinc-950 hover:bg-white cursor-pointer shadow-xs gap-1.5"
+          >
+            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+            <span>Add Key</span>
+          </Button>
+        </div>
       </div>
 
-      {/* Draggable Reorderable Priority Rows */}
-      <div className="space-y-1.5" onDragLeave={() => setDragOverIndex(null)}>
+      {/* Unified Collapsible Provider Accordion Stack */}
+      <div className="space-y-2" onDragLeave={() => setDragOverIndex(null)}>
         {currentPriority.map((providerId, index) => {
           const meta = PROVIDERS_META[providerId];
           const providerKeys = keys.filter((k) => k.providerId === providerId);
           const healthyKeys = providerKeys.filter((k) => k.status === 'healthy');
-          const hasKeys = providerKeys.length > 0;
-
-          // Determine badge label and color matching the reference design
           const isPrimary = index === 0;
-          const isFallback1 = index === 1;
-          const isFallback2 = index === 2;
+          const isExpanded = expandedProviders[providerId] ?? (providerKeys.length > 0 && isPrimary);
 
-          let badgeText = `#${index + 1} Fallback ${index}`;
-          let badgeStyle = 'border-border text-muted-foreground bg-secondary/40';
-          let rowHighlight = 'border-border bg-card/60 hover:bg-card';
-
-          if (isPrimary) {
-            badgeText = '#1 Primary';
-            badgeStyle = 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10 font-bold';
-            rowHighlight = 'border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/10';
-          } else if (isFallback1) {
-            badgeStyle = 'border-sky-500/40 text-sky-400 bg-sky-500/10 font-semibold';
-          } else if (isFallback2) {
-            badgeStyle = 'border-purple-500/40 text-purple-400 bg-purple-500/10 font-semibold';
-          }
-
-          // Active vision model
           const savedModel =
             settings?.providerModels?.[providerId] ||
             providerKeys[0]?.modelId ||
@@ -199,6 +193,11 @@ export const PriorityCascadeCard: React.FC<Props> = ({
 
           const isBeingDragged = draggedIndex === index;
           const isDragOver = dragOverIndex === index;
+
+          // Key health pill color
+          const hasKeys = providerKeys.length > 0;
+          const allHealthy = hasKeys && healthyKeys.length === providerKeys.length;
+          const someHealthy = hasKeys && healthyKeys.length > 0 && !allHealthy;
 
           return (
             <div
@@ -208,115 +207,148 @@ export const PriorityCascadeCard: React.FC<Props> = ({
               onDragOver={(e) => handleDragOver(e, index)}
               onDrop={(e) => handleDrop(e, index)}
               onDragEnd={handleDragEnd}
-              className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-2 rounded-lg border transition-all ${rowHighlight} ${
-                isBeingDragged ? 'opacity-40 scale-[0.99] border-dashed border-sky-400' : ''
-              } ${isDragOver ? 'border-primary ring-2 ring-primary/20 scale-[1.01]' : ''}`}
+              className={`rounded-lg border transition-all overflow-hidden ${
+                isPrimary
+                  ? 'border-emerald-500/40 bg-zinc-900/90'
+                  : 'border-zinc-800 bg-zinc-900/60 hover:bg-zinc-900/80'
+              } ${isBeingDragged ? 'opacity-40 border-dashed border-sky-400' : ''} ${
+                isDragOver ? 'border-primary ring-2 ring-primary/20 scale-[1.005]' : ''
+              }`}
             >
-              {/* Left: Drag Handle, Up/Down, Priority Badge & Provider Name */}
-              <div className="flex items-center gap-2 min-w-0">
-                {/* Drag Handle with Hint Tooltip */}
-                <Tooltip content="Click & drag to reorder priority">
+              {/* Main Provider Row (Collapsed Header) */}
+              <div
+                onClick={() => toggleExpand(providerId)}
+                className="p-3 flex items-center justify-between gap-3 cursor-pointer select-none"
+              >
+                {/* Left Group: Drag Handle, Minimal Priority Badge, Provider Name */}
+                <div className="flex items-center gap-2.5 min-w-0">
                   <div
-                    className="p-1 rounded cursor-grab active:cursor-grabbing text-muted-foreground/60 hover:text-foreground transition hover:bg-secondary"
-                    aria-label="Drag to reorder"
+                    onClick={(e) => e.stopPropagation()}
+                    className="p-0.5 text-zinc-500 hover:text-zinc-300 cursor-grab active:cursor-grabbing transition"
+                    title="Drag to reorder priority"
                   >
-                    <GripVertical className="w-3.5 h-3.5" />
+                    <GripVertical className="w-4 h-4" />
                   </div>
-                </Tooltip>
 
-                {/* Up / Down Arrows */}
-                <div className="flex flex-col -space-y-1">
-                  <button
-                    type="button"
-                    onClick={() => handleMoveUp(index)}
-                    disabled={index === 0}
-                    className="p-0.5 text-muted-foreground/60 hover:text-foreground disabled:opacity-20 cursor-pointer disabled:cursor-not-allowed transition"
-                    title="Move up in priority"
+                  {/* Minimal Priority Badge */}
+                  <span
+                    className={`text-xs font-mono px-2 py-0.5 rounded font-medium shrink-0 ${
+                      isPrimary
+                        ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-semibold'
+                        : 'bg-zinc-800 text-zinc-400 border border-zinc-700/60'
+                    }`}
                   >
-                    <ChevronUp className="w-3 h-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleMoveDown(index)}
-                    disabled={index === currentPriority.length - 1}
-                    className="p-0.5 text-muted-foreground/60 hover:text-foreground disabled:opacity-20 cursor-pointer disabled:cursor-not-allowed transition"
-                    title="Move down in priority"
-                  >
-                    <ChevronDown className="w-3 h-3" />
-                  </button>
-                </div>
+                    {isPrimary ? '#1 Primary' : `#${index + 1}`}
+                  </span>
 
-                {/* Priority Badge */}
-                <span
-                  className={`text-[10px] font-mono px-2 py-0.5 rounded border shrink-0 ${badgeStyle}`}
-                >
-                  {badgeText}
-                </span>
-
-                {/* Provider Title & Subtitle */}
-                <div className="flex items-center gap-1.5 truncate">
-                  <span className="font-semibold text-foreground truncate">{meta.name}</span>
-                  <span className="text-[10px] text-muted-foreground truncate hidden md:inline">
-                    ({meta.badge})
+                  {/* Provider Name */}
+                  <span className="font-medium text-sm text-zinc-100 truncate">
+                    {meta.name}
                   </span>
                 </div>
-              </div>
 
-              {/* Right: Model Selector & Key Counter / Add Key */}
-              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full sm:w-auto justify-between sm:justify-end shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-border/40">
-                {/* Model Selector Dropdown */}
-                <div className="flex items-center gap-1.5 flex-1 sm:flex-initial">
-                  <span className="text-[10px] text-muted-foreground font-mono hidden xs:inline">Model:</span>
+                {/* Right Group: Model Selector, Key Health Pill, Expand Chevron */}
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex items-center gap-2.5 shrink-0"
+                >
+                  {/* Model Selector Dropdown */}
                   <Select
                     value={savedModel}
                     onValueChange={(val) => handleModelChange(providerId, val)}
                   >
-                    <SelectTrigger className="h-7 text-xs bg-card border-border w-full sm:w-auto sm:min-w-[170px] sm:max-w-[230px]">
+                    <SelectTrigger className="h-8 text-xs bg-zinc-950 border-zinc-800 min-w-[200px] max-w-[240px] text-zinc-200">
                       <SelectValue>
                         <span className="truncate">
                           {MODEL_DISPLAY_NAMES[savedModel] || savedModel}
                         </span>
                       </SelectValue>
                     </SelectTrigger>
-                    <SelectContent className="max-h-56">
+                    <SelectContent className="max-h-56 bg-zinc-950 border-zinc-800 text-zinc-200">
                       {meta.recommendedVisionModels.map((m) => (
-                        <SelectItem key={m} value={m} className="text-xs">
+                        <SelectItem key={m} value={m} className="text-xs focus:bg-zinc-800">
                           <span className="font-mono">{MODEL_DISPLAY_NAMES[m] || m}</span>
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
 
-                {/* Key Status Pill or + Add Key Button */}
-                {hasKeys ? (
+                  {/* Key Health Pill */}
                   <button
                     type="button"
-                    onClick={() => onFilterProvider?.(providerId)}
-                    className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-border bg-secondary/40 hover:bg-secondary text-[11px] font-mono transition cursor-pointer shrink-0"
-                    title={`View ${meta.name} keys in keyring`}
+                    onClick={() => toggleExpand(providerId)}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-zinc-800 bg-zinc-950 text-xs font-mono cursor-pointer transition hover:bg-zinc-900"
+                    title={`${healthyKeys.length} of ${providerKeys.length} keys active`}
                   >
                     <span
                       className={`w-1.5 h-1.5 rounded-full ${
-                        healthyKeys.length > 0 ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                        allHealthy
+                          ? 'bg-emerald-400 animate-pulse'
+                          : someHealthy
+                          ? 'bg-amber-400'
+                          : 'bg-zinc-600'
                       }`}
                     />
-                    <span className="font-semibold text-foreground">{healthyKeys.length}</span>
-                    <span className="text-muted-foreground">/ {providerKeys.length}</span>
+                    <span className="text-zinc-200 font-semibold">{healthyKeys.length}</span>
+                    <span className="text-zinc-500">/ {providerKeys.length} keys</span>
                   </button>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onAddKey(providerId)}
-                    className="h-7 text-xs gap-1 border-dashed hover:border-solid hover:bg-primary hover:text-primary-foreground shrink-0"
-                    title={`Add an API key for ${meta.name}`}
+
+                  {/* Expand/Collapse Chevron */}
+                  <button
+                    type="button"
+                    onClick={() => toggleExpand(providerId)}
+                    className="p-1 rounded text-zinc-400 hover:text-zinc-100 transition cursor-pointer"
+                    title={isExpanded ? 'Collapse keys' : 'Expand keys'}
                   >
-                    <Plus className="w-3 h-3" />
-                    <span>Add key</span>
-                  </Button>
-                )}
+                    <ChevronDown
+                      className={`w-4 h-4 text-zinc-400 transition-transform duration-200 ${
+                        isExpanded ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
+                </div>
               </div>
+
+              {/* Nested Keys Drawer (Expanded State) */}
+              {isExpanded && (
+                <div className="border-t border-zinc-800/80 bg-zinc-950/60 px-3.5 py-2.5 space-y-1.5 animate-in fade-in-50 duration-150">
+                  {providerKeys.length === 0 ? (
+                    <div className="flex items-center justify-between py-2 px-2 text-zinc-500 text-xs">
+                      <span>No keys added for {meta.name} yet.</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onAddKey(providerId)}
+                        className="h-6 text-xs text-zinc-300 hover:text-white hover:bg-zinc-800 cursor-pointer gap-1 px-2"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>Add Key</span>
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="space-y-1">
+                        {providerKeys.map((keyRec, kIdx) => (
+                          <KeyRow key={keyRec.id} keyRecord={keyRec} index={kIdx} />
+                        ))}
+                      </div>
+
+                      {/* Quick Add Button at bottom left */}
+                      <div className="pt-1.5 border-t border-zinc-900 flex justify-start">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onAddKey(providerId)}
+                          className="h-6 text-[11px] text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900 cursor-pointer gap-1 px-2"
+                        >
+                          <Plus className="w-3 h-3" />
+                          <span>Add {meta.name} Key</span>
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}
