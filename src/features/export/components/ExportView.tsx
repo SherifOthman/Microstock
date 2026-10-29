@@ -51,8 +51,11 @@ export const ExportView: React.FC = () => {
       const dtPel = JSON.parse(localStorage.getItem('stock_dt_pel') ?? 'true');
       const dtSrel = JSON.parse(localStorage.getItem('stock_dt_srel') ?? 'false');
       const vecLicense = (localStorage.getItem('stock_vec_license') as 'pro' | 'free') || 'pro';
-      const aiSoftware = localStorage.getItem('stock_ai_software') || 'midjourney';
-      const customAi = localStorage.getItem('stock_custom_ai_software') || '';
+      const freepikAi = JSON.parse(localStorage.getItem('stock_freepik_ai') ?? 'true');
+      const freepikModel = localStorage.getItem('stock_freepik_model') || 'Google Nano Banana';
+      const customFreepikModel = localStorage.getItem('stock_custom_freepik_model') || '';
+      const finalFreepikModel =
+        freepikModel === 'Other' ? (customFreepikModel.trim() || 'Google Nano Banana') : freepikModel;
 
       return {
         dreamstime: {
@@ -67,7 +70,8 @@ export const ExportView: React.FC = () => {
           license: vecLicense,
         },
         freepik: {
-          modelName: aiSoftware === 'other' ? (customAi.trim() || 'AI Generator') : aiSoftware,
+          modelName: finalFreepikModel,
+          isAiGenerated: freepikAi,
         },
       };
     } catch {

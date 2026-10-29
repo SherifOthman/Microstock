@@ -153,6 +153,7 @@ export interface VecteezyTransformOptions {
 
 export interface FreepikTransformOptions {
   modelName?: string;
+  isAiGenerated?: boolean;
 }
 
 export interface UniversalTransformOptions {
@@ -172,18 +173,21 @@ export function transformForFreepik(
     // 2. Replace hyphens with spaces to prevent Freepik from concatenating words (e.g. Snowy-Winter -> SnowyWinter)
     cleanTitle = cleanTitle.replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
 
-    // 3. Model selector (default 'Google Nano Banana' as shown in Freepik portal)
-    const model =
-      options?.modelName ||
-      (rec.isAiGenerated && rec.aiGenerationInfo?.model ? rec.aiGenerationInfo.model : 'Google Nano Banana');
+    const isAi = options?.isAiGenerated !== undefined ? options.isAiGenerated : rec.isAiGenerated;
 
-    // 4. Keywords capped strictly at 49 (Freepik auto-appends '_ai_generated' on upload, preventing 50+ overflow)
-    const keywords = rec.rankedKeywords.slice(0, 49).join(', ');
+    // 3. Model selector (populated only if AI generated)
+    const model = isAi
+      ? (options?.modelName || (rec.aiGenerationInfo?.model ? rec.aiGenerationInfo.model : 'Google Nano Banana'))
+      : '';
 
-    // 5. Generative Prompt
-    const prompt =
-      rec.aiGenerationInfo?.prompt ||
-      `${cleanTitle}, high resolution commercial stock photography, hyper detailed`;
+    // 4. Keywords: capped strictly at 49 for AI (Freepik auto-appends '_ai_generated'), or 50 for standard non-AI
+    const maxKws = isAi ? 49 : 50;
+    const keywords = rec.rankedKeywords.slice(0, maxKws).join(', ');
+
+    // 5. Generative Prompt (populated only if AI generated)
+    const prompt = isAi
+      ? (rec.aiGenerationInfo?.prompt || `${cleanTitle}, high resolution commercial stock photography, hyper detailed`)
+      : '';
 
     return {
       'File name': rec.filename,

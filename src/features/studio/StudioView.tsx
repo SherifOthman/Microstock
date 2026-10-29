@@ -84,7 +84,15 @@ export const StudioView: React.FC = () => {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   // Workflow Configurations (Persisted in localStorage)
-  const isAiGenerated = true; // Microstock AI Assistant generates full AI metadata
+  const [isAiGenerated, setIsAiGenerated] = useState<boolean>(() => {
+    const saved = localStorage.getItem('stock_is_ai_generated');
+    return saved !== null ? JSON.parse(saved) : true;
+  });
+
+  const [freepikAiGenerated, setFreepikAiGenerated] = useState<boolean>(() => {
+    const saved = localStorage.getItem('stock_freepik_ai');
+    return saved !== null ? JSON.parse(saved) : true;
+  });
 
   const [keywordPhrasing, setKeywordPhrasing] = useState<KeywordPhrasing>(() => {
     return (localStorage.getItem('stock_keyword_phrasing') as KeywordPhrasing) || 'single';
@@ -180,6 +188,14 @@ export const StudioView: React.FC = () => {
 
   // Save configs to localStorage
   useEffect(() => {
+    localStorage.setItem('stock_is_ai_generated', JSON.stringify(isAiGenerated));
+  }, [isAiGenerated]);
+
+  useEffect(() => {
+    localStorage.setItem('stock_freepik_ai', JSON.stringify(freepikAiGenerated));
+  }, [freepikAiGenerated]);
+
+  useEffect(() => {
     localStorage.setItem('stock_keyword_phrasing', keywordPhrasing);
   }, [keywordPhrasing]);
 
@@ -250,6 +266,7 @@ export const StudioView: React.FC = () => {
       },
       freepik: {
         modelName: finalFreepikModel,
+        isAiGenerated: freepikAiGenerated,
       },
     };
   };
@@ -692,47 +709,77 @@ export const StudioView: React.FC = () => {
                   {/* Contextual Freepik Options */}
                   {p.id === 'freepik' && isSelected && (
                     <div className="p-2.5 ml-4 rounded-md border border-border bg-secondary/20 space-y-2 text-xs">
+                      {/* AI Generated Toggle Button */}
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1">
-                          <span className="text-[11px] text-muted-foreground font-medium">Base Model:</span>
-                          <Tooltip content="Select the AI base model required by the Freepik Contributor portal (Default: Nano Banana).">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] text-foreground font-medium">AI Generated</span>
+                          <Tooltip content="Check if your files are AI generated (Freepik requires Prompt & Base Model). Leave unchecked for real photos or manual vectors.">
                             <Info className="w-3 h-3 text-muted-foreground hover:text-foreground cursor-pointer" />
                           </Tooltip>
                         </div>
-                        <div className="w-48 sm:w-52">
-                          <Select
-                            value={freepikModel}
-                            onValueChange={setFreepikModel}
-                          >
-                            <SelectTrigger className="h-7 text-xs bg-card">
-                              <SelectValue placeholder="Base model" />
-                            </SelectTrigger>
-                            <SelectContent className="max-h-64">
-                              {FREEPIK_BASE_MODELS.map((m) => (
-                                <SelectItem key={m} value={m} className="text-xs">
-                                  {m}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
+                        <Switch
+                          checked={freepikAiGenerated}
+                          onCheckedChange={(val) => {
+                            setFreepikAiGenerated(val);
+                            setIsAiGenerated(val);
+                          }}
+                          aria-label="Toggle Freepik AI Generated"
+                        />
                       </div>
 
-                      {freepikModel === 'Other' && (
-                        <div className="pt-1">
-                          <Input
-                            placeholder="Enter custom model name..."
-                            value={customFreepikModel}
-                            onChange={(e) => setCustomFreepikModel(e.target.value)}
-                            className="h-7 text-xs"
-                          />
+                      {/* Base Model (Conditional on AI Generated being ON) */}
+                      {freepikAiGenerated ? (
+                        <>
+                          <div className="flex items-center justify-between pt-1 border-t border-border/40">
+                            <div className="flex items-center gap-1">
+                              <span className="text-[11px] text-muted-foreground font-medium">Base Model:</span>
+                              <Tooltip content="Select the AI base model required by the Freepik Contributor portal (Default: Google Nano Banana).">
+                                <Info className="w-3 h-3 text-muted-foreground hover:text-foreground cursor-pointer" />
+                              </Tooltip>
+                            </div>
+                            <div className="w-44 sm:w-48">
+                              <Select
+                                value={freepikModel}
+                                onValueChange={setFreepikModel}
+                              >
+                                <SelectTrigger className="h-7 text-xs bg-card">
+                                  <SelectValue placeholder="Base model" />
+                                </SelectTrigger>
+                                <SelectContent className="max-h-64">
+                                  {FREEPIK_BASE_MODELS.map((m) => (
+                                    <SelectItem key={m} value={m} className="text-xs">
+                                      {m}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+
+                          {freepikModel === 'Other' && (
+                            <div className="pt-1">
+                              <Input
+                                placeholder="Enter custom model name..."
+                                value={customFreepikModel}
+                                onChange={(e) => setCustomFreepikModel(e.target.value)}
+                                className="h-7 text-xs"
+                              />
+                            </div>
+                          )}
+
+                          <div className="pt-1 border-t border-border/50 text-[10px] text-muted-foreground space-y-0.5">
+                            <p>• Max 49 keywords (Freepik appends _ai_generated)</p>
+                            <p>• Titles auto-cleansed (spaces instead of hyphens)</p>
+                            <p>• Prompt & Model included for AI compliance</p>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="pt-1 border-t border-border/50 text-[10px] text-muted-foreground space-y-0.5">
+                          <p className="text-foreground/90 font-medium">• Standard photo / manual vector mode</p>
+                          <p>• Prompt & Model columns left empty</p>
+                          <p>• Up to 50 keywords allowed (no _ai_generated tag)</p>
                         </div>
                       )}
-
-                      <div className="pt-1 border-t border-border/50 text-[10px] text-muted-foreground space-y-0.5">
-                        <p>• Max 49 keywords (Freepik appends _ai_generated)</p>
-                        <p>• Titles auto-cleansed (spaces instead of hyphens)</p>
-                      </div>
                     </div>
                   )}
 
