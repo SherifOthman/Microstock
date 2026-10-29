@@ -10,8 +10,11 @@ import { ShieldCheck, Wand2, Layers, KeyRound, Sun, Moon } from 'lucide-react';
 import { Dialog } from './components/ui/dialog';
 import { KeyRingView } from './features/keyring/components/KeyRingView';
 import { AppLogo } from './components/icons/AppLogo';
+import { useLanguage } from './context/LanguageContext';
+import { Languages } from 'lucide-react';
 
 export function App() {
+  const { language, setLanguage, t } = useLanguage();
   const [, setKeys] = useState<ApiKeyRecord[]>([]);
   const [activeTab, setActiveTab] = useState<'studio' | 'tracker'>(() => {
     return (localStorage.getItem('stock_active_tab') as 'studio' | 'tracker') || 'studio';
@@ -78,10 +81,10 @@ export function App() {
             <AppLogo size={30} className="shrink-0 drop-shadow-sm" />
             <div className="flex items-baseline gap-1.5">
               <span className="font-semibold text-sm tracking-tight text-foreground">
-                Microstock
+                {t.brandTitle}
               </span>
               <span className="text-[11px] text-muted-foreground hidden sm:inline font-mono">
-                Studio
+                {t.brandSubtitle}
               </span>
             </div>
           </div>
@@ -98,9 +101,7 @@ export function App() {
               }`}
             >
               <Wand2 className="w-3.5 h-3.5 text-primary shrink-0" />
-              <span className="hidden xs:inline sm:inline">Metadata</span>
-              <span className="xs:hidden sm:hidden">Studio</span>
-              <span className="hidden sm:inline">Studio</span>
+              <span>{t.metadataStudio}</span>
               {masterCount > 0 && (
                 <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-mono hidden md:inline-flex">
                   {masterCount}
@@ -118,9 +119,7 @@ export function App() {
               }`}
             >
               <Layers className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-              <span className="hidden xs:inline sm:inline">Distribution</span>
-              <span className="xs:hidden sm:hidden">Tracker</span>
-              <span className="hidden sm:inline">Tracker</span>
+              <span>{t.distributionTracker}</span>
               {trackerCount > 0 && (
                 <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-mono hidden md:inline-flex">
                   {trackerCount}
@@ -129,14 +128,25 @@ export function App() {
             </button>
           </div>
 
-          {/* Right Header Utilities: Manage Keys, Theme Toggle, & Local DB Indicator */}
+          {/* Right Header Utilities: Language, Manage Keys, Theme Toggle, & Local DB Indicator */}
           <div className="flex items-center gap-2 shrink-0">
+            {/* Language Switcher */}
+            <button
+              type="button"
+              onClick={() => setLanguage(language === 'en' ? 'ar' : 'en')}
+              className="px-2.5 h-8 rounded-lg bg-card hover:bg-accent border border-border flex items-center gap-1.5 text-xs font-semibold text-foreground cursor-pointer transition shadow-xs"
+              title="Toggle Language / تبديل اللغة"
+            >
+              <Languages className="w-3.5 h-3.5 text-primary" />
+              <span>{t.switchLanguage}</span>
+            </button>
+
             {/* Theme Toggle */}
             <button
               type="button"
               onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
               className="w-8 h-8 rounded-lg bg-card hover:bg-accent border border-border flex items-center justify-center text-foreground cursor-pointer transition shadow-xs"
-              title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+              title={theme === 'dark' ? t.switchToLight : t.switchToDark}
               aria-label="Toggle theme"
             >
               {theme === 'dark' ? (
@@ -153,12 +163,12 @@ export function App() {
               title="Manage API Keys & Priority Cascade"
             >
               <KeyRound className="w-3.5 h-3.5 text-primary" />
-              <span className="hidden sm:inline font-medium">API Keys</span>
+              <span className="hidden sm:inline font-medium">{t.apiKeys}</span>
             </button>
 
             <div className="hidden md:flex items-center gap-1 text-[11px] text-muted-foreground font-mono pl-1 border-l border-border">
               <ShieldCheck className="w-3.5 h-3.5 text-foreground" />
-              <span>100% Local DB</span>
+              <span>{t.localDb}</span>
             </div>
           </div>
         </div>

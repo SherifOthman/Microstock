@@ -13,6 +13,7 @@ import {
   Play,
   Trash2,
 } from 'lucide-react';
+import { useLanguage } from '../../../context/LanguageContext';
 
 interface Props {
   keyRecord: ApiKeyRecord;
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export const KeyRow: React.FC<Props> = ({ keyRecord, index }) => {
+  const { t } = useLanguage();
   const [showKey, setShowKey] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
@@ -94,13 +96,13 @@ export const KeyRow: React.FC<Props> = ({ keyRecord, index }) => {
 
   return (
     <>
-      <div className="h-9 px-2.5 rounded-md hover:bg-zinc-900/80 flex items-center justify-between text-xs transition-colors group">
+      <div className="h-9 px-2.5 rounded-md hover:bg-secondary/60 flex items-center justify-between text-xs transition-colors group">
         {/* Left: Key Index + Monospace Masked Key */}
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-[11px] font-mono text-zinc-500 font-medium shrink-0">
+          <span className="text-[11px] font-mono text-muted-foreground font-medium shrink-0">
             #{index + 1}
           </span>
-          <span className="font-mono text-xs text-zinc-300 truncate">
+          <span className="font-mono text-xs text-foreground truncate">
             {showKey ? keyRecord.key : maskedKey}
           </span>
         </div>
@@ -111,33 +113,33 @@ export const KeyRow: React.FC<Props> = ({ keyRecord, index }) => {
           {testResult ? (
             <span
               className={`text-xs font-mono ${
-                testResult.success ? 'text-emerald-400' : 'text-red-400'
+                testResult.success ? 'text-emerald-500 font-semibold' : 'text-destructive font-semibold'
               }`}
             >
               {testResult.msg}
             </span>
           ) : keyRecord.status === 'healthy' && keyRecord.lastLatencyMs ? (
-            <span className="flex items-center gap-1 text-xs font-mono text-emerald-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+            <span className="flex items-center gap-1 text-xs font-mono text-emerald-500">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
               <span>{keyRecord.lastLatencyMs}ms</span>
             </span>
           ) : keyRecord.status === 'healthy' ? (
-            <span className="flex items-center gap-1 text-xs font-mono text-emerald-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              <span>Ready</span>
+            <span className="flex items-center gap-1 text-xs font-mono text-emerald-500">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              <span>{t.ready}</span>
             </span>
           ) : keyRecord.status === 'cooling_down' ? (
-            <span className="flex items-center gap-1 text-xs font-mono text-amber-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-              <span>Cooldown</span>
+            <span className="flex items-center gap-1 text-xs font-mono text-amber-500">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+              <span>{t.cooldown}</span>
             </span>
           ) : keyRecord.status === 'invalid' ? (
-            <span className="flex items-center gap-1 text-xs font-mono text-red-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
-              <span>Invalid</span>
+            <span className="flex items-center gap-1 text-xs font-mono text-destructive">
+              <span className="w-1.5 h-1.5 rounded-full bg-destructive" />
+              <span>{t.invalid}</span>
             </span>
           ) : (
-            <span className="text-xs font-mono text-zinc-500">Untested</span>
+            <span className="text-xs font-mono text-muted-foreground">{t.untested}</span>
           )}
 
           {/* Action Icons (Grouped tightly) */}
@@ -148,7 +150,7 @@ export const KeyRow: React.FC<Props> = ({ keyRecord, index }) => {
                 e.stopPropagation();
                 setShowKey(!showKey);
               }}
-              className="p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition cursor-pointer"
+              className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition cursor-pointer"
               title={showKey ? 'Hide' : 'Reveal'}
             >
               {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
@@ -157,21 +159,21 @@ export const KeyRow: React.FC<Props> = ({ keyRecord, index }) => {
             <button
               type="button"
               onClick={handleCopy}
-              className="p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition cursor-pointer"
+              className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition cursor-pointer"
               title="Copy Key"
             >
-              {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
             </button>
 
             <button
               type="button"
               onClick={handleTestKey}
               disabled={isTesting}
-              className="p-1 rounded text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800 transition cursor-pointer disabled:opacity-30"
+              className="p-1 rounded text-muted-foreground hover:text-emerald-500 hover:bg-secondary transition cursor-pointer disabled:opacity-30"
               title="Test Key"
             >
               {isTesting ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-500" />
               ) : (
                 <Play className="w-3.5 h-3.5" />
               )}
@@ -180,7 +182,7 @@ export const KeyRow: React.FC<Props> = ({ keyRecord, index }) => {
             <button
               type="button"
               onClick={handleDelete}
-              className="p-1 rounded text-zinc-400 hover:text-red-400 hover:bg-red-950/30 transition cursor-pointer"
+              className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition cursor-pointer"
               title="Delete Key"
             >
               <Trash2 className="w-3.5 h-3.5" />
@@ -192,9 +194,9 @@ export const KeyRow: React.FC<Props> = ({ keyRecord, index }) => {
       <ConfirmDialog
         open={isDeleteDialogOpen}
         onOpenChange={setIsDeleteDialogOpen}
-        title="Delete API Key"
-        description="Are you sure you want to delete this API key?"
-        confirmText="Delete"
+        title={t.deleteKeyConfirmTitle}
+        description={t.deleteKeyConfirmDesc}
+        confirmText={t.delete}
         variant="destructive"
         onConfirm={handleConfirmDelete}
       />

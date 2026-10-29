@@ -4,6 +4,7 @@ import { MODEL_DISPLAY_NAMES, PROVIDERS_META, PROVIDER_ORDER } from '../../../co
 import { saveAppSettings, updateApiKey } from '../../../db';
 import { keyRingScheduler } from '../../../services/scheduler/KeyRingScheduler';
 import { Button } from '../../../components/ui/button';
+import { Badge } from '../../../components/ui/badge';
 import { Tooltip } from '../../../components/ui/tooltip';
 import {
   Select,
@@ -20,6 +21,7 @@ import {
   Plus,
   RotateCcw,
 } from 'lucide-react';
+import { useLanguage } from '../../../context/LanguageContext';
 
 interface Props {
   settings: AppSettings | null;
@@ -38,6 +40,7 @@ export const PriorityCascadeCard: React.FC<Props> = ({
   onTestAll,
   isTestingAll,
 }) => {
+  const { t } = useLanguage();
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [expandedProviders, setExpandedProviders] = useState<Record<ProviderType, boolean>>({
@@ -130,25 +133,25 @@ export const PriorityCascadeCard: React.FC<Props> = ({
 
   return (
     <div className="space-y-3 text-xs">
-      {/* Top Modal Action Bar (Clean Linear/Vercel style) */}
-      <div className="flex items-center justify-between gap-2 pb-2 border-b border-zinc-800">
+      {/* Top Modal Action Bar (Clean Linear/Vercel style with strict semantic tokens) */}
+      <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-border">
         <div className="flex items-center gap-2">
-          <span className="font-semibold text-sm text-zinc-100">
-            Provider Priority & Failover
+          <span className="font-semibold text-sm text-foreground">
+            {t.providerPriority}
           </span>
           <Tooltip content="The AI begins with #1. If it hits rate limits or errors, it cascades sequentially down the list. Drag rows to reorder.">
-            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-zinc-800 text-[10px] text-zinc-400 hover:text-zinc-200 cursor-pointer font-bold">
+            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-secondary text-[10px] text-muted-foreground hover:text-foreground cursor-pointer font-bold border border-border">
               i
             </span>
           </Tooltip>
           <button
             type="button"
             onClick={handleResetDefault}
-            className="text-[11px] text-zinc-400 hover:text-zinc-200 hover:underline cursor-pointer ml-1 flex items-center gap-1"
+            className="text-[11px] text-muted-foreground hover:text-foreground hover:underline cursor-pointer ml-1 flex items-center gap-1"
             title="Reset to Gemini #1"
           >
             <RotateCcw className="w-3 h-3" />
-            <span>Reset Order</span>
+            <span>{t.resetOrder}</span>
           </button>
         </div>
 
@@ -159,20 +162,20 @@ export const PriorityCascadeCard: React.FC<Props> = ({
               size="sm"
               onClick={onTestAll}
               disabled={isTestingAll}
-              className="h-7 text-xs gap-1.5 px-3 border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800 cursor-pointer"
+              className="h-7 text-xs gap-1.5 px-3 border-border bg-card text-foreground hover:bg-secondary cursor-pointer"
             >
-              <Play className="w-3 h-3 text-emerald-400" />
-              <span>{isTestingAll ? 'Testing...' : 'Test All'}</span>
+              <Play className="w-3 h-3 text-emerald-500 fill-emerald-500/20" />
+              <span>{isTestingAll ? t.testing : t.testAll}</span>
             </Button>
           )}
 
           <Button
             size="sm"
             onClick={() => onAddKey('gemini')}
-            className="h-7 text-xs font-semibold px-3.5 bg-zinc-100 text-zinc-950 hover:bg-white cursor-pointer shadow-xs gap-1.5"
+            className="h-7 text-xs font-semibold px-3.5 bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer shadow-xs gap-1.5"
           >
             <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-            <span>Add Key</span>
+            <span>{t.addKey}</span>
           </Button>
         </div>
       </div>
@@ -209,8 +212,8 @@ export const PriorityCascadeCard: React.FC<Props> = ({
               onDragEnd={handleDragEnd}
               className={`rounded-lg border transition-all overflow-hidden ${
                 isPrimary
-                  ? 'border-emerald-500/40 bg-zinc-900/90'
-                  : 'border-zinc-800 bg-zinc-900/60 hover:bg-zinc-900/80'
+                  ? 'border-emerald-500/40 bg-card/95 shadow-xs'
+                  : 'border-border bg-card/60 hover:bg-card'
               } ${isBeingDragged ? 'opacity-40 border-dashed border-sky-400' : ''} ${
                 isDragOver ? 'border-primary ring-2 ring-primary/20 scale-[1.005]' : ''
               }`}
@@ -224,7 +227,7 @@ export const PriorityCascadeCard: React.FC<Props> = ({
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div
                     onClick={(e) => e.stopPropagation()}
-                    className="p-0.5 text-zinc-500 hover:text-zinc-300 cursor-grab active:cursor-grabbing transition"
+                    className="p-0.5 text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing transition"
                     title="Drag to reorder priority"
                   >
                     <GripVertical className="w-4 h-4" />
@@ -234,15 +237,15 @@ export const PriorityCascadeCard: React.FC<Props> = ({
                   <span
                     className={`text-xs font-mono px-2 py-0.5 rounded font-medium shrink-0 ${
                       isPrimary
-                        ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-semibold'
-                        : 'bg-zinc-800 text-zinc-400 border border-zinc-700/60'
+                        ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 font-semibold'
+                        : 'bg-secondary text-muted-foreground border border-border'
                     }`}
                   >
-                    {isPrimary ? '#1 Primary' : `#${index + 1}`}
+                    {isPrimary ? `#1 ${t.primary}` : `#${index + 1}`}
                   </span>
 
                   {/* Provider Name */}
-                  <span className="font-medium text-sm text-zinc-100 truncate">
+                  <span className="font-semibold text-sm text-foreground truncate">
                     {meta.name}
                   </span>
                 </div>
@@ -257,51 +260,51 @@ export const PriorityCascadeCard: React.FC<Props> = ({
                     value={savedModel}
                     onValueChange={(val) => handleModelChange(providerId, val)}
                   >
-                    <SelectTrigger className="h-8 text-xs bg-zinc-950 border-zinc-800 min-w-[200px] max-w-[240px] text-zinc-200">
+                    <SelectTrigger className="h-8 text-xs bg-background border-border min-w-[200px] max-w-[240px] text-foreground">
                       <SelectValue>
                         <span className="truncate">
                           {MODEL_DISPLAY_NAMES[savedModel] || savedModel}
                         </span>
                       </SelectValue>
                     </SelectTrigger>
-                    <SelectContent className="max-h-56 bg-zinc-950 border-zinc-800 text-zinc-200">
+                    <SelectContent className="max-h-56 bg-popover border-border text-popover-foreground">
                       {meta.recommendedVisionModels.map((m) => (
-                        <SelectItem key={m} value={m} className="text-xs focus:bg-zinc-800">
+                        <SelectItem key={m} value={m} className="text-xs">
                           <span className="font-mono">{MODEL_DISPLAY_NAMES[m] || m}</span>
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
 
-                  {/* Key Health Pill */}
-                  <button
-                    type="button"
+                  {/* Key Health Pill (Locked nowrap shrink-0) */}
+                  <Badge
+                    variant="outline"
                     onClick={() => toggleExpand(providerId)}
-                    className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-zinc-800 bg-zinc-950 text-xs font-mono cursor-pointer transition hover:bg-zinc-900"
+                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono cursor-pointer transition hover:bg-secondary border-border bg-background whitespace-nowrap shrink-0"
                     title={`${healthyKeys.length} of ${providerKeys.length} keys active`}
                   >
                     <span
-                      className={`w-1.5 h-1.5 rounded-full ${
+                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                         allHealthy
-                          ? 'bg-emerald-400 animate-pulse'
+                          ? 'bg-emerald-500 animate-pulse'
                           : someHealthy
-                          ? 'bg-amber-400'
-                          : 'bg-zinc-600'
+                          ? 'bg-amber-500'
+                          : 'bg-muted-foreground'
                       }`}
                     />
-                    <span className="text-zinc-200 font-semibold">{healthyKeys.length}</span>
-                    <span className="text-zinc-500">/ {providerKeys.length} keys</span>
-                  </button>
+                    <span className="text-foreground font-semibold">{healthyKeys.length}</span>
+                    <span className="text-muted-foreground">/ {providerKeys.length} {t.keys}</span>
+                  </Badge>
 
                   {/* Expand/Collapse Chevron */}
                   <button
                     type="button"
                     onClick={() => toggleExpand(providerId)}
-                    className="p-1 rounded text-zinc-400 hover:text-zinc-100 transition cursor-pointer"
+                    className="p-1 rounded text-muted-foreground hover:text-foreground transition cursor-pointer"
                     title={isExpanded ? 'Collapse keys' : 'Expand keys'}
                   >
                     <ChevronDown
-                      className={`w-4 h-4 text-zinc-400 transition-transform duration-200 ${
+                      className={`w-4 h-4 text-muted-foreground transition-transform duration-200 ${
                         isExpanded ? 'rotate-180' : ''
                       }`}
                     />
@@ -311,18 +314,18 @@ export const PriorityCascadeCard: React.FC<Props> = ({
 
               {/* Nested Keys Drawer (Expanded State) */}
               {isExpanded && (
-                <div className="border-t border-zinc-800/80 bg-zinc-950/60 px-3.5 py-2.5 space-y-1.5 animate-in fade-in-50 duration-150">
+                <div className="border-t border-border bg-secondary/20 px-3.5 py-2.5 space-y-1.5 animate-in fade-in-50 duration-150">
                   {providerKeys.length === 0 ? (
-                    <div className="flex items-center justify-between py-2 px-2 text-zinc-500 text-xs">
-                      <span>No keys added for {meta.name} yet.</span>
+                    <div className="flex items-center justify-between py-2 px-2 text-muted-foreground text-xs">
+                      <span>{t.noKeysForProvider.replace('{name}', meta.name)}</span>
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() => onAddKey(providerId)}
-                        className="h-6 text-xs text-zinc-300 hover:text-white hover:bg-zinc-800 cursor-pointer gap-1 px-2"
+                        className="h-6 text-xs text-foreground hover:bg-secondary cursor-pointer gap-1 px-2"
                       >
                         <Plus className="w-3 h-3" />
-                        <span>Add Key</span>
+                        <span>{t.addKey}</span>
                       </Button>
                     </div>
                   ) : (
@@ -334,15 +337,15 @@ export const PriorityCascadeCard: React.FC<Props> = ({
                       </div>
 
                       {/* Quick Add Button at bottom left */}
-                      <div className="pt-1.5 border-t border-zinc-900 flex justify-start">
+                      <div className="pt-1.5 border-t border-border/50 flex justify-start">
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => onAddKey(providerId)}
-                          className="h-6 text-[11px] text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900 cursor-pointer gap-1 px-2"
+                          className="h-6 text-[11px] text-muted-foreground hover:text-foreground hover:bg-secondary cursor-pointer gap-1 px-2"
                         >
                           <Plus className="w-3 h-3" />
-                          <span>Add {meta.name} Key</span>
+                          <span>{t.addProviderKey.replace('{name}', meta.name)}</span>
                         </Button>
                       </div>
                     </>

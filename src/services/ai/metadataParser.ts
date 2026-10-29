@@ -114,9 +114,12 @@ export function parseAndNormalizeAiMetadata(
 
   if (keywordPhrasing === 'single') {
     // SINGLE WORDS ONLY: Split any multi-word phrases, strip punctuation, discard stop words
+    // Never merge compound words into single meaningless blobs (e.g. split into separate distinct words)
     const singleSet = new Set<string>();
     for (const item of rawList) {
-      const tokens = item
+      // Split camelCase if any (e.g. "fitnessEquipment" -> "fitness equipment")
+      const deCamelled = item.replace(/([a-z])([A-Z])/g, '$1 $2');
+      const tokens = deCamelled
         .replace(/[^a-zA-Z0-9\s]/g, ' ')
         .split(/\s+/)
         .map((w) => w.trim().toLowerCase())

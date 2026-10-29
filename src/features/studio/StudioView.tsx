@@ -33,6 +33,7 @@ import { FREEPIK_BASE_MODELS } from '../../constants/categories';
 import { getPlatformLogo } from '../../components/icons/StockLogos';
 import { AssetCard, UnifiedAssetRow } from './components/AssetCard';
 import { KeywordPhrasing } from '../../services/ai/metadataParser';
+import { useLanguage } from '../../context/LanguageContext';
 import {
   AlertTriangle,
   Archive,
@@ -69,6 +70,7 @@ import {
 } from 'lucide-react';
 
 export const StudioView: React.FC = () => {
+  const { t } = useLanguage();
   // Queue & Database States
   const [queueState, setQueueState] = useState<QueueState>(batchQueueService.getState());
   const liveRecords = useLiveQuery(() => db.masterRecords.toArray(), []) || [];
@@ -121,6 +123,8 @@ export const StudioView: React.FC = () => {
   });
 
   // Dreamstime Settings
+  const [dtAdvancedOpen, setDtAdvancedOpen] = useState<boolean>(false);
+  const [userCustomPrompt, setUserCustomPrompt] = useState<string>('');
   const [dtAiGenerated, setDtAiGenerated] = useState<boolean>(() => {
     const saved = localStorage.getItem('stock_dt_ai');
     return saved !== null ? JSON.parse(saved) : true;
@@ -371,7 +375,7 @@ export const StudioView: React.FC = () => {
   const handleStartQueue = () => {
     const finalFreepikModel =
       freepikModel === 'Other' ? customFreepikModel.trim() || 'Google Nano Banana' : freepikModel;
-    batchQueueService.start(isAiGenerated, '', finalFreepikModel, keywordPhrasing, titleLengthPreset);
+    batchQueueService.start(isAiGenerated, userCustomPrompt.trim(), finalFreepikModel, keywordPhrasing, titleLengthPreset);
   };
 
   const handleCopyText = (text: string, keyIdentifier: string) => {
@@ -527,104 +531,11 @@ export const StudioView: React.FC = () => {
           isMobileSidebarOpen ? 'block' : 'hidden lg:block'
         }`}
       >
-        {/* Card 0: SEO & Keyword Phrasing Settings */}
-        <div className="p-3.5 bg-card rounded-xl border border-border space-y-3 text-xs">
-          <div className="flex items-center justify-between pb-2 border-b border-border">
-            <span className="font-semibold text-xs text-foreground">SEO & Metadata Controls</span>
-            <Badge variant="outline" className="text-[10px] font-mono capitalize">
-              {keywordPhrasing === 'single' ? 'Single Words' : keywordPhrasing === 'double' ? 'Double Words' : 'Mixed'}
-            </Badge>
-          </div>
-
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-[11px] font-medium text-foreground">Keyword Phrasing</label>
-              <Tooltip content="Single words are strongly recommended for stock agencies to maximize search relevance and prevent tag rejection.">
-                <Info className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground cursor-pointer" />
-              </Tooltip>
-            </div>
-
-            <Select
-              value={keywordPhrasing}
-              onValueChange={(val) => setKeywordPhrasing(val as KeywordPhrasing)}
-            >
-              <SelectTrigger className="h-8 text-xs bg-secondary/30">
-                <SelectValue placeholder="Keyword Phrasing" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="single" className="text-xs">
-                  <div className="flex flex-col text-left py-0.5">
-                    <span className="font-semibold text-foreground">Single Words (Recommended)</span>
-                    <span className="text-[10px] text-muted-foreground">e.g. copper, metal, texture, macro</span>
-                  </div>
-                </SelectItem>
-                <SelectItem value="double" className="text-xs">
-                  <div className="flex flex-col text-left py-0.5">
-                    <span className="font-semibold text-foreground">Double Words</span>
-                    <span className="text-[10px] text-muted-foreground">e.g. copper metal, brushed texture</span>
-                  </div>
-                </SelectItem>
-                <SelectItem value="mixed" className="text-xs">
-                  <div className="flex flex-col text-left py-0.5">
-                    <span className="font-semibold text-foreground">Mixed (Single & Phrases)</span>
-                    <span className="text-[10px] text-muted-foreground">Natural mix of singles and pairs</span>
-                  </div>
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Title Target Length Preset */}
-          <div className="space-y-1.5 pt-1 border-t border-border">
-            <div className="flex items-center justify-between">
-              <label className="text-[11px] font-medium text-foreground">Title Target Length</label>
-              <Tooltip content="Set target title length. Automatically tuned to comply with Adobe (200), Vecteezy (100), and Shutterstock guidelines.">
-                <Info className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground cursor-pointer" />
-              </Tooltip>
-            </div>
-
-            <Select
-              value={titleLengthPreset}
-              onValueChange={(val) => setTitleLengthPreset(val as any)}
-            >
-              <SelectTrigger className="h-8 text-xs bg-secondary/30">
-                <SelectValue placeholder="Title Length" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="optimal" className="text-xs">
-                  <div className="flex flex-col text-left py-0.5">
-                    <span className="font-semibold text-foreground">Auto (Platform Optimal)</span>
-                    <span className="text-[10px] text-muted-foreground">60-95 chars • Fits all agencies cleanly</span>
-                  </div>
-                </SelectItem>
-                <SelectItem value="short" className="text-xs">
-                  <div className="flex flex-col text-left py-0.5">
-                    <span className="font-semibold text-foreground">Short (45-65 chars)</span>
-                    <span className="text-[10px] text-muted-foreground">Adobe Stock & Vecteezy sweet spot</span>
-                  </div>
-                </SelectItem>
-                <SelectItem value="standard" className="text-xs">
-                  <div className="flex flex-col text-left py-0.5">
-                    <span className="font-semibold text-foreground">Standard (65-95 chars)</span>
-                    <span className="text-[10px] text-muted-foreground">Universal safe zone</span>
-                  </div>
-                </SelectItem>
-                <SelectItem value="extended" className="text-xs">
-                  <div className="flex flex-col text-left py-0.5">
-                    <span className="font-semibold text-foreground">Extended (95-140 chars)</span>
-                    <span className="text-[10px] text-muted-foreground">Detailed scene & context description</span>
-                  </div>
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
         {/* Card 1: Target Marketplaces & Authentic Logos */}
         <div className="p-3.5 bg-card rounded-xl border border-border space-y-3">
           <div className="flex items-center justify-between pb-2 border-b border-border">
             <div className="flex items-center gap-1.5">
-              <span className="font-semibold text-xs text-foreground">Marketplaces</span>
+              <span className="font-semibold text-xs text-foreground">{t.marketplaces}</span>
               <Tooltip content="Choose target stock agencies. Data formats are automatically adapted on-the-fly.">
                 <Info className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground cursor-pointer" />
               </Tooltip>
@@ -785,10 +696,11 @@ export const StudioView: React.FC = () => {
 
                   {/* Contextual Dreamstime Options */}
                   {p.id === 'dreamstime' && isSelected && (
-                    <div className="p-2.5 ml-4 rounded-md border border-border bg-secondary/20 space-y-1.5 text-xs">
+                    <div className="p-2.5 ml-4 rounded-md border border-border bg-secondary/20 space-y-2 text-xs">
+                      {/* 1. AI Generated (Visible & Direct) */}
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1">
-                          <span className="text-[11px] text-muted-foreground font-medium">AI Generated</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] text-foreground font-medium">{t.aiGenerated}</span>
                           <Tooltip content="Category 3 = 114 (AI) and appends 'AI-generated image' to description in CSV.">
                             <Info className="w-3 h-3 text-muted-foreground hover:text-foreground cursor-pointer" />
                           </Tooltip>
@@ -801,34 +713,58 @@ export const StudioView: React.FC = () => {
                         />
                       </div>
 
+                      {/* 2. Editorial (Visible & Direct) */}
                       <div className="flex items-center justify-between">
-                        <span className="text-[11px] text-muted-foreground">Free Images</span>
-                        <Switch checked={dtFree} onCheckedChange={setDtFree} />
-                      </div>
-
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] text-muted-foreground">Editorial</span>
+                        <span className="text-[11px] text-muted-foreground font-medium">{t.editorial}</span>
                         <Switch checked={dtEditorial} onCheckedChange={setDtEditorial} />
                       </div>
 
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] text-muted-foreground">W-EL (Extended)</span>
-                        <Switch checked={dtWel} onCheckedChange={setDtWel} />
-                      </div>
+                      {/* 3. Collapsible Advanced Licensing (W-EL, P-EL, Free, SR-EL protected) */}
+                      <div className="pt-1.5 border-t border-border/50">
+                        <button
+                          type="button"
+                          onClick={() => setDtAdvancedOpen(!dtAdvancedOpen)}
+                          className="flex items-center justify-between w-full text-[11px] text-muted-foreground hover:text-foreground cursor-pointer py-1"
+                        >
+                          <div className="flex items-center gap-1">
+                            <span className="font-semibold text-foreground/80">{t.advancedLicensing}</span>
+                            <Tooltip content="W-EL (Web) and P-EL (Print) enabled by default. Free Images & SR-EL disabled for protection.">
+                              <Info className="w-3 h-3 text-muted-foreground hover:text-foreground" />
+                            </Tooltip>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground font-mono">
+                            {dtAdvancedOpen ? '▲' : '▼ (W-EL & P-EL)'}
+                          </span>
+                        </button>
 
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] text-muted-foreground">P-EL (Extended)</span>
-                        <Switch checked={dtPel} onCheckedChange={setDtPel} />
-                      </div>
+                        {dtAdvancedOpen && (
+                          <div className="space-y-1.5 pt-1.5 pl-1 animate-in fade-in-50 duration-150">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-muted-foreground">{t.welExtended}</span>
+                              <Switch checked={dtWel} onCheckedChange={setDtWel} />
+                            </div>
 
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1">
-                          <span className="text-[11px] text-muted-foreground">SR-EL</span>
-                          <Tooltip content="Sell-the-Right: Transfers complete copyright ownership to the buyer. Recommended: OFF.">
-                            <Info className="w-3 h-3 text-muted-foreground hover:text-foreground cursor-pointer" />
-                          </Tooltip>
-                        </div>
-                        <Switch checked={dtSrel} onCheckedChange={setDtSrel} />
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-muted-foreground">{t.pelExtended}</span>
+                              <Switch checked={dtPel} onCheckedChange={setDtPel} />
+                            </div>
+
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-muted-foreground">{t.freeImages}</span>
+                              <Switch checked={dtFree} onCheckedChange={setDtFree} />
+                            </div>
+
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1">
+                                <span className="text-[10px] text-muted-foreground">{t.srelTransfers}</span>
+                                <Tooltip content={t.srElWarning}>
+                                  <Info className="w-3 h-3 text-destructive cursor-pointer" />
+                                </Tooltip>
+                              </div>
+                              <Switch checked={dtSrel} onCheckedChange={setDtSrel} />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1086,16 +1022,28 @@ export const StudioView: React.FC = () => {
         ) : (
           /* Populated State: Full-Width Unified Data Grid Table */
           <div className="space-y-3">
-            {/* Search Filter Bar */}
-            <div className="flex items-center justify-between gap-3 text-xs">
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-2" />
-                <Input
-                  placeholder="Filter by filename, title, or keywords..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="h-7.5 pl-8 w-64 text-xs"
-                />
+            {/* Search Filter Bar & Optional Context Hint */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2 flex-1">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-2" />
+                  <Input
+                    placeholder={t.searchAssetsPlaceholder}
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="h-7.5 pl-8 w-full sm:w-64 text-xs"
+                  />
+                </div>
+
+                <div className="flex-1 max-w-md">
+                  <Input
+                    placeholder={t.contextHintPlaceholder}
+                    value={userCustomPrompt}
+                    onChange={(e) => setUserCustomPrompt(e.target.value)}
+                    className="h-7.5 text-xs bg-secondary/30 border-border"
+                    title="This hint will be appended to the AI vision prompt for all assets in this session"
+                  />
+                </div>
               </div>
 
               <span className="text-muted-foreground text-xs font-mono">

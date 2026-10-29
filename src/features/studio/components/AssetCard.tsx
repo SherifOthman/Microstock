@@ -5,6 +5,7 @@ import { QueueItem } from '../../../services/queue/BatchQueueService';
 import { MODEL_DISPLAY_NAMES } from '../../../constants/providers';
 import { ADOBE_CATEGORIES, DREAMSTIME_CATEGORIES } from '../../../constants/categories';
 import { Button } from '../../../components/ui/button';
+import { Badge } from '../../../components/ui/badge';
 import { Input } from '../../../components/ui/input';
 import { Textarea } from '../../../components/ui/textarea';
 import {
@@ -25,6 +26,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
+import { useLanguage } from '../../../context/LanguageContext';
 
 export interface UnifiedAssetRow {
   id: string;
@@ -55,6 +57,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
   onDelete,
   onRegenerate,
 }) => {
+  const { t } = useLanguage();
   const [localTitle, setLocalTitle] = useState(rec?.baseTitle || '');
   const [localDesc, setLocalDesc] = useState(rec?.detailedDescription || '');
   const [isEditingKws, setIsEditingKws] = useState(false);
@@ -62,7 +65,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
   const [isAddingTag, setIsAddingTag] = useState(false);
   const [newTagInput, setNewTagInput] = useState('');
 
-  // Synchronize local states when the database record updates (e.g., after AI generation)
+  // Synchronize local states when the database record updates
   useEffect(() => {
     if (rec?.baseTitle !== undefined) {
       setLocalTitle(rec.baseTitle);
@@ -95,26 +98,46 @@ export const AssetCard: React.FC<AssetCardProps> = ({
     await db.masterRecords.update(rec.id, { rankedKeywords: updated });
   };
 
+  const handlePromoteKeyword = async (indexToPromote: number) => {
+    if (!rec || indexToPromote <= 0) return;
+    const current = [...rec.rankedKeywords];
+    const [item] = current.splice(indexToPromote, 1);
+    // Insert into top 10 (at index 0 or top slot)
+    current.unshift(item);
+    await db.masterRecords.update(rec.id, { rankedKeywords: current });
+  };
+
   const handleSaveRawKeywords = async () => {
     if (!rec) return;
     const cleanKws = rawKwsInput
       .split(',')
-      .map((k) => k.trim().toLowerCase())
-      .filter(Boolean);
-    await db.masterRecords.update(rec.id, { rankedKeywords: cleanKws });
+      .map((k) => k.trim())
+      .filter((k) => k.length > 0);
+    // Deduplicate
+    const unique = Array.from(new Set(cleanKws.map((k) => k.toLowerCase()))).map(
+      (k) => cleanKws.find((orig) => orig.toLowerCase() === k) || k
+    );
+    await db.masterRecords.update(rec.id, { rankedKeywords: unique });
     setIsEditingKws(false);
   };
 
   const handleAddTagSubmit = async () => {
     if (!rec || !newTagInput.trim()) {
       setIsAddingTag(false);
+      setNewTagInput('');
       return;
     }
-    const clean = newTagInput.trim().toLowerCase();
-    if (!rec.rankedKeywords.includes(clean)) {
-      await db.masterRecords.update(rec.id, {
-        rankedKeywords: [...rec.rankedKeywords, clean],
-      });
+    const newKws = newTagInput
+      .split(',')
+      .map((k) => k.trim())
+      .filter((k) => k.length > 0);
+
+    const existingLower = new Set(rec.rankedKeywords.map((k) => k.toLowerCase()));
+    const toAdd = newKws.filter((k) => !existingLower.has(k.toLowerCase()));
+
+    if (toAdd.length > 0) {
+      const updated = [...rec.rankedKeywords, ...toAdd];
+      await db.masterRecords.update(rec.id, { rankedKeywords: updated });
     }
     setNewTagInput('');
     setIsAddingTag(false);
@@ -124,28 +147,16 @@ export const AssetCard: React.FC<AssetCardProps> = ({
     if (!bytes || bytes <= 0) return '—';
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
   const getCleanModelName = (modelId?: string, providerId?: string): string => {
-    if (providerId) {
-      if (providerId === 'gemini') return 'Gemini';
-      if (providerId === 'openrouter') return 'OpenRouter';
-      if (providerId === 'groq') return 'Groq';
-      if (providerId === 'mistral') return 'Mistral';
-      if (providerId === 'cloudflare') return 'Cloudflare';
-    }
-    if (!modelId) return 'AI Vision';
-    const lower = modelId.toLowerCase();
-    if (lower.includes('gemini')) return 'Gemini';
-    if (lower.includes('openrouter')) return 'OpenRouter';
-    if (lower.includes('qwen') || lower.includes('groq')) return 'Groq';
-    if (lower.includes('pixtral') || lower.includes('mistral')) return 'Mistral';
-    if (lower.includes('llama') || lower.includes('@cf')) return 'Cloudflare';
-    return modelId.split('/')[0] || 'AI Vision';
+    if (!modelId) return providerId ? providerId.toUpperCase() : 'AI Model';
+    if (MODEL_DISPLAY_NAMES[modelId]) return MODEL_DISPLAY_NAMES[modelId];
+    return modelId.replace(/^.*\//, '');
   };
 
-  const isCompleted = asset.status === 'completed';
+  const isCompleted = asset.status === 'completed' && !!rec;
   const isProcessing = asset.status === 'processing';
   const isQueued = asset.status === 'queued';
   const isError = asset.status === 'error';
@@ -169,12 +180,12 @@ export const AssetCard: React.FC<AssetCardProps> = ({
       : null;
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-4 sm:p-5 shadow-xs transition hover:border-zinc-700/80 flex flex-col md:flex-row gap-5 items-start">
+    <div className="rounded-2xl border border-border bg-card p-4 sm:p-5 shadow-xs transition hover:border-border/80 flex flex-col md:flex-row gap-5 items-start">
       {/* ======================================================== */}
       {/* LEFT COLUMN: Thumbnail, Meta, Status, Live Model Tracker */}
       {/* ======================================================== */}
       <div className="w-full md:w-56 shrink-0 flex flex-col gap-2.5">
-        {/* Thumbnail with red delete button pinned top-right */}
+        {/* Thumbnail with sleek subtle delete button pinned top-right */}
         <div className="relative rounded-xl overflow-hidden border border-border bg-muted/30 aspect-4/3 flex items-center justify-center group">
           {asset.thumbnailUrl ? (
             <img
@@ -193,7 +204,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
               <span>
                 {rec?.videoMeta?.durationSeconds || asset.queueItem?.videoDurationSeconds
                   ? `${rec?.videoMeta?.durationSeconds || asset.queueItem?.videoDurationSeconds}s`
-                  : 'Video'}
+                  : t.video}
               </span>
               {(rec?.videoMeta?.resolution || asset.queueItem?.videoResolution) && (
                 <span className="text-sky-300 font-bold">
@@ -204,20 +215,21 @@ export const AssetCard: React.FC<AssetCardProps> = ({
           ) : (rec?.mediaType === 'vector' || asset.queueItem?.mediaType === 'vector') ? (
             <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/85 backdrop-blur-xs text-[10px] font-mono text-indigo-300 flex items-center gap-1 border border-indigo-500/30 shadow-sm">
               <Layers className="w-3 h-3 text-indigo-400" />
-              <span>EPS Vector</span>
+              <span>{t.vector}</span>
             </div>
           ) : (
             <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/85 backdrop-blur-xs text-[10px] font-mono text-emerald-300 flex items-center gap-1 border border-emerald-500/30 shadow-sm">
               <Camera className="w-3 h-3 text-emerald-400" />
-              <span>PHOTO</span>
+              <span>{t.photo}</span>
             </div>
           )}
 
+          {/* Subtle delete icon button */}
           <button
             type="button"
             onClick={() => onDelete(asset.id, asset.filename)}
-            className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-red-600/90 hover:bg-red-500 text-white flex items-center justify-center shadow-md transition cursor-pointer"
-            title="Delete Asset"
+            className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-background/80 hover:bg-destructive hover:text-destructive-foreground text-foreground border border-border/80 flex items-center justify-center shadow-xs transition cursor-pointer"
+            title={t.deleteAsset}
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
@@ -231,15 +243,15 @@ export const AssetCard: React.FC<AssetCardProps> = ({
 
           <div className="rounded-lg bg-secondary/40 border border-border/70 p-2 space-y-1.5 text-[10px] font-mono">
             <div className="flex items-center justify-between text-muted-foreground">
-              <span>Original Size:</span>
+              <span>{t.originalSize}</span>
               <span className="font-semibold text-foreground">{formatBytes(originalSize)}</span>
             </div>
 
             <div className="flex items-center justify-between text-muted-foreground">
               <span className="flex items-center gap-1">
-                <span>AI Payload:</span>
+                <span>{t.aiPayload}</span>
                 {savingsPercent !== null && (
-                  <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-400 font-semibold border border-emerald-500/20">
+                  <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-500 font-semibold border border-emerald-500/20">
                     -{savingsPercent}%
                   </span>
                 )}
@@ -249,42 +261,54 @@ export const AssetCard: React.FC<AssetCardProps> = ({
           </div>
         </div>
 
-        {/* Status Pill matching the user's reference design */}
+        {/* Status Badge with sleek shadcn outline design */}
         {isCompleted && (
-          <div className="w-full py-1.5 px-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-semibold text-xs flex items-center justify-center gap-1.5">
-            <Check className="w-3.5 h-3.5 stroke-[2.5]" />
-            <span>DONE</span>
-          </div>
+          <Badge
+            variant="outline"
+            className="w-full py-1.5 px-3 rounded-lg border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold text-xs flex items-center justify-center gap-1.5"
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            <span>{t.completedStatus}</span>
+          </Badge>
         )}
 
         {isProcessing && (
-          <div className="w-full py-1.5 px-3 rounded-lg bg-sky-500/10 border border-sky-500/30 text-sky-600 dark:text-sky-400 font-semibold text-xs flex items-center justify-center gap-1.5">
+          <Badge
+            variant="outline"
+            className="w-full py-1.5 px-3 rounded-lg border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 font-semibold text-xs flex items-center justify-center gap-1.5"
+          >
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            <span>PROCESSING</span>
-          </div>
+            <span>{t.processingStatus}</span>
+          </Badge>
         )}
 
         {isQueued && (
-          <div className="w-full py-1.5 px-3 rounded-lg bg-muted/60 border border-border text-muted-foreground font-semibold text-xs flex items-center justify-center gap-1.5">
+          <Badge
+            variant="outline"
+            className="w-full py-1.5 px-3 rounded-lg border-border bg-muted/40 text-muted-foreground font-semibold text-xs flex items-center justify-center gap-1.5"
+          >
             <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-pulse" />
-            <span>QUEUED</span>
-          </div>
+            <span>{t.queuedStatus}</span>
+          </Badge>
         )}
 
         {isError && (
-          <div className="w-full py-1.5 px-3 rounded-lg bg-red-950/40 border border-red-800/50 text-red-400 font-semibold text-xs flex items-center justify-center gap-1.5">
+          <Badge
+            variant="outline"
+            className="w-full py-1.5 px-3 rounded-lg border-destructive/40 bg-destructive/10 text-destructive font-semibold text-xs flex items-center justify-center gap-1.5"
+          >
             <AlertTriangle className="w-3.5 h-3.5" />
-            <span>FAILED</span>
-          </div>
+            <span>{t.failedStatus}</span>
+          </Badge>
         )}
 
         {/* Live Model & Attempt Tracker */}
         <div className="rounded-lg border border-border bg-secondary/30 p-2.5 text-[11px] space-y-1.5">
           {isProcessing && (
             <div className="space-y-1">
-              <div className="flex items-center gap-1.5 text-sky-400 font-semibold text-[11px]">
-                <Zap className="w-3 h-3 animate-pulse text-sky-400" />
-                <span>Active Inference</span>
+              <div className="flex items-center gap-1.5 text-sky-500 font-semibold text-[11px]">
+                <Zap className="w-3 h-3 animate-pulse" />
+                <span>{t.activeInference}</span>
               </div>
               <div className="text-[10px] text-muted-foreground font-mono">
                 Trying:{' '}
@@ -306,7 +330,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
           {isCompleted && rec && (
             <div className="space-y-1">
               <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                <span>Model:</span>
+                <span>{t.model}</span>
                 <span
                   className="font-semibold text-foreground truncate max-w-[130px]"
                   title={rec.aiGenerationInfo?.model}
@@ -316,8 +340,8 @@ export const AssetCard: React.FC<AssetCardProps> = ({
               </div>
               {rec.aiGenerationInfo?.latencyMs && (
                 <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span>Latency:</span>
-                  <span className="font-mono text-emerald-400 font-medium">
+                  <span>{t.latency}</span>
+                  <span className="font-mono text-emerald-500 font-medium">
                     {(rec.aiGenerationInfo.latencyMs / 1000).toFixed(1)}s
                   </span>
                 </div>
@@ -326,7 +350,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
               {rec.aiGenerationInfo?.attemptHistory &&
                 rec.aiGenerationInfo.attemptHistory.length > 1 && (
                   <div className="pt-1 border-t border-border/50 text-[10px] space-y-0.5">
-                    <span className="text-amber-400 font-medium">Failover / Retries:</span>
+                    <span className="text-amber-500 font-medium">Failover / Retries:</span>
                     {rec.aiGenerationInfo.attemptHistory.map((att, idx) => (
                       <div
                         key={idx}
@@ -334,12 +358,13 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                       >
                         <span
                           className={
-                            att.status === 'success' ? 'text-emerald-400' : 'text-red-400'
+                            att.status === 'success' ? 'text-emerald-500' : 'text-destructive'
                           }
                         >
                           {att.status === 'success' ? '✓' : '✕'}
                         </span>
-                        <span className="truncate">{getCleanModelName(att.model, att.provider as any)}</span>
+                        <span>{att.provider}</span>
+                        <span>({att.model})</span>
                       </div>
                     ))}
                   </div>
@@ -348,142 +373,116 @@ export const AssetCard: React.FC<AssetCardProps> = ({
           )}
 
           {isError && (
-            <div className="space-y-1">
-              <span className="text-red-400 text-[10px] font-semibold block">
-                Inference Error:
-              </span>
-              <p className="text-[10px] text-muted-foreground line-clamp-2">
-                {asset.error || asset.queueItem?.error || 'All attempts failed'}
-              </p>
-              {asset.queueItem?.attemptHistory &&
-                asset.queueItem.attemptHistory.length > 0 && (
-                  <div className="text-[9px] font-mono text-muted-foreground space-y-0.5 pt-1">
-                    {asset.queueItem.attemptHistory.map((att, idx) => (
-                      <div key={idx} className="flex items-center gap-1">
-                        <span className="text-red-400">✕</span>
-                        <span className="truncate">{getCleanModelName(att.model, att.provider as any)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-            </div>
-          )}
-
-          {isQueued && (
-            <div className="text-[10px] text-muted-foreground text-center py-0.5 font-mono">
-              Waiting for next free API slot...
+            <div className="text-[10px] text-destructive leading-tight">
+              {asset.error || 'Metadata generation failed. Check your API keys and models.'}
             </div>
           )}
         </div>
+
+        {/* Regenerate Button */}
+        {isCompleted && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onRegenerate(asset.id)}
+            className="w-full h-8 text-xs gap-1.5 cursor-pointer hover:bg-secondary border-border"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />
+            <span>{t.regenerate}</span>
+          </Button>
+        )}
       </div>
 
       {/* ======================================================== */}
-      {/* RIGHT COLUMN: Title, Description, Keywords, Actions       */}
+      {/* RIGHT COLUMN: Interactive Form Fields & Keywords List    */}
       {/* ======================================================== */}
-      <div className="flex-1 w-full flex flex-col gap-3.5">
-        {/* TITLE ROW */}
+      <div className="flex-1 w-full min-w-0 space-y-3.5">
+        {/* Title Field with Copy & Character Counter */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
-            <div className="flex items-center gap-1.5 font-semibold text-foreground">
-              <span className="text-sky-400 font-bold text-sm">H</span>
-              <span>Title</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-mono text-muted-foreground">
-                {localTitle.length} chars
+            <label className="font-semibold text-foreground flex items-center gap-1.5">
+              <span>{t.title}</span>
+              <span className="text-[10px] font-mono font-normal text-muted-foreground">
+                ({localTitle.length} chars)
               </span>
-              <button
-                type="button"
-                onClick={() => rec && onCopyText(localTitle, `${asset.id}_title`)}
-                disabled={!rec}
-                className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md border border-border bg-secondary/50 text-foreground hover:bg-secondary transition cursor-pointer disabled:opacity-40"
-              >
-                {copiedKey === `${asset.id}_title` ? (
-                  <>
-                    <Check className="w-3 h-3 text-emerald-400" />
-                    <span className="text-emerald-400">Copied</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3 h-3 text-muted-foreground" />
-                    <span>Copy</span>
-                  </>
-                )}
-              </button>
-            </div>
+            </label>
+            <button
+              type="button"
+              onClick={() => onCopyText(localTitle, `${asset.id}_title`)}
+              disabled={!localTitle}
+              className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md border border-border bg-secondary/50 text-foreground hover:bg-secondary transition cursor-pointer disabled:opacity-40"
+            >
+              {copiedKey === `${asset.id}_title` ? (
+                <>
+                  <Check className="w-3 h-3 text-emerald-500" />
+                  <span className="text-emerald-500">{t.copied}</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3 h-3 text-muted-foreground" />
+                  <span>{t.copy}</span>
+                </>
+              )}
+            </button>
           </div>
-
-          {rec ? (
-            <Input
-              value={localTitle}
-              onChange={(e) => setLocalTitle(e.target.value)}
-              onBlur={handleBlurTitle}
-              placeholder="Enter stock title..."
-              className="h-9 text-xs font-medium bg-secondary/20 border-border focus:border-sky-500"
-            />
-          ) : (
-            <div className="h-9 rounded-lg border border-dashed border-border bg-muted/20 flex items-center px-3 text-xs text-muted-foreground italic">
-              {isProcessing ? 'Generating title with AI...' : 'Waiting in queue...'}
-            </div>
-          )}
+          <Input
+            value={localTitle}
+            onChange={(e) => setLocalTitle(e.target.value)}
+            onBlur={handleBlurTitle}
+            placeholder={isProcessing ? 'Generating title...' : 'Stock Asset Title...'}
+            disabled={!rec}
+            className="text-xs bg-card border-border font-medium"
+          />
         </div>
 
-        {/* DESCRIPTION ROW */}
+        {/* Description Field with Copy & Character Counter */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
-            <div className="flex items-center gap-1.5 font-semibold text-foreground">
-              <FileText className="w-3.5 h-3.5 text-sky-400" />
-              <span>Description</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-mono text-muted-foreground">
-                {localDesc.length} chars
+            <label className="font-semibold text-foreground flex items-center gap-1.5">
+              <span>{t.description}</span>
+              <span className="text-[10px] font-mono font-normal text-muted-foreground">
+                ({localDesc.length} chars)
               </span>
-              <button
-                type="button"
-                onClick={() => rec && onCopyText(localDesc, `${asset.id}_desc`)}
-                disabled={!rec}
-                className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md border border-border bg-secondary/50 text-foreground hover:bg-secondary transition cursor-pointer disabled:opacity-40"
-              >
-                {copiedKey === `${asset.id}_desc` ? (
-                  <>
-                    <Check className="w-3 h-3 text-emerald-400" />
-                    <span className="text-emerald-400">Copied</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3 h-3 text-muted-foreground" />
-                    <span>Copy</span>
-                  </>
-                )}
-              </button>
-            </div>
+            </label>
+            <button
+              type="button"
+              onClick={() => onCopyText(localDesc, `${asset.id}_desc`)}
+              disabled={!localDesc}
+              className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md border border-border bg-secondary/50 text-foreground hover:bg-secondary transition cursor-pointer disabled:opacity-40"
+            >
+              {copiedKey === `${asset.id}_desc` ? (
+                <>
+                  <Check className="w-3 h-3 text-emerald-500" />
+                  <span className="text-emerald-500">{t.copied}</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3 h-3 text-muted-foreground" />
+                  <span>{t.copy}</span>
+                </>
+              )}
+            </button>
           </div>
-
-          {rec ? (
-            <Textarea
-              value={localDesc}
-              onChange={(e) => setLocalDesc(e.target.value)}
-              onBlur={handleBlurDesc}
-              placeholder="Enter stock description..."
-              className="text-xs min-h-[64px] bg-secondary/20 border-border leading-relaxed resize-y focus:border-sky-500"
-            />
-          ) : (
-            <div className="h-16 rounded-lg border border-dashed border-border bg-muted/20 flex items-center px-3 text-xs text-muted-foreground italic">
-              {isProcessing ? 'Generating description with AI...' : 'Waiting in queue...'}
-            </div>
-          )}
+          <Textarea
+            rows={2}
+            value={localDesc}
+            onChange={(e) => setLocalDesc(e.target.value)}
+            onBlur={handleBlurDesc}
+            placeholder={isProcessing ? 'Generating description...' : 'Detailed stock description...'}
+            disabled={!rec}
+            className="text-xs bg-card border-border resize-none"
+          />
         </div>
 
-        {/* KEYWORDS ROW */}
-        <div className="space-y-1.5">
+        {/* Keywords Management with Top 10 SEO Priority Highlight */}
+        <div className="space-y-2">
           <div className="flex items-center justify-between text-xs">
             <div className="flex items-center gap-1.5 font-semibold text-foreground">
-              <Tag className="w-3.5 h-3.5 text-amber-400" />
-              <span>Keywords</span>
+              <Tag className="w-3.5 h-3.5 text-amber-500" />
+              <span>{t.keywords}</span>
               {rec && (
                 <span className="text-[11px] font-mono font-normal text-muted-foreground">
-                  {rec.rankedKeywords.length}
+                  ({rec.rankedKeywords.length})
                 </span>
               )}
             </div>
@@ -502,7 +501,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                   className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md border border-border bg-secondary/50 text-foreground hover:bg-secondary transition cursor-pointer"
                 >
                   <Edit3 className="w-3 h-3 text-muted-foreground" />
-                  <span>{isEditingKws ? 'Cancel' : 'Edit'}</span>
+                  <span>{isEditingKws ? t.cancel : t.edit}</span>
                 </button>
               )}
               <button
@@ -513,13 +512,13 @@ export const AssetCard: React.FC<AssetCardProps> = ({
               >
                 {copiedKey === `${asset.id}_kws` ? (
                   <>
-                    <Check className="w-3 h-3 text-emerald-400" />
-                    <span className="text-emerald-400">Copied</span>
+                    <Check className="w-3 h-3 text-emerald-500" />
+                    <span className="text-emerald-500">{t.copied}</span>
                   </>
                 ) : (
                   <>
                     <Copy className="w-3 h-3 text-muted-foreground" />
-                    <span>Copy</span>
+                    <span>{t.copy}</span>
                   </>
                 )}
               </button>
@@ -537,28 +536,46 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 />
                 <div className="flex justify-end gap-2">
                   <Button size="sm" onClick={handleSaveRawKeywords} className="h-7 text-xs">
-                    Save Keywords
+                    {t.saveKeywords}
                   </Button>
                 </div>
               </div>
             ) : (
-              <div className="p-3 rounded-xl border border-border bg-secondary/15 flex flex-wrap gap-1.5 max-h-48 overflow-y-auto">
-                {rec.rankedKeywords.map((kw, i) => (
-                  <span
-                    key={i}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-sky-500/10 text-sky-400 border border-sky-500/20 hover:border-sky-500/50 transition group/tag"
-                  >
-                    <span>{kw}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveKeyword(kw)}
-                      className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-sky-400/60 hover:text-red-400 transition cursor-pointer"
-                      title={`Remove "${kw}"`}
+              <div className="p-3 rounded-xl border border-border bg-secondary/15 flex flex-wrap gap-1.5 max-h-56 overflow-y-auto">
+                {rec.rankedKeywords.map((kw, i) => {
+                  const isTop10 = i < 10;
+                  return (
+                    <Badge
+                      key={i}
+                      variant={isTop10 ? 'default' : 'secondary'}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium transition cursor-pointer ${
+                        isTop10
+                          ? 'border-primary/60 bg-primary/10 text-foreground font-semibold shadow-2xs hover:bg-primary/20'
+                          : 'border-border/60 bg-secondary/60 text-muted-foreground hover:text-foreground'
+                      }`}
+                      onClick={() => !isTop10 && handlePromoteKeyword(i)}
+                      title={isTop10 ? `#${i + 1} Top SEO Keyword` : t.promoteToTop10}
                     >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </span>
-                ))}
+                      {isTop10 && (
+                        <span className="text-[10px] font-mono text-primary font-bold">
+                          #{i + 1}
+                        </span>
+                      )}
+                      <span>{kw}</span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveKeyword(kw);
+                        }}
+                        className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-muted-foreground hover:text-destructive transition cursor-pointer"
+                        title={`Remove "${kw}"`}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </Badge>
+                  );
+                })}
 
                 {isAddingTag ? (
                   <div className="inline-flex items-center gap-1">
@@ -583,89 +600,62 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                   <button
                     type="button"
                     onClick={() => setIsAddingTag(true)}
-                    className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs border border-dashed border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground transition cursor-pointer"
+                    className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-mono border border-dashed border-border text-muted-foreground hover:text-foreground hover:border-foreground transition cursor-pointer"
                   >
                     <Plus className="w-3 h-3" />
-                    <span>Add Tag</span>
+                    <span>{t.addTag}</span>
                   </button>
                 )}
               </div>
             )
           ) : (
-            <div className="h-20 rounded-lg border border-dashed border-border bg-muted/20 flex items-center px-3 text-xs text-muted-foreground italic">
+            <div className="p-4 rounded-xl border border-dashed border-border bg-secondary/10 text-center text-xs text-muted-foreground">
               {isProcessing
-                ? 'Generating 40-50 ranked keywords with AI...'
-                : 'Waiting in queue...'}
+                ? 'AI is analyzing composition and ranking keywords...'
+                : 'Keywords will appear here once metadata is generated.'}
             </div>
           )}
         </div>
 
-        {/* BOTTOM ACTION BAR: Categories & Regenerate Button */}
-        <div className="pt-2 border-t border-border flex flex-wrap items-center justify-between gap-3 text-xs">
-          {/* Left: Category info & Copy all */}
-          <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
-            {rec ? (
-              <>
-                <span
-                  className="font-mono text-[10px] bg-secondary/60 px-2 py-0.5 rounded-md border border-border"
-                  title={`Adobe Stock Category #${rec.categories.adobeCategoryId || 8}`}
-                >
-                  Adobe:{' '}
-                  <span className="text-foreground font-semibold">
-                    {ADOBE_CATEGORIES[rec.categories.adobeCategoryId] || 'Graphic Resources'}
-                  </span>
+        {/* Category Mapping Preview Footer */}
+        {rec && (
+          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border/60 text-xs">
+            {rec.categories?.adobeCategoryId && (
+              <Badge variant="outline" className="text-[11px] gap-1 font-mono">
+                <span className="text-muted-foreground">Adobe:</span>
+                <span className="font-semibold text-foreground">
+                  {ADOBE_CATEGORIES[rec.categories.adobeCategoryId] || `#${rec.categories.adobeCategoryId}`}
                 </span>
-                <span
-                  className="font-mono text-[10px] bg-secondary/60 px-2 py-0.5 rounded-md border border-border"
-                  title="Official Shutterstock Category"
-                >
-                  Shutterstock:{' '}
-                  <span className="text-foreground font-semibold">
-                    {rec.categories.shutterstockCategories[0] || 'Objects'}
-                  </span>
-                </span>
-                <span
-                  className="font-mono text-[10px] bg-secondary/60 px-2 py-0.5 rounded-md border border-border"
-                  title={`Dreamstime Category #${rec.categories.dreamstimeCategory1 || 114}`}
-                >
-                  Dreamstime:{' '}
-                  <span className="text-foreground font-semibold">
-                    {DREAMSTIME_CATEGORIES[rec.categories.dreamstimeCategory1] || 'AI Illustrations'}
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => onCopyAll(rec)}
-                  className="text-[11px] font-medium text-foreground/90 hover:text-foreground underline transition cursor-pointer flex items-center gap-1 ml-1"
-                  title="Copy Title, Description, and Keywords to clipboard"
-                >
-                  {copiedKey === `${rec.id}_all` ? (
-                    <span className="text-emerald-400 font-semibold no-underline">Copied All!</span>
-                  ) : (
-                    <span>Copy All</span>
-                  )}
-                </button>
-              </>
-            ) : (
-              <span className="text-muted-foreground/60 italic text-[11px]">
-                Categories assigned automatically upon completion
-              </span>
+              </Badge>
             )}
-          </div>
 
-          {/* Right: Regenerate Button (Sky Blue matching the reference screenshot) */}
-          <Button
-            size="sm"
-            onClick={() => onRegenerate(asset.id)}
-            disabled={isProcessing}
-            className="bg-sky-600 hover:bg-sky-500 text-white font-medium text-xs px-4 py-2 h-8 rounded-lg shadow-sm gap-1.5 cursor-pointer disabled:opacity-50"
-          >
-            <RefreshCw
-              className={`w-3.5 h-3.5 ${isProcessing ? 'animate-spin' : ''}`}
-            />
-            <span>Regenerate</span>
-          </Button>
-        </div>
+            {rec.categories?.shutterstockCategories && rec.categories.shutterstockCategories.length > 0 && (
+              <Badge variant="outline" className="text-[11px] gap-1 font-mono">
+                <span className="text-muted-foreground">Shutterstock:</span>
+                <span className="font-semibold text-foreground">
+                  {rec.categories.shutterstockCategories.filter(Boolean).join(', ')}
+                </span>
+              </Badge>
+            )}
+
+            {rec.categories?.dreamstimeCategory1 && (
+              <Badge variant="outline" className="text-[11px] gap-1 font-mono">
+                <span className="text-muted-foreground">Dreamstime:</span>
+                <span className="font-semibold text-foreground">
+                  {DREAMSTIME_CATEGORIES[rec.categories.dreamstimeCategory1] || `#${rec.categories.dreamstimeCategory1}`}
+                </span>
+              </Badge>
+            )}
+
+            <button
+              type="button"
+              onClick={() => onCopyAll(rec)}
+              className="text-[11px] text-muted-foreground hover:text-foreground hover:underline cursor-pointer ml-auto"
+            >
+              Copy All
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
