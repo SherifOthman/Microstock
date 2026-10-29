@@ -489,7 +489,7 @@ export const AddKeyDialog: React.FC<Props> = ({
               Get free key from {currentMeta.name}
             </a>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             <textarea
               rows={2}
               placeholder={
@@ -505,14 +505,14 @@ export const AddKeyDialog: React.FC<Props> = ({
                   handleAddAndTestKey();
                 }
               }}
-              className="flex-1 p-2 text-xs font-mono rounded-md border border-border bg-card text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring resize-none"
+              className="flex-1 p-2 text-xs font-mono rounded-md border border-border bg-card text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring resize-none w-full"
             />
             <Button
               type="button"
               size="sm"
               onClick={handleAddAndTestKey}
               disabled={!inputKeysText.trim() || isProcessing}
-              className="self-end h-8 gap-1.5 text-xs font-semibold px-3"
+              className="w-full sm:w-auto self-stretch sm:self-end h-8 gap-1.5 text-xs font-semibold px-3"
             >
               {isProcessing ? (
                 <>
@@ -617,17 +617,17 @@ export const AddKeyDialog: React.FC<Props> = ({
                 return (
                   <div
                     key={entry.id}
-                    className="flex items-center justify-between gap-2 p-2 rounded-md bg-secondary/30 border border-border text-xs"
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2 rounded-md bg-secondary/30 border border-border text-xs"
                   >
-                    <div className="space-y-0.5 min-w-0">
-                      <div className="flex items-center gap-2">
+                    <div className="space-y-0.5 min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                         <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-semibold">
                           #{index + 1}
                         </span>
-                        <span className="font-mono text-foreground font-semibold">
+                        <span className="font-mono text-foreground font-semibold truncate">
                           {maskKey(entry.key)}
                         </span>
-                        <Badge variant="outline" className="text-[9px] py-0 font-mono">
+                        <Badge variant="outline" className="text-[9px] py-0 font-mono truncate max-w-[150px] sm:max-w-none">
                           {MODEL_DISPLAY_NAMES[entry.model] || entry.model}
                         </Badge>
                         {isLastAdded && (
@@ -659,7 +659,7 @@ export const AddKeyDialog: React.FC<Props> = ({
                     )}
                   </div>
 
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-auto border-t sm:border-t-0 border-border/40 pt-1 sm:pt-0 w-full sm:w-auto justify-end">
                     {entry.testStatus === 'success' && !entry.warning && (
                       <Badge
                         variant="outline"

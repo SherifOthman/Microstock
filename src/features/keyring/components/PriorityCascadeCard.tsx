@@ -278,15 +278,15 @@ export const PriorityCascadeCard: React.FC<Props> = ({
               </div>
 
               {/* Right: Model Selector & Key Counter / Add Key */}
-              <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full sm:w-auto justify-between sm:justify-end shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-border/40">
                 {/* Model Selector Dropdown */}
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] text-muted-foreground font-mono">Model:</span>
+                <div className="flex items-center gap-1.5 flex-1 sm:flex-initial">
+                  <span className="text-[10px] text-muted-foreground font-mono hidden xs:inline">Model:</span>
                   <Select
                     value={savedModel}
                     onValueChange={(val) => handleModelChange(providerId, val)}
                   >
-                    <SelectTrigger className="h-7 text-xs bg-card border-border min-w-[170px] max-w-[230px]">
+                    <SelectTrigger className="h-7 text-xs bg-card border-border w-full sm:w-auto sm:min-w-[170px] sm:max-w-[230px]">
                       <SelectValue>
                         <span className="truncate">
                           {MODEL_DISPLAY_NAMES[savedModel] || savedModel}
@@ -308,7 +308,7 @@ export const PriorityCascadeCard: React.FC<Props> = ({
                   <button
                     type="button"
                     onClick={() => onFilterProvider?.(providerId)}
-                    className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-border bg-secondary/40 hover:bg-secondary text-[11px] font-mono transition cursor-pointer"
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-border bg-secondary/40 hover:bg-secondary text-[11px] font-mono transition cursor-pointer shrink-0"
                     title={`View ${meta.name} keys in keyring`}
                   >
                     <span
@@ -324,7 +324,7 @@ export const PriorityCascadeCard: React.FC<Props> = ({
                     variant="outline"
                     size="sm"
                     onClick={() => onAddKey(providerId)}
-                    className="h-7 text-xs gap-1 border-dashed hover:border-solid hover:bg-primary hover:text-primary-foreground"
+                    className="h-7 text-xs gap-1 border-dashed hover:border-solid hover:bg-primary hover:text-primary-foreground shrink-0"
                     title={`Add an API key for ${meta.name}`}
                   >
                     <Plus className="w-3 h-3" />

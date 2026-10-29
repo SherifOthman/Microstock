@@ -6,9 +6,10 @@ import { keyRingScheduler } from './services/scheduler/KeyRingScheduler';
 import { db, getAllApiKeys, updateApiKey } from './db';
 import { ApiKeyRecord } from './types';
 import { Badge } from './components/ui/badge';
-import { Sparkles, ShieldCheck, Wand2, Layers, KeyRound, Sun, Moon } from 'lucide-react';
+import { ShieldCheck, Wand2, Layers, KeyRound, Sun, Moon } from 'lucide-react';
 import { Dialog } from './components/ui/dialog';
 import { KeyRingView } from './features/keyring/components/KeyRingView';
+import { AppLogo } from './components/icons/AppLogo';
 
 export function App() {
   const [, setKeys] = useState<ApiKeyRecord[]>([]);
@@ -74,15 +75,13 @@ export function App() {
         <div className="max-w-[1700px] mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
           {/* Logo & Brand */}
           <div className="flex items-center gap-2.5 shrink-0">
-            <div className="w-7 h-7 rounded-lg bg-foreground text-background flex items-center justify-center font-bold text-xs shadow-xs">
-              <Sparkles className="w-4 h-4" />
-            </div>
-            <div className="flex items-baseline gap-2">
+            <AppLogo size={30} className="shrink-0 drop-shadow-sm" />
+            <div className="flex items-baseline gap-1.5">
               <span className="font-semibold text-sm tracking-tight text-foreground">
-                Stock Assistant
+                Microstock
               </span>
-              <span className="text-[11px] text-muted-foreground hidden lg:inline font-mono">
-                Microstock Suite
+              <span className="text-[11px] text-muted-foreground hidden sm:inline font-mono">
+                Studio
               </span>
             </div>
           </div>
@@ -92,16 +91,18 @@ export function App() {
             <button
               type="button"
               onClick={() => handleTabChange('studio')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+              className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
                 activeTab === 'studio'
                   ? 'bg-card text-foreground shadow-xs border border-border/80'
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              <Wand2 className="w-3.5 h-3.5 text-primary" />
-              <span>Metadata Studio</span>
+              <Wand2 className="w-3.5 h-3.5 text-primary shrink-0" />
+              <span className="hidden xs:inline sm:inline">Metadata</span>
+              <span className="xs:hidden sm:hidden">Studio</span>
+              <span className="hidden sm:inline">Studio</span>
               {masterCount > 0 && (
-                <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-mono hidden sm:inline-flex">
+                <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-mono hidden md:inline-flex">
                   {masterCount}
                 </Badge>
               )}
@@ -110,16 +111,18 @@ export function App() {
             <button
               type="button"
               onClick={() => handleTabChange('tracker')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+              className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
                 activeTab === 'tracker'
                   ? 'bg-card text-foreground shadow-xs border border-border/80'
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              <Layers className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Distribution Tracker</span>
+              <Layers className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span className="hidden xs:inline sm:inline">Distribution</span>
+              <span className="xs:hidden sm:hidden">Tracker</span>
+              <span className="hidden sm:inline">Tracker</span>
               {trackerCount > 0 && (
-                <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-mono hidden sm:inline-flex">
+                <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-mono hidden md:inline-flex">
                   {trackerCount}
                 </Badge>
               )}
