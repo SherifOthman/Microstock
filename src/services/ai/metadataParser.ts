@@ -42,6 +42,78 @@ export interface RawAiOutput {
 
 export type KeywordPhrasing = 'single' | 'double' | 'mixed';
 
+// -------------------------------------------------------------
+// Auto-repair de-gluer for glued microstock compound words
+// -------------------------------------------------------------
+export function deGlueCompoundWord(word: string): string {
+  if (!word || typeof word !== 'string') return '';
+  const trimmed = word.trim().toLowerCase();
+  if (trimmed.includes(' ') || trimmed.length < 6) return trimmed;
+
+  const knownReplacements: Record<string, string> = {
+    homegym: 'home gym',
+    homeworkout: 'home workout',
+    homespace: 'home space',
+    homefitness: 'home fitness',
+    fitnessequipment: 'fitness equipment',
+    fitnessgear: 'fitness gear',
+    fitnesstool: 'fitness tool',
+    recoverytool: 'recovery tool',
+    recoverygear: 'recovery gear',
+    stretchingtool: 'stretching tool',
+    stretchinggear: 'stretching gear',
+    stretchingband: 'stretching band',
+    yogamaterial: 'yoga material',
+    yogamat: 'yoga mat',
+    yogagear: 'yoga gear',
+    foamroller: 'foam roller',
+    foamroll: 'foam roll',
+    resistanceband: 'resistance band',
+    resistancebands: 'resistance bands',
+    texturedsurface: 'textured surface',
+    texturedbackground: 'textured background',
+    copyspace: 'copy space',
+    blurredbackground: 'blurred background',
+    flatlay: 'flat lay',
+    highdetail: 'high detail',
+    neutralbackground: 'neutral background',
+    professionallighting: 'professional lighting',
+    workoutroutine: 'workout routine',
+    exercisemat: 'exercise mat',
+    exerciseroutine: 'exercise routine',
+  };
+
+  if (knownReplacements[trimmed]) {
+    return knownReplacements[trimmed];
+  }
+
+  // Roots: equipment, tool, gear, material, workout, surface, background, band, roller, gym, space, light, texture
+  const suffixRegex = /^([a-z]{3,})(equipment|tool|gear|material|workout|surface|background|band|roller|gym|space|light|texture)$/i;
+  const suffixMatch = trimmed.match(suffixRegex);
+  if (suffixMatch) {
+    const prefix = suffixMatch[1];
+    const suffix = suffixMatch[2];
+    const validSingleWords = new Set([
+      'highlight', 'daylight', 'sunlight', 'spotlight', 'floodlight', 'moonlight', 'starlight',
+      'backlight', 'candlelight', 'skylight', 'flashlight', 'twilight',
+      'subspace', 'aerospace', 'workspace', 'airspace', 'namespace',
+      'headband', 'wristband', 'armband', 'broadband', 'waistband', 'rubberband',
+      'subsurface', 'backdrop'
+    ]);
+    if (!validSingleWords.has(trimmed)) {
+      return `${prefix} ${suffix}`;
+    }
+  }
+
+  const prefixRegex = /^(home|fitness|recovery|stretching|exercise)([a-z]{3,})$/i;
+  const prefixMatch = trimmed.match(prefixRegex);
+  if (prefixMatch) {
+    return `${prefixMatch[1]} ${prefixMatch[2]}`;
+  }
+
+  return trimmed;
+}
+
 export function parseAndNormalizeAiMetadata(
   rawText: string,
   filename: string,
@@ -49,7 +121,7 @@ export function parseAndNormalizeAiMetadata(
   batchId: string,
   isAiGenerated: boolean,
   defaultAiModel = 'Midjourney v6',
-  keywordPhrasing: KeywordPhrasing = 'single'
+  keywordPhrasing: KeywordPhrasing = 'mixed'
 ): MasterMetadataRecord {
   let parsed: RawAiOutput = {};
 
@@ -113,51 +185,83 @@ export function parseAndNormalizeAiMetadata(
   let finalKeywords: string[] = [];
 
   if (keywordPhrasing === 'single') {
-    // SINGLE WORDS ONLY: Split any multi-word phrases, strip punctuation, discard stop words
-    // Never merge compound words into single meaningless blobs (e.g. split into separate distinct words)
+    // SINGLE WORDS ONLY: Split any multi-word phrases, de-glue compounds, strip punctuation, discard stop words
     const singleSet = new Set<string>();
     for (const item of rawList) {
-      // Split camelCase if any (e.g. "fitnessEquipment" -> "fitness equipment")
       const deCamelled = item.replace(/([a-z])([A-Z])/g, '$1 $2');
       const tokens = deCamelled
         .replace(/[^a-zA-Z0-9\s]/g, ' ')
         .split(/\s+/)
         .map((w) => w.trim().toLowerCase())
-        .filter((w) => w.length >= 2 && !stopWords.has(w) && !/^\d+$/.test(w));
+        .filter(Boolean);
 
       for (const t of tokens) {
-        if (!singleSet.has(t)) {
-          singleSet.add(t);
-          finalKeywords.push(t);
+        // De-glue any compound words into separate single tokens
+        const deglued = deGlueCompoundWord(t);
+        const subTokens = deglued.split(/\s+/).filter((w) => w.length >= 2 && !stopWords.has(w) && !/^\d+$/.test(w));
+        for (const sub of subTokens) {
+          if (!singleSet.has(sub)) {
+            singleSet.add(sub);
+            finalKeywords.push(sub);
+          }
         }
       }
     }
   } else if (keywordPhrasing === 'double') {
-    // DOUBLE / MULTI-WORD PHRASES
+    // DOUBLE / MULTI-WORD PHRASES (Max 2 words per tag)
     const phraseSet = new Set<string>();
     for (const item of rawList) {
-      const clean = item
+      const deCamelled = item.replace(/([a-z])([A-Z])/g, '$1 $2');
+      const clean = deCamelled
         .replace(/[^a-zA-Z0-9\s]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
         .toLowerCase();
-      if (clean && !phraseSet.has(clean) && !/^\d+$/.test(clean)) {
-        phraseSet.add(clean);
-        finalKeywords.push(clean);
+      if (!clean) continue;
+
+      // De-glue any words inside phrase
+      const parts = clean.split(' ').map((p) => deGlueCompoundWord(p)).join(' ').split(/\s+/).filter(Boolean);
+      // Chunk into max 2 words per tag
+      for (let i = 0; i < parts.length; i += 2) {
+        const tag = parts.slice(i, i + 2).join(' ').trim();
+        if (tag.length >= 2 && !phraseSet.has(tag) && !/^\d+$/.test(tag)) {
+          phraseSet.add(tag);
+          finalKeywords.push(tag);
+        }
       }
     }
   } else {
-    // MIXED: Keep clean natural mix of single and multi-word terms
+    // SMART MICROSTOCK MIX (1 to 2 Words per Tag):
+    // Preserves single spaces in 2-word tags, trims tags > 2 words to max 2 words, auto-repairs glued compounds
     const mixedSet = new Set<string>();
     for (const item of rawList) {
-      const clean = item
+      const deCamelled = item.replace(/([a-z])([A-Z])/g, '$1 $2');
+      const clean = deCamelled
         .replace(/[^a-zA-Z0-9\s]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
         .toLowerCase();
-      if (clean && !mixedSet.has(clean) && !/^\d+$/.test(clean)) {
-        mixedSet.add(clean);
-        finalKeywords.push(clean);
+      if (!clean) continue;
+
+      // Check if item contains glued words and expand them
+      const words = clean.split(' ').map((w) => deGlueCompoundWord(w)).join(' ').split(/\s+/).filter(Boolean);
+      if (words.length === 0) continue;
+
+      if (words.length <= 2) {
+        const tag = words.join(' ');
+        if (tag.length >= 2 && !mixedSet.has(tag) && !/^\d+$/.test(tag)) {
+          mixedSet.add(tag);
+          finalKeywords.push(tag);
+        }
+      } else {
+        // Tag has > 2 words: chunk into 2-word phrases or single words
+        for (let i = 0; i < words.length; i += 2) {
+          const tag = words.slice(i, i + 2).join(' ').trim();
+          if (tag.length >= 2 && !mixedSet.has(tag) && !/^\d+$/.test(tag)) {
+            mixedSet.add(tag);
+            finalKeywords.push(tag);
+          }
+        }
       }
     }
   }

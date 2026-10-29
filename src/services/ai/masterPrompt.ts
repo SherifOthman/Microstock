@@ -15,7 +15,9 @@ UNIVERSAL SAFE-ZONE GUIDELINES:
    - Factually describe the visual subject, setting, lighting, perspective, and composition.
 
 3. "ranked_keywords":
-   - Array of exactly 40 to 50 relevant English keywords/tags.
+   - Array of exactly 42 to 48 relevant English keywords/tags.
+   - Smart Microstock Mix (1 to 2 Words per Tag): Each tag can be either a strong single word (e.g. "foam", "yoga", "minimal", "texture") OR a natural 2-word industry phrase separated by a normal space (e.g. "foam roller", "resistance bands", "home gym", "copy space", "fitness equipment", "blurred background").
+   - STRICT RULE: Maximum 2 words per tag. NEVER glue or concatenate multiple words together without a space (e.g., NEVER output "homegym", "fitnessequipment", "recoverytool", "stretchingtool"). Always put a normal space between two words in a compound tag.
    - STRICTLY ORDERED by search relevance: index 0 to 4 MUST be the top 5 most critical search terms describing the primary subject (vital for Vecteezy).
    - Include specific synonyms, visual styles, concepts, and copy space attributes.
    - Do NOT include generic filler words, trademarked brands, or the words "AI" / "Generative AI".
@@ -77,17 +79,17 @@ export function buildVisionPrompt(
   filename?: string,
   userCustomPrompt?: string,
   mediaType?: 'image' | 'video' | 'vector',
-  keywordPhrasing: 'single' | 'double' | 'mixed' = 'single',
+  keywordPhrasing: 'single' | 'double' | 'mixed' = 'mixed',
   titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal'
 ): string {
   let prompt = 'Analyze this stock asset and output the requested microstock metadata JSON object according to all guidelines.';
 
   if (keywordPhrasing === 'single') {
-    prompt += '\nCRITICAL KEYWORD REQUIREMENT: Output SINGLE WORDS ONLY. Every keyword in "ranked_keywords" MUST be exactly ONE standalone word (e.g. "copper", "metal", "texture", "macro", "brown", "background"). Do NOT use spaces, hyphens, or multi-word phrases in any keyword.';
+    prompt += '\nCRITICAL KEYWORD REQUIREMENT: Output concise single words or 1-2 word tags. Maximum 2 words per tag. NEVER glue or concatenate multiple words together without a space (e.g., NEVER output "homegym", "fitnessequipment", "recoverytool"). Always put a normal space between words in compound tags.';
   } else if (keywordPhrasing === 'double') {
-    prompt += '\nCRITICAL KEYWORD REQUIREMENT: Output 2-word compound phrases where appropriate (e.g. "copper metal", "brushed texture", "macro photograph", "metallic surface").';
+    prompt += '\nCRITICAL KEYWORD REQUIREMENT: Output 2-word compound phrases where appropriate (e.g. "copper metal", "brushed texture", "macro photograph", "metallic surface"). Maximum 2 words per tag. NEVER glue words together without spaces.';
   } else {
-    prompt += '\nCRITICAL KEYWORD REQUIREMENT: Output a natural mix of single words and descriptive 2-word compound phrases.';
+    prompt += '\nCRITICAL KEYWORD REQUIREMENT: Smart Microstock Mix (1 to 2 Words per Tag). Generate 42 to 48 tags in "ranked_keywords". Each tag can be either a strong single word (e.g. "foam", "yoga", "minimal", "texture") OR a natural 2-word industry phrase separated by a normal space (e.g. "foam roller", "resistance bands", "home gym", "copy space", "fitness equipment", "blurred background"). Maximum 2 words per tag. NEVER glue or concatenate multiple words together without a space (e.g., NEVER output "homegym", "fitnessequipment", "recoverytool", "stretchingtool"). Always put a normal space between two words in a compound tag.';
   }
 
   if (titleLengthPreset === 'short') {

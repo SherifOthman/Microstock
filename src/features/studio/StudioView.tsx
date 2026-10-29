@@ -53,6 +53,7 @@ import {
   Info,
   KeyRound,
   Loader2,
+  Lock,
   Pause,
   Play,
   Plus,
@@ -60,6 +61,7 @@ import {
   RotateCcw,
   Save,
   Search,
+  ShieldAlert,
   SlidersHorizontal,
   Tag,
   Trash2,
@@ -97,7 +99,8 @@ export const StudioView: React.FC = () => {
   });
 
   const [keywordPhrasing, setKeywordPhrasing] = useState<KeywordPhrasing>(() => {
-    return (localStorage.getItem('stock_keyword_phrasing') as KeywordPhrasing) || 'single';
+    const saved = localStorage.getItem('stock_keyword_phrasing');
+    return (saved as KeywordPhrasing) || 'mixed';
   });
 
   const [titleLengthPreset, setTitleLengthPreset] = useState<'optimal' | 'short' | 'standard' | 'extended'>(() => {
@@ -149,6 +152,30 @@ export const StudioView: React.FC = () => {
     const saved = localStorage.getItem('stock_dt_srel');
     return saved !== null ? JSON.parse(saved) : false;
   });
+  const [isDtLocked, setIsDtLocked] = useState<boolean>(() => {
+    const saved = localStorage.getItem('stock_dt_locked');
+    return saved !== null ? JSON.parse(saved) : true;
+  });
+  const [isDtUnlockDialogOpen, setIsDtUnlockDialogOpen] = useState<boolean>(false);
+
+  const handleResetDtLicensing = () => {
+    setDtWel(true);
+    setDtPel(true);
+    setDtFree(false);
+    setDtSrel(false);
+    setIsDtLocked(true);
+    localStorage.setItem('stock_dt_wel', 'true');
+    localStorage.setItem('stock_dt_pel', 'true');
+    localStorage.setItem('stock_dt_free', 'false');
+    localStorage.setItem('stock_dt_srel', 'false');
+    localStorage.setItem('stock_dt_locked', 'true');
+  };
+
+  const handleUnlockDtLicensing = () => {
+    setIsDtLocked(false);
+    localStorage.setItem('stock_dt_locked', 'false');
+    setIsDtUnlockDialogOpen(false);
+  };
 
   // Vecteezy Settings
   const [vecLicense, setVecLicense] = useState<'pro' | 'free'>(() => {
@@ -503,9 +530,9 @@ export const StudioView: React.FC = () => {
       <div className="w-full lg:hidden flex items-center justify-between p-3 rounded-xl border border-border bg-card">
         <div className="flex items-center gap-2">
           <SlidersHorizontal className="w-4 h-4 text-foreground" />
-          <span className="font-semibold text-xs text-foreground">Marketplaces & Settings</span>
+          <span className="font-semibold text-xs text-foreground">{t.marketplacesAndSettings}</span>
           <Badge variant="outline" className="text-[10px] py-0 font-mono">
-            {selectedPlatforms.length} active
+            {t.activeCount.replace('{count}', String(selectedPlatforms.length))}
           </Badge>
         </div>
         <Button
@@ -514,7 +541,7 @@ export const StudioView: React.FC = () => {
           onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
           className="h-7 text-xs gap-1"
         >
-          {isMobileSidebarOpen ? 'Hide' : 'Configure'}
+          {isMobileSidebarOpen ? t.hide : t.configure}
           {isMobileSidebarOpen ? (
             <ChevronUp className="w-3.5 h-3.5" />
           ) : (
@@ -587,7 +614,7 @@ export const StudioView: React.FC = () => {
                     <div className="p-2.5 ml-4 rounded-md border border-border bg-secondary/20 space-y-2 text-xs">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1">
-                          <span className="text-[11px] text-muted-foreground font-medium">License:</span>
+                          <span className="text-[11px] text-muted-foreground font-medium">{t.license}:</span>
                           <Tooltip content="Pro (Default) or Free license column for Vecteezy contributors.">
                             <Info className="w-3 h-3 text-muted-foreground hover:text-foreground cursor-pointer" />
                           </Tooltip>
@@ -602,10 +629,10 @@ export const StudioView: React.FC = () => {
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="pro" className="text-xs">
-                                Pro (Default)
+                                {t.proDefault}
                               </SelectItem>
                               <SelectItem value="free" className="text-xs">
-                                Free
+                                {t.freeLicense}
                               </SelectItem>
                             </SelectContent>
                           </Select>
@@ -623,7 +650,7 @@ export const StudioView: React.FC = () => {
                       {/* AI Generated Toggle Button */}
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] text-foreground font-medium">AI Generated</span>
+                          <span className="text-[11px] text-foreground font-medium">{t.aiGenerated}</span>
                           <Tooltip content="Check if your files are AI generated (Freepik requires Prompt & Base Model). Leave unchecked for real photos or manual vectors.">
                             <Info className="w-3 h-3 text-muted-foreground hover:text-foreground cursor-pointer" />
                           </Tooltip>
@@ -643,7 +670,7 @@ export const StudioView: React.FC = () => {
                         <>
                           <div className="flex items-center justify-between pt-1 border-t border-border/40">
                             <div className="flex items-center gap-1">
-                              <span className="text-[11px] text-muted-foreground font-medium">Base Model:</span>
+                              <span className="text-[11px] text-muted-foreground font-medium">{t.baseModel}:</span>
                               <Tooltip content="Select the AI base model required by the Freepik Contributor portal (Default: Google Nano Banana).">
                                 <Info className="w-3 h-3 text-muted-foreground hover:text-foreground cursor-pointer" />
                               </Tooltip>
@@ -686,7 +713,7 @@ export const StudioView: React.FC = () => {
                         </>
                       ) : (
                         <div className="pt-1 border-t border-border/50 text-[10px] text-muted-foreground space-y-0.5">
-                          <p className="text-foreground/90 font-medium">• Standard photo / manual vector mode</p>
+                          <p className="text-foreground/90 font-medium">• {t.standardPhotoVector}</p>
                           <p>• Prompt & Model columns left empty</p>
                           <p>• Up to 50 keywords allowed (no _ai_generated tag)</p>
                         </div>
@@ -738,20 +765,52 @@ export const StudioView: React.FC = () => {
                         </button>
 
                         {dtAdvancedOpen && (
-                          <div className="space-y-1.5 pt-1.5 pl-1 animate-in fade-in-50 duration-150">
+                          <div className="space-y-2 pt-1.5 pl-1 animate-in fade-in-50 duration-150">
+                            {/* Safety Lock & Reset Controls */}
+                            <div className="flex items-center justify-between gap-1 pb-1.5 border-b border-border/40">
+                              {isDtLocked ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setIsDtUnlockDialogOpen(true)}
+                                  className="h-6 px-2 text-[10px] gap-1 text-amber-500 border-amber-500/30 hover:bg-amber-500/10 cursor-pointer"
+                                >
+                                  <Lock className="w-2.5 h-2.5" />
+                                  <span>{t.unlockToEdit}</span>
+                                </Button>
+                              ) : (
+                                <Badge variant="outline" className="h-5 px-1.5 text-[9px] text-emerald-500 border-emerald-500/30 bg-emerald-500/10 font-mono">
+                                  Unlocked
+                                </Badge>
+                              )}
+
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={handleResetDtLicensing}
+                                className="h-6 px-2 text-[10px] gap-1 text-muted-foreground hover:text-foreground cursor-pointer"
+                                title="Reset to defaults: W-EL & P-EL ON, Free & SR-EL OFF"
+                              >
+                                <RotateCcw className="w-2.5 h-2.5" />
+                                <span>{t.resetToDefaults}</span>
+                              </Button>
+                            </div>
+
                             <div className="flex items-center justify-between">
                               <span className="text-[10px] text-muted-foreground">{t.welExtended}</span>
-                              <Switch checked={dtWel} onCheckedChange={setDtWel} />
+                              <Switch checked={dtWel} onCheckedChange={setDtWel} disabled={isDtLocked} />
                             </div>
 
                             <div className="flex items-center justify-between">
                               <span className="text-[10px] text-muted-foreground">{t.pelExtended}</span>
-                              <Switch checked={dtPel} onCheckedChange={setDtPel} />
+                              <Switch checked={dtPel} onCheckedChange={setDtPel} disabled={isDtLocked} />
                             </div>
 
                             <div className="flex items-center justify-between">
                               <span className="text-[10px] text-muted-foreground">{t.freeImages}</span>
-                              <Switch checked={dtFree} onCheckedChange={setDtFree} />
+                              <Switch checked={dtFree} onCheckedChange={setDtFree} disabled={isDtLocked} />
                             </div>
 
                             <div className="flex items-center justify-between">
@@ -761,7 +820,7 @@ export const StudioView: React.FC = () => {
                                   <Info className="w-3 h-3 text-destructive cursor-pointer" />
                                 </Tooltip>
                               </div>
-                              <Switch checked={dtSrel} onCheckedChange={setDtSrel} />
+                              <Switch checked={dtSrel} onCheckedChange={setDtSrel} disabled={isDtLocked} />
                             </div>
                           </div>
                         )}
@@ -777,9 +836,9 @@ export const StudioView: React.FC = () => {
         {/* Card 2: API Keys Status Widget */}
         <div className="p-3.5 bg-card rounded-xl border border-border flex items-center justify-between text-xs">
           <div className="space-y-0.5">
-            <span className="font-semibold text-foreground">API Keys</span>
+            <span className="font-semibold text-foreground">{t.apiKeysWidget}</span>
             <p className="text-[11px] text-muted-foreground font-mono">
-              {healthyKeys.length > 0 ? `${healthyKeys.length} Ready (${combinedRpm} RPM)` : 'No active keys'}
+              {healthyKeys.length > 0 ? t.readyRpm.replace('{count}', String(healthyKeys.length)).replace('{rpm}', String(combinedRpm)) : t.noActiveKeys}
             </p>
           </div>
           <Button
@@ -788,14 +847,14 @@ export const StudioView: React.FC = () => {
             onClick={() => setIsKeyRingOpen(true)}
             className="h-7 text-xs font-semibold"
           >
-            Manage Keys
+            {t.manageKeys}
           </Button>
         </div>
 
         {/* Card 4: Quick Smart Utilities */}
         <div className="p-3.5 bg-card rounded-xl border border-border space-y-2 text-xs">
           <span className="font-semibold text-foreground block pb-1 border-b border-border">
-            Utilities
+            {t.utilities}
           </span>
           <button
             type="button"
@@ -803,7 +862,7 @@ export const StudioView: React.FC = () => {
             className="w-full p-1.5 rounded-md text-left text-muted-foreground hover:text-foreground hover:bg-secondary/40 flex items-center gap-2 cursor-pointer transition"
           >
             <BookOpen className="w-3.5 h-3.5 shrink-0" />
-            <span className="truncate">CSV Specs & Samples</span>
+            <span className="truncate">{t.csvSpecsSamples}</span>
           </button>
         </div>
       </aside>
@@ -824,7 +883,7 @@ export const StudioView: React.FC = () => {
               className="gap-1.5 text-xs"
             >
               <Plus className="w-3.5 h-3.5" />
-              Add Images
+              {t.addImages}
             </Button>
             <Button
               variant="outline"
@@ -834,12 +893,15 @@ export const StudioView: React.FC = () => {
               className="gap-1.5 text-xs"
             >
               <FolderUp className="w-3.5 h-3.5" />
-              Select Folder
+              {t.selectFolder}
             </Button>
 
             {unifiedAssets.length > 0 && (
               <span className="text-xs text-muted-foreground font-mono ml-1">
-                {unifiedAssets.length} assets ({completedCount} ready, {pendingCount} queued)
+                {t.assetsCount
+                  .replace('{total}', String(unifiedAssets.length))
+                  .replace('{ready}', String(completedCount))
+                  .replace('{queued}', String(pendingCount))}
               </span>
             )}
           </div>
@@ -855,7 +917,7 @@ export const StudioView: React.FC = () => {
                 className="gap-1.5 text-xs font-semibold"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
-                Start Generation ({pendingCount})
+                {t.startGeneration.replace('{count}', String(pendingCount))}
               </Button>
             )}
 
@@ -867,7 +929,7 @@ export const StudioView: React.FC = () => {
                 className="gap-1.5 text-xs"
               >
                 <Pause className="w-3.5 h-3.5" />
-                Pause
+                {t.pause}
               </Button>
             )}
 
@@ -882,7 +944,7 @@ export const StudioView: React.FC = () => {
                 className="gap-1.5 text-xs"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
-                Resume
+                {t.resume}
               </Button>
             )}
 
@@ -895,7 +957,7 @@ export const StudioView: React.FC = () => {
               className="gap-1.5 text-xs font-semibold"
             >
               <Download className="w-3.5 h-3.5" />
-              Export CSVs ({completedCount})
+              {t.exportCsvs.replace('{count}', String(completedCount))}
             </Button>
 
             {unifiedAssets.length > 0 && (
@@ -904,7 +966,7 @@ export const StudioView: React.FC = () => {
                 size="icon"
                 onClick={() => setClearAllConfirmOpen(true)}
                 className="h-8 w-8 text-muted-foreground hover:text-destructive cursor-pointer"
-                title="Clear All"
+                title={t.clearAll}
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </Button>
@@ -1015,7 +1077,7 @@ export const StudioView: React.FC = () => {
                 onClick={() => folderInputRef.current?.click()}
                 className="gap-1.5"
               >
-                <FolderUp className="w-3.5 h-3.5" /> Select Folder
+                <FolderUp className="w-3.5 h-3.5" /> {t.selectFolder}
               </Button>
             </div>
           </div>
@@ -1047,7 +1109,7 @@ export const StudioView: React.FC = () => {
               </div>
 
               <span className="text-muted-foreground text-xs font-mono">
-                {filteredAssets.length} assets shown
+                {t.assetsShown.replace('{count}', String(filteredAssets.length))}
               </span>
             </div>
 
@@ -1194,6 +1256,17 @@ export const StudioView: React.FC = () => {
       <StockTemplatesModal
         open={isTemplatesOpen}
         onClose={() => setIsTemplatesOpen(false)}
+      />
+
+      {/* Dreamstime Safety Unlock Warning Dialog */}
+      <ConfirmDialog
+        open={isDtUnlockDialogOpen}
+        onOpenChange={setIsDtUnlockDialogOpen}
+        title={t.dtWarningTitle}
+        description={t.dtWarningDesc}
+        confirmText={t.dtWarningConfirm}
+        cancelText={t.cancel}
+        onConfirm={handleUnlockDtLicensing}
       />
 
       {/* Delete Single Asset Confirmation */}

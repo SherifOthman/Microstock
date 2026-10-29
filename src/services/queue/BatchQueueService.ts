@@ -211,7 +211,7 @@ export class BatchQueueService {
     isAiGenerated = true,
     userPrompt?: string,
     defaultModelName = 'Nano Banana',
-    keywordPhrasing: KeywordPhrasing = 'single',
+    keywordPhrasing: KeywordPhrasing = 'mixed',
     titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal'
   ): Promise<void> {
     if (this.status === 'running') return;
@@ -228,7 +228,7 @@ export class BatchQueueService {
     isAiGenerated: boolean,
     userPrompt?: string,
     defaultModelName?: string,
-    keywordPhrasing: KeywordPhrasing = 'single',
+    keywordPhrasing: KeywordPhrasing = 'mixed',
     titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal'
   ): Promise<void> {
     while (this.status === 'running') {
@@ -275,7 +275,7 @@ export class BatchQueueService {
     isAiGenerated: boolean,
     userPrompt?: string,
     defaultModelName = 'Nano Banana',
-    keywordPhrasing: KeywordPhrasing = 'single',
+    keywordPhrasing: KeywordPhrasing = 'mixed',
     titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal'
   ): Promise<void> {
     if (!item.thumbnailBase64) {
@@ -436,7 +436,7 @@ export class BatchQueueService {
     isAiGenerated = true,
     userPrompt?: string,
     defaultModelName?: string,
-    keywordPhrasing: KeywordPhrasing = 'single',
+    keywordPhrasing: KeywordPhrasing = 'mixed',
     titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal'
   ): void {
     for (const item of this.items.values()) {
@@ -459,7 +459,7 @@ export class BatchQueueService {
     isAiGenerated = true,
     userPrompt?: string,
     defaultModelName?: string,
-    keywordPhrasing: KeywordPhrasing = 'single',
+    keywordPhrasing: KeywordPhrasing = 'mixed',
     titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal'
   ): Promise<void> {
     const existing = this.items.get(id);

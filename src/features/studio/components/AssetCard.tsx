@@ -16,6 +16,7 @@ import {
   Edit3,
   Film,
   FileText,
+  GripVertical,
   Image as ImageIcon,
   Layers,
   Loader2,
@@ -64,6 +65,8 @@ export const AssetCard: React.FC<AssetCardProps> = ({
   const [rawKwsInput, setRawKwsInput] = useState('');
   const [isAddingTag, setIsAddingTag] = useState(false);
   const [newTagInput, setNewTagInput] = useState('');
+  const [draggedKwIndex, setDraggedKwIndex] = useState<number | null>(null);
+  const [dragOverKwIndex, setDragOverKwIndex] = useState<number | null>(null);
 
   // Synchronize local states when the database record updates
   useEffect(() => {
@@ -98,13 +101,18 @@ export const AssetCard: React.FC<AssetCardProps> = ({
     await db.masterRecords.update(rec.id, { rankedKeywords: updated });
   };
 
-  const handlePromoteKeyword = async (indexToPromote: number) => {
-    if (!rec || indexToPromote <= 0) return;
+  const handleDropKeyword = async (targetIndex: number) => {
+    if (!rec || draggedKwIndex === null || draggedKwIndex === targetIndex) {
+      setDraggedKwIndex(null);
+      setDragOverKwIndex(null);
+      return;
+    }
     const current = [...rec.rankedKeywords];
-    const [item] = current.splice(indexToPromote, 1);
-    // Insert into top 10 (at index 0 or top slot)
-    current.unshift(item);
+    const [moved] = current.splice(draggedKwIndex, 1);
+    current.splice(targetIndex, 0, moved);
     await db.masterRecords.update(rec.id, { rankedKeywords: current });
+    setDraggedKwIndex(null);
+    setDragOverKwIndex(null);
   };
 
   const handleSaveRawKeywords = async () => {
@@ -426,12 +434,13 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             </button>
           </div>
           <Input
+            dir="ltr"
             value={localTitle}
             onChange={(e) => setLocalTitle(e.target.value)}
             onBlur={handleBlurTitle}
             placeholder={isProcessing ? 'Generating title...' : 'Stock Asset Title...'}
             disabled={!rec}
-            className="text-xs bg-card border-border font-medium"
+            className="text-xs bg-card border-border font-medium text-left"
           />
         </div>
 
@@ -464,13 +473,14 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             </button>
           </div>
           <Textarea
+            dir="ltr"
             rows={2}
             value={localDesc}
             onChange={(e) => setLocalDesc(e.target.value)}
             onBlur={handleBlurDesc}
             placeholder={isProcessing ? 'Generating description...' : 'Detailed stock description...'}
             disabled={!rec}
-            className="text-xs bg-card border-border resize-none"
+            className="text-xs bg-card border-border resize-none text-left"
           />
         </div>
 
@@ -485,6 +495,9 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                   ({rec.rankedKeywords.length})
                 </span>
               )}
+              <span className="text-[10px] text-muted-foreground font-normal hidden sm:inline">
+                • {t.dragToReorderTags}
+              </span>
             </div>
             <div className="flex items-center gap-1.5">
               {rec && (
@@ -529,10 +542,11 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             isEditingKws ? (
               <div className="space-y-2">
                 <Textarea
+                  dir="ltr"
                   value={rawKwsInput}
                   onChange={(e) => setRawKwsInput(e.target.value)}
                   placeholder="Type or paste keywords separated by commas..."
-                  className="text-xs min-h-[70px] bg-secondary/20 border-border font-mono"
+                  className="text-xs min-h-[70px] bg-secondary/20 border-border font-mono text-left"
                 />
                 <div className="flex justify-end gap-2">
                   <Button size="sm" onClick={handleSaveRawKeywords} className="h-7 text-xs">
@@ -541,21 +555,55 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 </div>
               </div>
             ) : (
-              <div className="p-3 rounded-xl border border-border bg-secondary/15 flex flex-wrap gap-1.5 max-h-56 overflow-y-auto">
+              <div
+                dir="ltr"
+                className="p-3 rounded-xl border border-border bg-secondary/15 flex flex-wrap gap-1.5 max-h-56 overflow-y-auto text-left"
+              >
                 {rec.rankedKeywords.map((kw, i) => {
                   const isTop10 = i < 10;
+                  const isDragging = draggedKwIndex === i;
+                  const isOver = dragOverKwIndex === i;
+
                   return (
                     <Badge
-                      key={i}
+                      key={`${kw}-${i}`}
                       variant={isTop10 ? 'default' : 'secondary'}
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium transition cursor-pointer ${
+                      draggable={true}
+                      onDragStart={(e) => {
+                        setDraggedKwIndex(i);
+                        e.dataTransfer.setData('text/plain', String(i));
+                        e.dataTransfer.effectAllowed = 'move';
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        if (dragOverKwIndex !== i) {
+                          setDragOverKwIndex(i);
+                        }
+                      }}
+                      onDragLeave={() => {
+                        if (dragOverKwIndex === i) {
+                          setDragOverKwIndex(null);
+                        }
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        handleDropKeyword(i);
+                      }}
+                      onDragEnd={() => {
+                        setDraggedKwIndex(null);
+                        setDragOverKwIndex(null);
+                      }}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium transition cursor-grab active:cursor-grabbing select-none ${
                         isTop10
                           ? 'border-primary/60 bg-primary/10 text-foreground font-semibold shadow-2xs hover:bg-primary/20'
                           : 'border-border/60 bg-secondary/60 text-muted-foreground hover:text-foreground'
+                      } ${isDragging ? 'opacity-30 scale-95' : ''} ${
+                        isOver ? 'ring-2 ring-primary ring-offset-1 ring-offset-background' : ''
                       }`}
-                      onClick={() => !isTop10 && handlePromoteKeyword(i)}
-                      title={isTop10 ? `#${i + 1} Top SEO Keyword` : t.promoteToTop10}
+                      title={isTop10 ? `#${i + 1} Top SEO Keyword (Drag to reorder)` : `Drag to reorder tag`}
                     >
+                      <GripVertical className="w-2.5 h-2.5 opacity-40 hover:opacity-100 shrink-0" />
                       {isTop10 && (
                         <span className="text-[10px] font-mono text-primary font-bold">
                           #{i + 1}
@@ -568,7 +616,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                           e.stopPropagation();
                           handleRemoveKeyword(kw);
                         }}
-                        className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-muted-foreground hover:text-destructive transition cursor-pointer"
+                        className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-muted-foreground hover:text-destructive transition cursor-pointer ml-0.5"
                         title={`Remove "${kw}"`}
                       >
                         <X className="w-3 h-3" />
@@ -619,7 +667,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
 
         {/* Category Mapping Preview Footer */}
         {rec && (
-          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border/60 text-xs">
+          <div dir="ltr" className="flex flex-wrap items-center gap-2 pt-2 border-t border-border/60 text-xs text-left">
             {rec.categories?.adobeCategoryId && (
               <Badge variant="outline" className="text-[11px] gap-1 font-mono">
                 <span className="text-muted-foreground">Adobe:</span>

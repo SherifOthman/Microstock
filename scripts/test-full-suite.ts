@@ -2,7 +2,7 @@ import { MasterMetadataRecord } from '../src/types';
 import { generatePlatformCsv, SupportedPlatform } from '../src/services/export/csvExporter';
 import { hydrateVecteezyCsv } from '../src/services/rules/vecteezyHydrator';
 import { buildVisionPrompt, cleanFilenameHint } from '../src/services/ai/masterPrompt';
-import { parseAndNormalizeAiMetadata } from '../src/services/ai/metadataParser';
+import { parseAndNormalizeAiMetadata, deGlueCompoundWord } from '../src/services/ai/metadataParser';
 import Papa from 'papaparse';
 
 async function runTestSuite() {
@@ -268,8 +268,34 @@ async function runTestSuite() {
     'Double Keywords: Preserves multi-word compound phrases'
   );
 
-  const singlePrompt = buildVisionPrompt('copper.jpg', '', 'image', 'single');
-  assert(singlePrompt.includes('Output SINGLE WORDS ONLY'), 'Vision Prompt: Injects SINGLE WORDS ONLY instruction');
+  const mixedPrompt = buildVisionPrompt('copper.jpg', '', 'image', 'mixed');
+  assert(
+    mixedPrompt.includes('Smart Microstock Mix (1 to 2 Words per Tag)') &&
+    mixedPrompt.includes('NEVER glue or concatenate multiple words together without a space'),
+    'Vision Prompt: Injects Smart Microstock Mix & Anti-Gluing instruction'
+  );
+
+  // Auto-repair de-gluer verification
+  assert(deGlueCompoundWord('fitnessequipment') === 'fitness equipment', 'deGlue: Repairs fitnessequipment -> fitness equipment');
+  assert(deGlueCompoundWord('homegym') === 'home gym', 'deGlue: Repairs homegym -> home gym');
+  assert(deGlueCompoundWord('recoverytool') === 'recovery tool', 'deGlue: Repairs recoverytool -> recovery tool');
+  assert(deGlueCompoundWord('texturedsurface') === 'textured surface', 'deGlue: Repairs texturedsurface -> textured surface');
+  assert(deGlueCompoundWord('highlight') === 'highlight', 'deGlue: Preserves valid English words like highlight');
+
+  // Metadata parser auto-repair integration test
+  const gluedSampleJson = JSON.stringify({
+    base_title: 'Fitness Gear Set with Foam Roller and Resistance Bands',
+    detailed_description: 'Top down view of fitness equipment and exercise gear on yoga mat for physical training.',
+    ranked_keywords: [
+      'fitnessequipment', 'homegym', 'recoverytool', 'texturedsurface', 'foam roller',
+      'resistance bands', 'yoga mat', 'exercise', 'training', 'healthy lifestyle',
+      'physical fitness', 'body care', 'stretching', 'wellness', 'workout', 'active'
+    ]
+  });
+  const repairedParsed = parseAndNormalizeAiMetadata(gluedSampleJson, 'gym.jpg', 'base64', 'batch-1', true, 'Nano Banana', 'mixed');
+  assert(repairedParsed.rankedKeywords.includes('fitness equipment'), 'Parser Integration: Glued "fitnessequipment" auto-repaired to "fitness equipment"');
+  assert(repairedParsed.rankedKeywords.includes('home gym'), 'Parser Integration: Glued "homegym" auto-repaired to "home gym"');
+  assert(repairedParsed.rankedKeywords.includes('recovery tool'), 'Parser Integration: Glued "recoverytool" auto-repaired to "recovery tool"');
 
   // -----------------------------------------------------------
   // TEST 8: Advanced Vecteezy Matching (Order-independent & Unequal rows)
