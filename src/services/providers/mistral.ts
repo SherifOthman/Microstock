@@ -37,7 +37,7 @@ export class MistralAdapter implements IVisionProvider {
           Authorization: `Bearer ${cleanKey}`,
         },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(10000),
       });
 
       const latencyMs = Math.round(performance.now() - startTime);
@@ -147,7 +147,7 @@ export class MistralAdapter implements IVisionProvider {
         Authorization: `Bearer ${cleanKey}`,
       },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(35000),
+      signal: AbortSignal.timeout(15000),
     });
 
     if (!res.ok) {

@@ -27,7 +27,7 @@ export interface QueueItem {
   latencyMs?: number;
   error?: string;
   retryCount: number;
-  attemptHistory?: Array<{ provider: string; model: string; status: 'success' | 'failed'; error?: string }>;
+  attemptHistory?: Array<{ provider: string; model: string; keyId?: string; status: 'success' | 'failed'; error?: string }>;
   metadataRecord?: MasterMetadataRecord;
 }
 
@@ -249,8 +249,8 @@ export class BatchQueueService {
           await this.saveBatchToDB();
           break;
         }
-        // Wait for active workers
-        await new Promise((r) => setTimeout(r, 200));
+        // Wait for active workers (reduced from 200ms to 100ms for faster failover detection)
+        await new Promise((r) => setTimeout(r, 100));
         continue;
       }
 
@@ -269,8 +269,8 @@ export class BatchQueueService {
           this.notify();
         });
 
-      // Brief yield to allow concurrent key acquisition
-      await new Promise((r) => setTimeout(r, 50));
+      // Brief yield to allow concurrent key acquisition (reduced from 50ms to 20ms for faster failover)
+      await new Promise((r) => setTimeout(r, 20));
     }
   }
 
@@ -298,12 +298,13 @@ export class BatchQueueService {
     try {
       await db.masterRecords.update(item.id, { status: 'processing' });
 
-      // 1. Acquire key lease from KeyRingScheduler (avoiding providers that previously failed for this item)
-      const failedProviders = (item.attemptHistory || [])
-        .filter((a) => a.status === 'failed')
-        .map((a) => a.provider as ProviderType);
+      // 1. Acquire key lease from KeyRingScheduler
+      // CRITICAL FIX: Exclude failed KEY IDs (not providers) to allow rotation through ALL keys of same provider
+      const failedKeyIds = (item.attemptHistory || [])
+        .filter((a) => a.status === 'failed' && a.keyId)
+        .map((a) => a.keyId as string);
 
-      lease = await keyRingScheduler.acquireKey(undefined, failedProviders);
+      lease = await keyRingScheduler.acquireKey(undefined, failedKeyIds);
       const { keyRecord, release } = lease;
 
       item.assignedKeyLabel = keyRecord.label;
@@ -357,6 +358,7 @@ export class BatchQueueService {
       item.attemptHistory.push({
         provider: keyRecord.providerId,
         model: keyRecord.modelId,
+        keyId: keyRecord.id,
         status: 'success',
       });
 
@@ -388,6 +390,7 @@ export class BatchQueueService {
         item.attemptHistory.push({
           provider: item.assignedProvider || 'unknown',
           model: item.assignedModel || 'unknown',
+          keyId: lease.keyRecord?.id || undefined,
           status: 'failed',
           error: err.message || String(err),
         });

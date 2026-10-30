@@ -17,7 +17,7 @@ export class GeminiAdapter implements IVisionProvider {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents: [{ parts: [{ text: 'Hello' }] }] }),
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(10000),
       });
 
       const latencyMs = Math.round(performance.now() - startTime);
@@ -48,7 +48,7 @@ export class GeminiAdapter implements IVisionProvider {
           contents: [{ parts: [{ text: 'Respond OK' }] }],
           generationConfig: { maxOutputTokens: 5, temperature: 0.1 },
         }),
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(10000),
       });
 
       if (genRes.ok) {
@@ -195,7 +195,7 @@ export class GeminiAdapter implements IVisionProvider {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(35000),
+      signal: AbortSignal.timeout(15000),
     });
 
     if (!res.ok) {

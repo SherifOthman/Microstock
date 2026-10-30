@@ -134,24 +134,40 @@ export class KeyRingScheduler {
   }
 
   /**
-   * Asynchronously acquires the best eligible key.
-   * Enables TRUE PARALLEL EXECUTION across distinct keys:
-   * A key is eligible if key.activeRequests === 0 (1 concurrent in-flight request per distinct key),
-   * allowing up to N parallel requests across N healthy keys.
-   *
-   * In priority_tiered mode:
-   * Cascades strictly according to settings.providerPriority. Provider #1 is exhausted/cooled down
-   * before falling over to Provider #2, #3, etc.
-   * On retry, excludeProviders allows skipping failed providers.
+   * Asynchronously acquires the best eligible key adhering strictly to user-configured priority.
+   * - Rotates through ALL active keys of a provider before cascading to the next provider.
+   * - Supports excludeKeyIds (to prevent retrying a key that just failed for this item)
+   *   and excludeProviders.
+   * - Near-instant 0s failover switching with reduced timeouts.
    */
   public async acquireKey(
     requestedProvider?: ProviderType,
-    excludeProviders?: ProviderType[]
+    excludeKeyIdsOrProviders?: string[] | ProviderType[],
+    excludeProvidersParam?: ProviderType[]
   ): Promise<AcquireResult> {
     await this.init();
     const settings = await getAppSettings();
     const acquireStartTime = Date.now();
-    const maxWaitMs = 45000;
+    // Reduced from 30s to 5s for faster failover to next provider
+    const maxWaitMs = 5000;
+
+    // Normalize exclude arguments
+    const excludeKeyIds: string[] = [];
+    const excludeProviders: ProviderType[] = [];
+
+    if (Array.isArray(excludeKeyIdsOrProviders)) {
+      const knownProviders: ProviderType[] = ['gemini', 'openrouter', 'groq', 'mistral', 'cloudflare'];
+      for (const item of excludeKeyIdsOrProviders) {
+        if (knownProviders.includes(item as ProviderType)) {
+          excludeProviders.push(item as ProviderType);
+        } else {
+          excludeKeyIds.push(item);
+        }
+      }
+    }
+    if (Array.isArray(excludeProvidersParam)) {
+      excludeProviders.push(...excludeProvidersParam);
+    }
 
     while (true) {
       const now = Date.now();
@@ -162,10 +178,12 @@ export class KeyRingScheduler {
       }
       let minWaitMs = Infinity;
 
-      // 1. Filter all non-disabled/non-invalid candidate keys
+      // 1. Filter all non-disabled candidate keys
       const candidateKeys = Array.from(this.keysCache.values()).filter((k) => {
-        if (k.status === 'disabled' || k.status === 'invalid') return false;
+        if (k.status === 'disabled') return false;
         if (requestedProvider && k.providerId !== requestedProvider) return false;
+        if (excludeKeyIds.includes(k.id)) return false;
+        if (excludeProviders.includes(k.providerId)) return false;
         return true;
       });
 
@@ -177,134 +195,106 @@ export class KeyRingScheduler {
         );
       }
 
-      // If excludeProviders is provided (e.g. from failed retry attempt), filter out those providers.
-      // If all candidate keys would be excluded, fallback to candidateKeys so queue doesn't lock.
-      let pool = candidateKeys;
-      if (excludeProviders && excludeProviders.length > 0) {
-        const withoutExcluded = candidateKeys.filter((k) => !excludeProviders.includes(k.providerId));
-        if (withoutExcluded.length > 0) {
-          pool = withoutExcluded;
-        }
-      }
+      // 2. Strict Provider Priority Cascade: #1 -> #2 -> #3 -> #4 -> #5
+      // CRITICAL FIX: Use ONLY user-configured priority order, no fallback hardcoded list
+      const priorityOrder: ProviderType[] = settings.providerPriority && settings.providerPriority.length > 0
+        ? settings.providerPriority
+        : ['gemini', 'openrouter', 'groq', 'mistral', 'cloudflare'];
 
-      // 2. In priority_tiered mode, isolate the highest-priority provider tier that is NOT cooling down/exhausted
-      let activeKeys = pool;
-      if (settings.routingStrategy === 'priority_tiered' && !requestedProvider) {
-        const fullPriority = Array.from(
-          new Set([...(settings.providerPriority || []), 'gemini', 'groq', 'openrouter', 'mistral', 'cloudflare'] as ProviderType[])
-        );
+      // Iterate through providers in strict priority order
+      for (const pid of priorityOrder) {
+        if (requestedProvider && requestedProvider !== pid) continue;
+        if (excludeProviders.includes(pid)) continue;
 
-        // Find the first provider tier that has keys in pool that are not currently in cooldown or daily exhausted
-        let chosenTierProvider: ProviderType | null = null;
-        for (const pid of fullPriority) {
-          const tierKeys = pool.filter((k) => k.providerId === pid);
-          if (tierKeys.length === 0) continue;
+        // Keys of this provider that haven't been excluded for this item
+        const tierKeys = candidateKeys.filter((k) => k.providerId === pid);
+        if (tierKeys.length === 0) continue;
 
-          // Check if any key in this tier is viable (healthy or only waiting on pacing/in-flight, NOT in active cooldown or daily exhausted)
-          const hasViableKey = tierKeys.some((k) => {
-            if (k.status === 'cooling_down' && k.cooldownUntil && k.cooldownUntil > now) return false;
-            if (k.status === 'exhausted_daily' && k.exhaustedUntil && k.exhaustedUntil > now) return false;
-            return true;
-          });
+        // Check if any key in this tier is viable (healthy or cooling_down expired)
+        const viableKeys = tierKeys.filter((k) => {
+          if (k.status === 'cooling_down' && k.cooldownUntil && k.cooldownUntil > now) return false;
+          if (k.status === 'exhausted_daily' && k.exhaustedUntil && k.exhaustedUntil > now) return false;
+          // FIX: Don't skip 'invalid' keys completely - let them be tried once to generate proper failover log
+          return true;
+        });
 
-          if (hasViableKey) {
-            chosenTierProvider = pid;
-            break;
-          }
+        if (viableKeys.length === 0) {
+          // All keys of this provider are in active cooldown or daily exhausted; cascade to next provider immediately (0s delay)
+          continue;
         }
 
-        if (chosenTierProvider) {
-          activeKeys = pool.filter((k) => k.providerId === chosenTierProvider);
-        }
-      }
+        // Evaluate ready keys in this provider tier
+        const readyKeys: { key: ApiKeyRecord; score: number }[] = [];
 
-      // 3. Evaluate immediate eligibility across activeKeys
-      const eligibleKeys: { key: ApiKeyRecord; score: number }[] = [];
+        for (const key of viableKeys) {
+          if (key.activeRequests >= 1) continue;
 
-      for (const key of activeKeys) {
-        // Skip keys currently executing a request (1 concurrent request per distinct key)
-        if (key.activeRequests >= 1) continue;
-
-        // Skip keys cooling down or exhausted
-        if (key.status === 'cooling_down') {
-          if (key.cooldownUntil && key.cooldownUntil > now) {
-            const wait = key.cooldownUntil - now;
-            if (wait < minWaitMs) minWaitMs = wait;
-            continue;
-          } else {
+          // Recover cooldown if expired
+          if (key.status === 'cooling_down' && key.cooldownUntil && key.cooldownUntil <= now) {
             key.status = 'healthy';
             key.cooldownUntil = undefined;
           }
+
+          // Clean sliding window
+          const windowThreshold = now - 60000;
+          key.requestsInWindow = (key.requestsInWindow || []).filter((t) => t > windowThreshold);
+
+          // RPM ceiling check
+          if (key.requestsInWindow.length >= key.rpmLimit) {
+            const oldest = key.requestsInWindow[0];
+            const wait = oldest + 60000 - now + 50;
+            if (wait > 0 && wait < minWaitMs) minWaitMs = wait;
+            continue;
+          }
+
+          // Pacing check (inter-request interval) - reduced spacing for faster rotation
+          const minSpacingMs = Math.ceil(60000 / Math.max(1, key.rpmLimit));
+          const timeSinceLastUsed = now - (key.lastUsedAt || 0);
+
+          if (timeSinceLastUsed < minSpacingMs) {
+            const wait = minSpacingMs - timeSinceLastUsed;
+            if (wait > 0 && wait < minWaitMs) minWaitMs = wait;
+            continue;
+          }
+
+          const utilizationScore = key.requestsInWindow.length / Math.max(1, key.rpmLimit);
+          readyKeys.push({ key, score: utilizationScore });
         }
 
-        if (key.status === 'exhausted_daily') {
-          if (key.exhaustedUntil && key.exhaustedUntil > now) continue;
-          key.status = 'healthy';
-          key.dailyRequestCount = 0;
+        if (readyKeys.length > 0) {
+          // Sort by score ascending; break ties with oldest lastUsedAt
+          readyKeys.sort((a, b) => {
+            if (Math.abs(a.score - b.score) > 0.001) return a.score - b.score;
+            return (a.key.lastUsedAt || 0) - (b.key.lastUsedAt || 0);
+          });
+
+          const selected = readyKeys[0].key;
+          selected.activeRequests += 1;
+          selected.lastUsedAt = now;
+          selected.requestsInWindow.push(now);
+          selected.dailyRequestCount = (selected.dailyRequestCount || 0) + 1;
+
+          this.notifyListeners();
+
+          return {
+            keyRecord: selected,
+            release: async (success: boolean, error?: any, latencyMs?: number) => {
+              await this.releaseKey(selected.id, success, error, latencyMs);
+            },
+          };
         }
-
-        // Clean sliding window
-        const windowThreshold = now - 60000;
-        key.requestsInWindow = (key.requestsInWindow || []).filter((t) => t > windowThreshold);
-
-        // RPM ceiling check
-        if (key.requestsInWindow.length >= key.rpmLimit) {
-          const oldest = key.requestsInWindow[0];
-          const wait = oldest + 60000 - now + 50; // wait until oldest timestamp drops out of window
-          if (wait > 0 && wait < minWaitMs) minWaitMs = wait;
-          continue;
-        }
-
-        // Inter-request pacing interval: Delta t >= 60,000 / rpmLimit
-        const minSpacingMs = Math.ceil(60000 / Math.max(1, key.rpmLimit));
-        const timeSinceLastUsed = now - (key.lastUsedAt || 0);
-
-        if (timeSinceLastUsed < minSpacingMs) {
-          const wait = minSpacingMs - timeSinceLastUsed;
-          if (wait > 0 && wait < minWaitMs) minWaitMs = wait;
-          continue;
-        }
-
-        // Key is immediately eligible! Calculate utilization score S (lower is better)
-        const utilizationScore = key.requestsInWindow.length / Math.max(1, key.rpmLimit);
-
-        eligibleKeys.push({
-          key,
-          score: utilizationScore,
-        });
       }
 
-      // If at least one key is eligible right now, select the best one
-      if (eligibleKeys.length > 0) {
-        // Sort by score ascending; break ties with oldest lastUsedAt (fairness)
-        eligibleKeys.sort((a, b) => {
-          if (Math.abs(a.score - b.score) > 0.001) return a.score - b.score;
-          return (a.key.lastUsedAt || 0) - (b.key.lastUsedAt || 0);
-        });
-
-        const selected = eligibleKeys[0].key;
-
-        // Mark key as active
-        selected.activeRequests += 1;
-        selected.lastUsedAt = now;
-        selected.requestsInWindow.push(now);
-        selected.dailyRequestCount = (selected.dailyRequestCount || 0) + 1;
-
-        this.notifyListeners();
-
-        // Return lease with release callback
-        return {
-          keyRecord: selected,
-          release: async (success: boolean, error?: any, latencyMs?: number) => {
-            await this.releaseKey(selected.id, success, error, latencyMs);
-          },
-        };
-      }
-
-      // No key is ready right now; pause for minWaitMs without blocking
-      const sleepTime = Math.min(Math.max(minWaitMs === Infinity ? 250 : minWaitMs, 50), 3000);
+      // No key is ready right now; pause VERY briefly (reduced from 250ms to 50ms for instant failover)
+      const sleepTime = Math.min(Math.max(minWaitMs === Infinity ? 20 : minWaitMs, 10), 50);
       await new Promise((resolve) => setTimeout(resolve, sleepTime));
     }
+  }
+
+  public hasRemainingEligibleKeys(excludeKeyIds: string[] = []): boolean {
+    const keys = Array.from(this.keysCache.values()).filter((k) => k.status !== 'disabled');
+    return keys.some((k) => !excludeKeyIds.includes(k.id));
+  }
   }
 
   /**

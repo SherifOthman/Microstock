@@ -277,7 +277,9 @@ export function transformForShutterstock(
   const illustrationVal = options?.illustration ? 'yes' : 'no';
 
   const rows = records.map((rec) => {
-    const categoriesStr = (rec.categories?.shutterstockCategories ?? []).filter(Boolean).join(', ');
+    // CRITICAL FIX: Shutterstock Categories - NO SPACE after comma (e.g., "Nature,Parks/Outdoor")
+    const categoriesStr = (rec.categories?.shutterstockCategories ?? []).filter(Boolean).join(',');
+    
     // Semantic truncate description at 200 chars ending with a period
     const cleanDesc = smartTruncate(rec.detailedDescription ?? '', 200, true);
 

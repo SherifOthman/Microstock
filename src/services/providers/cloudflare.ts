@@ -63,7 +63,7 @@ export class CloudflareAdapter implements IVisionProvider {
           Authorization: `Bearer ${apiToken}`,
         },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(10000),
       });
 
       // Handle Meta / Llama model license agreement prompt ('agree') automatically
@@ -80,7 +80,7 @@ export class CloudflareAdapter implements IVisionProvider {
                 Authorization: `Bearer ${apiToken}`,
               },
               body: JSON.stringify({ prompt: 'agree' }),
-              signal: AbortSignal.timeout(15000),
+              signal: AbortSignal.timeout(10000),
             });
 
             // Re-attempt verification
@@ -91,7 +91,7 @@ export class CloudflareAdapter implements IVisionProvider {
                 Authorization: `Bearer ${apiToken}`,
               },
               body: JSON.stringify(payload),
-              signal: AbortSignal.timeout(30000),
+              signal: AbortSignal.timeout(10000),
             });
           }
         } catch {}
@@ -123,7 +123,7 @@ export class CloudflareAdapter implements IVisionProvider {
     } catch (err: any) {
       let errorMsg = err.message || 'Network connection failed';
       if (err.name === 'TimeoutError' || String(errorMsg).includes('timed out')) {
-        errorMsg = 'Cloudflare verification timed out (30s).';
+        errorMsg = 'Cloudflare verification timed out (10s).';
       }
       return {
         success: false,
@@ -163,7 +163,7 @@ export class CloudflareAdapter implements IVisionProvider {
         headers: {
           Authorization: `Bearer ${apiToken}`,
         },
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(10000),
       });
 
       if (res.ok) {
@@ -219,7 +219,7 @@ export class CloudflareAdapter implements IVisionProvider {
         Authorization: `Bearer ${apiToken}`,
       },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(60000),
+      signal: AbortSignal.timeout(15000),
     });
 
     // Auto-agree handling if encountered during inference
@@ -243,7 +243,7 @@ export class CloudflareAdapter implements IVisionProvider {
               Authorization: `Bearer ${apiToken}`,
             },
             body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(60000),
+            signal: AbortSignal.timeout(10000),
           });
         }
       } catch {}

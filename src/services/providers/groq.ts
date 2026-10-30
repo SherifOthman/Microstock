@@ -31,7 +31,7 @@ export class GroqAdapter implements IVisionProvider {
           Authorization: `Bearer ${cleanKey}`,
         },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(10000),
       });
 
       const latencyMs = Math.round(performance.now() - startTime);
@@ -168,11 +168,11 @@ export class GroqAdapter implements IVisionProvider {
           Authorization: `Bearer ${cleanKey}`,
         },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(60000),
+        signal: AbortSignal.timeout(10000),
       });
     } catch (err: any) {
       if (err.name === 'TimeoutError' || String(err.message).includes('timed out')) {
-        throw new Error(`Groq inference timed out after 60s (${targetModel}). Failover will switch to backup.`);
+        throw new Error(`Groq inference timed out after 10s (${targetModel}). Failover will switch to backup.`);
       }
       throw err;
     }

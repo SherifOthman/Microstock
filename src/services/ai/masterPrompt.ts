@@ -15,14 +15,19 @@ UNIVERSAL SAFE-ZONE GUIDELINES:
    - Factually describe the visual subject, setting, lighting, perspective, and composition.
 
 3. "ranked_keywords":
-   - Array of exactly 42 to 48 relevant English keywords/tags.
+   - Array of exactly 45 to 49 relevant English keywords/tags STRICTLY ORDERED by commercial search priority.
    - Smart Microstock Mix (1 to 2 Words per Tag):
-     * TOP 10 KEYWORD PRIORITY (Positions #1 to #10): Positions #1 to #8 MUST be core single-word visible nouns and primary subjects (e.g., "fruit", "apple", "orange", "grapes", "banana", "bowl", "food", "healthy").
-     * At most 2 two-word compound phrases are allowed inside the Top 10 (only the most essential exact-match concept, e.g., "fruit bowl", "still life").
-     * The remaining 10 to 15 two-word commercial phrases (e.g., "rustic kitchen", "wooden table", "copy space", "linen cloth") MUST be placed in positions #11 to #48, interleaved naturally with single words.
-     * No Root Word Stuffing in Top 10: Never repeat the same root word (e.g., "fruit" or "food") more than twice inside the first 10 tags.
+     * POSITIONS #1 to #10 (Top SEO Priority):
+       - Positions #1 to #7: Core single-word primary subjects (high-volume search terms, e.g., "bench", "lake", "forest", "sunset", "water", "landscape", "winter")
+       - Positions #8 to #10: Strong 2-word compound phrases (high-converting exact-match search, e.g., "frozen lake", "wooden bench", "winter landscape")
+     * POSITIONS #11 to #25 (High-Converting Mood & Concepts):
+       - Commercial mood, lighting, atmosphere, and conceptual keywords that drive SALES (e.g., "peaceful", "serene", "calm", "solitude", "tranquil", "quiet", "isolated", "dawn", "sunrise", "morning mist", "morning light", "golden hour", "scenery", "nature", "outdoors", "wilderness")
+       - NEVER bury these commercial mood keywords at the end of the list (positions #40-49)!
+     * POSITIONS #26 to #49 (Secondary Details & Background Elements):
+       - Background elements, colors, settings, textures (e.g., "rural", "countryside", "shore", "horizon", "coastline", "snow", "ice", "white", "blue", "gray", "cold", "foggy", "misty")
+       - Avoid overly obscure botanical/technical filler terms unless they are central to the image subject
+     * No Root Word Stuffing in Top 10: Never repeat the same root word (e.g., "winter" or "lake") more than twice inside the first 10 tags.
    - STRICT RULE: Maximum 2 words per tag. NEVER glue or concatenate multiple words together without a space (e.g., NEVER output "homegym", "fitnessequipment", "recoverytool", "stretchingtool"). Always put a normal space between two words in a compound tag.
-   - STRICTLY ORDERED by search relevance: index 0 to 4 MUST be the top 5 most critical search terms describing the primary subject (vital for Vecteezy).
    - Include specific synonyms, visual styles, concepts, and copy space attributes.
    - Do NOT include generic filler words, trademarked brands, or the words "AI" / "Generative AI".
 
@@ -171,8 +176,10 @@ export function buildVisionPrompt(
   } else if (keywordPhrasing === 'double') {
     prompt += '\nCRITICAL KEYWORD REQUIREMENT: Output 2-word compound phrases where appropriate (e.g. "copper metal", "brushed texture", "macro photograph", "metallic surface"). Maximum 2 words per tag. NEVER glue words together without spaces.';
   } else {
-    prompt += '\nCRITICAL KEYWORD REQUIREMENT: Smart Microstock Mix (1 to 2 Words per Tag). Generate 42 to 48 tags in "ranked_keywords".';
-    prompt += '\nTOP 10 KEYWORD PRIORITY (Positions #1 to #10): Positions #1 to #8 MUST be core single-word visible nouns and primary subjects (e.g., "fruit", "apple", "orange", "grapes", "banana", "bowl", "food", "healthy"). At most 2 two-word compound phrases in the Top 10 (e.g., "fruit bowl", "still life"). The remaining 10 to 15 two-word phrases MUST be placed in positions #11 to #48, interleaved naturally with single words. Never repeat the same root word more than twice inside the first 10 tags.';
+    prompt += '\nCRITICAL KEYWORD REQUIREMENT: Smart Microstock Mix (1 to 2 Words per Tag). Generate 45 to 49 tags in "ranked_keywords" STRICTLY ORDERED by commercial search priority.';
+    prompt += '\nPOSITIONS #1 to #10 (Top SEO Priority): Positions #1 to #7 MUST be high-volume single-word primary subjects (e.g., "bench", "lake", "forest", "sunset", "water", "landscape", "winter"). Positions #8 to #10 can be strong 2-word compound phrases (e.g., "frozen lake", "wooden bench", "winter landscape").';
+    prompt += '\nPOSITIONS #11 to #25 (High-Converting Mood & Concepts): Commercial mood, lighting, atmosphere, and conceptual keywords that drive SALES (e.g., "peaceful", "serene", "calm", "solitude", "dawn", "sunrise", "morning mist", "scenery", "nature", "wilderness"). NEVER bury these at the end!';
+    prompt += '\nPOSITIONS #26 to #49 (Secondary Details): Background elements, colors, settings (e.g., "rural", "countryside", "shore", "horizon", "white", "blue", "cold"). Avoid obscure filler terms.';
     prompt += '\nSTRICT ANTI-GLUING RULE: Maximum 2 words per tag. NEVER glue or concatenate multiple words together without a space (e.g., NEVER output "homegym", "fitnessequipment", "recoverytool", "stretchingtool"). Always put a normal space between two words in a compound tag.';
   }
 
