@@ -3,9 +3,14 @@ if (typeof Node !== 'undefined' && Node.prototype) {
   const originalRemoveChild = Node.prototype.removeChild;
   Node.prototype.removeChild = function <T extends Node>(child: T): T {
     try {
+      if (!child) return child;
       if (child.parentNode !== this) {
         if (child.parentNode) {
-          return child.parentNode.removeChild(child);
+          try {
+            return child.parentNode.removeChild(child);
+          } catch {
+            return child;
+          }
         }
         return child;
       }
@@ -18,18 +23,26 @@ if (typeof Node !== 'undefined' && Node.prototype) {
   const originalInsertBefore = Node.prototype.insertBefore;
   Node.prototype.insertBefore = function <T extends Node>(newNode: T, referenceNode: Node | null): T {
     try {
+      if (!newNode) return newNode;
       if (referenceNode && referenceNode.parentNode !== this) {
-        // If referenceNode has another parent or has been wrapped by translator, append to `this` or find nearest common ancestor
-        if (referenceNode.parentNode && referenceNode.parentNode.contains(this)) {
-          return referenceNode.parentNode.insertBefore(newNode, referenceNode) as T;
+        // If referenceNode has been wrapped by translator (e.g. <font>), its parentNode may be inside `this`
+        if (referenceNode.parentNode && this.contains(referenceNode.parentNode)) {
+          // Find the child of `this` that contains referenceNode
+          let directChild: Node = referenceNode.parentNode;
+          while (directChild.parentNode && directChild.parentNode !== this) {
+            directChild = directChild.parentNode;
+          }
+          if (directChild.parentNode === this) {
+            return originalInsertBefore.call(this, newNode, directChild) as T;
+          }
         }
-        // Fallback: safely appendChild on `this`
-        return this.appendChild(newNode);
+        // Fallback: safely append to `this`
+        return originalInsertBefore.call(this, newNode, null) as T;
       }
       return originalInsertBefore.call(this, newNode, referenceNode) as T;
     } catch {
       try {
-        return this.appendChild(newNode);
+        return originalInsertBefore.call(this, newNode, null) as T;
       } catch {
         return newNode;
       }
@@ -39,20 +52,23 @@ if (typeof Node !== 'undefined' && Node.prototype) {
   const originalReplaceChild = Node.prototype.replaceChild;
   Node.prototype.replaceChild = function <T extends Node>(newChild: Node, oldChild: T): T {
     try {
+      if (!oldChild) return oldChild;
       if (oldChild.parentNode !== this) {
         if (oldChild.parentNode) {
-          return oldChild.parentNode.replaceChild(newChild, oldChild) as T;
+          try {
+            return oldChild.parentNode.replaceChild(newChild, oldChild) as T;
+          } catch {}
         }
-        this.appendChild(newChild);
+        try {
+          originalInsertBefore.call(this, newChild, null);
+        } catch {}
         return oldChild;
       }
       return originalReplaceChild.call(this, newChild, oldChild) as T;
     } catch {
       try {
-        this.appendChild(newChild);
-      } catch {
-        // ignore
-      }
+        originalInsertBefore.call(this, newChild, null);
+      } catch {}
       return oldChild;
     }
   };

@@ -89,6 +89,25 @@ export async function processImageFile(
   });
 }
 
+function createVideoFallbackBadge(filename: string): string {
+  const canvas = document.createElement('canvas');
+  canvas.width = 640;
+  canvas.height = 360;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, 640, 360);
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('🎬 STOCK VIDEO FOOTAGE', 320, 160);
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '14px monospace';
+    ctx.fillText(filename.slice(0, 45), 320, 200);
+  }
+  return canvas.toDataURL('image/jpeg', 0.8).replace(/^data:image\/jpeg;base64,/, '');
+}
+
 /**
  * Extracts a video snapshot frame at 15-20% timestamp, duration, resolution,
  * and 2x2 multi-frame storyboard for Vision AI
@@ -98,7 +117,7 @@ export async function processVideoFile(
   maxDim = 512,
   quality = 0.75
 ): Promise<ExtractedMediaInfo> {
-  // First try 2x2 frame extractor
+  // First try 2x2 frame extractor with 8000ms hard timeout
   try {
     const storyboard = await extractVideoStoryboard(file, 768, 432, quality);
     // Also inspect audio presence
@@ -106,9 +125,7 @@ export async function processVideoFile(
 
     return {
       mediaType: 'video',
-      // For Vision API analysis: we pass the 2x2 storyboard image!
       thumbnailBase64: storyboard.storyboardBase64,
-      // For UI card display: we use the representative frame
       thumbnailDataUrl: storyboard.thumbnailDataUrl,
       originalSizeBytes: file.size,
       compressedSizeBytes: Math.round((storyboard.storyboardBase64.length * 3) / 4),
@@ -119,100 +136,123 @@ export async function processVideoFile(
       height: storyboard.height,
     };
   } catch (storyboardErr) {
-    console.warn('Storyboard extraction fallback:', storyboardErr);
+    // Storyboard extraction timed out or failed, fall back to single frame
   }
 
-  // Fallback to single frame snapshot
-  return new Promise((resolve, reject) => {
-    const video = document.createElement('video');
-    video.preload = 'metadata';
-    video.muted = true;
-    video.playsInline = true;
+  // Fallback to single frame snapshot with 4000ms hard timeout
+  try {
+    const singleFrame = await new Promise<ExtractedMediaInfo>((resolve, reject) => {
+      let settled = false;
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.muted = true;
+      video.playsInline = true;
 
-    const objectUrl = URL.createObjectURL(file);
-    video.src = objectUrl;
+      const objectUrl = URL.createObjectURL(file);
+      video.src = objectUrl;
 
-    let seeked = false;
-
-    video.onloadedmetadata = () => {
-      const targetTime = Math.min(Math.max(video.duration * 0.2, 1.0), Math.max(video.duration - 0.5, 0.1));
-      video.currentTime = targetTime;
-    };
-
-    video.onseeked = async () => {
-      if (seeked) return;
-      seeked = true;
-
-      try {
-        const vWidth = video.videoWidth || 1920;
-        const vHeight = video.videoHeight || 1080;
-
-        let width = vWidth;
-        let height = vHeight;
-
-        if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          } else {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
-          }
-        }
-
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, width);
-        canvas.height = Math.max(1, height);
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
+      const cleanup = () => {
+        if (!settled) {
+          settled = true;
           URL.revokeObjectURL(objectUrl);
-          return reject(new Error('Canvas 2D context unavailable'));
+          video.onloadedmetadata = null;
+          video.onseeked = null;
+          video.onerror = null;
         }
+      };
 
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg', quality);
-        const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
-        const compressedSizeBytes = Math.round((base64.length * 3) / 4);
+      video.onloadedmetadata = () => {
+        const targetTime = Math.min(Math.max(video.duration * 0.2, 1.0), Math.max(video.duration - 0.5, 0.1));
+        video.currentTime = targetTime;
+      };
 
-        let resLabel = `${vWidth}x${vHeight}`;
-        if (vWidth >= 3840 || vHeight >= 2160) resLabel = '4K UHD';
-        else if (vWidth >= 1920 || vHeight >= 1080) resLabel = '1080p FHD';
-        else if (vWidth >= 1280 || vHeight >= 720) resLabel = '720p HD';
+      video.onseeked = async () => {
+        try {
+          const vWidth = video.videoWidth || 1920;
+          const vHeight = video.videoHeight || 1080;
 
-        URL.revokeObjectURL(objectUrl);
+          let width = vWidth;
+          let height = vHeight;
 
-        const audioInfo = await inspectVideoAudioTrack(file);
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
 
-        resolve({
-          mediaType: 'video',
-          thumbnailBase64: base64,
-          thumbnailDataUrl: dataUrl,
-          originalSizeBytes: file.size,
-          compressedSizeBytes,
-          videoDurationSeconds: Math.round(video.duration || 0),
-          videoResolution: resLabel,
-          hasAudio: audioInfo.hasAudio,
-          width: vWidth,
-          height: vHeight,
-        });
-      } catch (err: any) {
-        URL.revokeObjectURL(objectUrl);
-        reject(err);
-      }
-    };
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, width);
+          canvas.height = Math.max(1, height);
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            cleanup();
+            return reject(new Error('Canvas 2D context unavailable'));
+          }
 
-    video.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      reject(new Error(`Failed to decode video "${file.name}"`));
-    };
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/jpeg', quality);
+          const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
+          const compressedSizeBytes = Math.round((base64.length * 3) / 4);
 
-    setTimeout(() => {
-      if (!seeked) {
-        URL.revokeObjectURL(objectUrl);
+          let resLabel = `${vWidth}x${vHeight}`;
+          if (vWidth >= 3840 || vHeight >= 2160) resLabel = '4K UHD';
+          else if (vWidth >= 1920 || vHeight >= 1080) resLabel = '1080p FHD';
+          else if (vWidth >= 1280 || vHeight >= 720) resLabel = '720p HD';
+
+          const audioInfo = await inspectVideoAudioTrack(file);
+
+          cleanup();
+          resolve({
+            mediaType: 'video',
+            thumbnailBase64: base64,
+            thumbnailDataUrl: dataUrl,
+            originalSizeBytes: file.size,
+            compressedSizeBytes,
+            videoDurationSeconds: Math.round(video.duration || 0),
+            videoResolution: resLabel,
+            hasAudio: audioInfo.hasAudio,
+            width: vWidth,
+            height: vHeight,
+          });
+        } catch (err: any) {
+          cleanup();
+          reject(err);
+        }
+      };
+
+      video.onerror = () => {
+        cleanup();
+        reject(new Error(`Failed to decode video "${file.name}"`));
+      };
+
+      setTimeout(() => {
+        cleanup();
         reject(new Error(`Video snapshot timed out for "${file.name}"`));
-      }
-    }, 6000);
-  });
+      }, 4000);
+    });
+
+    return singleFrame;
+  } catch (singleErr) {
+    // If browser cannot decode video codec (e.g. unsupported profile), provide graceful fallback badge
+    const fallbackBase64 = createVideoFallbackBadge(file.name);
+    const audioInfo = await inspectVideoAudioTrack(file).catch(() => ({ hasAudio: false }));
+    return {
+      mediaType: 'video',
+      thumbnailBase64: fallbackBase64,
+      thumbnailDataUrl: `data:image/jpeg;base64,${fallbackBase64}`,
+      originalSizeBytes: file.size,
+      compressedSizeBytes: Math.round((fallbackBase64.length * 3) / 4),
+      videoDurationSeconds: 10,
+      videoResolution: '1080p FHD',
+      hasAudio: audioInfo.hasAudio,
+      width: 1920,
+      height: 1080,
+    };
+  }
 }
 
 /**
@@ -236,12 +276,6 @@ export async function processVectorFile(
   // Use the True Multi-Tier EPS 10 Rasterizer Engine!
   try {
     const epsResult = await rasterizeEpsFile(file, maxDim, quality);
-    console.log(`[EPS Rasterizer] ${file.name}:`, {
-      sourceTier: epsResult.sourceTier,
-      pathOpCount: epsResult.pathOpCount,
-      width: epsResult.width,
-      height: epsResult.height,
-    });
     
     // sourceTier 'vector' from Tier 1 (PS paths) or 'binary_preview'/'xmp' from Tier 2 = real content
     // sourceTier 'vector' from Tier 3 fallback badge = no real preview (detected by pathOpCount = 0)
@@ -249,8 +283,6 @@ export async function processVectorFile(
       epsResult.sourceTier === 'binary_preview' ||
       epsResult.sourceTier === 'xmp' ||
       (epsResult.sourceTier === 'vector' && epsResult.pathOpCount !== undefined && epsResult.pathOpCount >= 10);
-
-    console.log(`[EPS Rasterizer] hasRealPreview: ${isRealContent}`);
 
     return {
       mediaType: 'vector',
@@ -263,7 +295,7 @@ export async function processVectorFile(
       hasRealPreview: isRealContent,
     };
   } catch (err) {
-    console.warn('EPS rasterization fallback:', err);
+    // EPS rasterization fallback
   }
 
   // Draw clean vector asset placeholder canvas

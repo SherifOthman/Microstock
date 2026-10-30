@@ -241,6 +241,12 @@ export class BatchQueueService {
     titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal'
   ): Promise<void> {
     while (this.status === 'running') {
+      // Enforce sequential processing: one asset at a time prevents rate limits and queue freezes
+      if (this.activeWorkers >= 1) {
+        await new Promise((r) => setTimeout(r, 100));
+        continue;
+      }
+
       const pendingItem = Array.from(this.items.values()).find(
         (i) => i.status === 'ready' || (i.status === 'error' && i.retryCount < this.maxRetries)
       );
@@ -254,7 +260,6 @@ export class BatchQueueService {
           await this.saveBatchToDB();
           break;
         }
-        // Wait for active workers (reduced from 200ms to 100ms for faster failover detection)
         await new Promise((r) => setTimeout(r, 100));
         continue;
       }
@@ -274,8 +279,7 @@ export class BatchQueueService {
           this.notify();
         });
 
-      // Brief yield to allow concurrent key acquisition (reduced from 50ms to 20ms for faster failover)
-      await new Promise((r) => setTimeout(r, 20));
+      await new Promise((r) => setTimeout(r, 50));
     }
   }
 
@@ -300,117 +304,120 @@ export class BatchQueueService {
 
     let lease: any = null;
     const startTime = performance.now();
+    const WATCHDOG_MS = 45000;
+    let watchdogTimer: any;
 
     try {
       await db.masterRecords.update(item.id, { status: 'processing' });
 
-      // 1. Acquire key lease from KeyRingScheduler
-      // CRITICAL FIX: Exclude failed KEY IDs (not providers) to allow rotation through ALL keys of same provider
-      const failedKeyIds = (item.attemptHistory || [])
-        .filter((a) => a.status === 'failed' && a.keyId)
-        .map((a) => a.keyId as string);
+      const processingTask = (async () => {
+        // 1. Acquire key lease from KeyRingScheduler
+        // Exclude failed KEY IDs to allow rotation through ALL keys of same provider
+        const failedKeyIds = (item.attemptHistory || [])
+          .filter((a) => a.status === 'failed' && a.keyId)
+          .map((a) => a.keyId as string);
 
-      lease = await keyRingScheduler.acquireKey(undefined, failedKeyIds);
-      const { keyRecord, release } = lease;
+        lease = await keyRingScheduler.acquireKey(undefined, failedKeyIds);
+        const { keyRecord, release } = lease;
 
-      item.assignedKeyLabel = keyRecord.label;
-      item.assignedProvider = keyRecord.providerId;
-      item.assignedModel = keyRecord.modelId;
-      this.notify();
+        item.assignedKeyLabel = keyRecord.label;
+        item.assignedProvider = keyRecord.providerId;
+        item.assignedModel = keyRecord.modelId;
+        this.notify();
 
-      // 2. Build prompt & invoke vision API
-      const adapter = getProviderAdapter(keyRecord.providerId);
-      const basePrompt = buildVisionPrompt(item.filename, userPrompt, item.mediaType, keywordPhrasing, titleLengthPreset);
+        // 2. Build prompt & invoke vision API
+        const adapter = getProviderAdapter(keyRecord.providerId);
+        const prompt = buildVisionPrompt(
+          item.filename,
+          userPrompt,
+          item.mediaType,
+          keywordPhrasing,
+          titleLengthPreset,
+          item.hasRealPreview
+        );
 
-      // For EPS/vector files where no real artwork preview was generated (only a placeholder badge),
-      // send the placeholder BUT with a special prompt override telling the AI to IGNORE the visual
-      // and generate metadata purely from the filename hint.
-      const isEpsNoPreview = item.mediaType === 'vector' && item.hasRealPreview === false;
-      
-      console.log(`[AI Processing] ${item.filename}:`, {
-        mediaType: item.mediaType,
-        hasRealPreview: item.hasRealPreview,
-        isEpsNoPreview,
-      });
-      
-      const finalPrompt = isEpsNoPreview
-        ? basePrompt + '\n\n🚨 CRITICAL OVERRIDE: The image you see is a placeholder badge with NO actual artwork. COMPLETELY IGNORE the visual content (text, colors, badge). Generate ALL metadata based ONLY on the filename hint above. Analyze the filename to infer the vector subject, style, and theme. Do NOT mention "badge", "text", "placeholder", "EPS 10 VECTOR", or describe what you see visually.'
-        : basePrompt;
+        const rawAiText = await adapter.analyzeImage(
+          keyRecord.key,
+          keyRecord.modelId,
+          item.thumbnailBase64!,
+          prompt,
+          SYSTEM_VISION_PROMPT
+        );
 
-      const rawAiText = await adapter.analyzeImage(
-        keyRecord.key,
-        keyRecord.modelId,
-        item.thumbnailBase64!,
-        finalPrompt,
-        SYSTEM_VISION_PROMPT
-      );
+        const latencyMs = Math.round(performance.now() - startTime);
+        item.latencyMs = latencyMs;
 
-      const latencyMs = Math.round(performance.now() - startTime);
-      item.latencyMs = latencyMs;
+        // 3. Parse & normalize Master Metadata Record with requested keyword phrasing
+        const masterRecord = parseAndNormalizeAiMetadata(
+          rawAiText,
+          item.filename,
+          item.thumbnailDataUrl || `data:image/jpeg;base64,${item.thumbnailBase64}`,
+          this.currentBatchId,
+          isAiGenerated,
+          defaultModelName,
+          keywordPhrasing
+        );
+        masterRecord.id = item.id;
+        if (item.file?.size || item.originalSizeBytes) {
+          masterRecord.fileSize = item.file?.size || item.originalSizeBytes;
+        }
+        if (item.compressedSizeBytes) {
+          masterRecord.compressedSize = item.compressedSizeBytes;
+        } else if (item.thumbnailBase64) {
+          masterRecord.compressedSize = Math.round((item.thumbnailBase64.length * 3) / 4);
+        }
+        masterRecord.mediaType = item.mediaType || 'image';
+        if (item.videoDurationSeconds || item.videoResolution) {
+          masterRecord.videoMeta = {
+            durationSeconds: item.videoDurationSeconds,
+            resolution: item.videoResolution,
+          };
+        }
 
-      // 3. Parse & normalize Master Metadata Record with requested keyword phrasing
-      const masterRecord = parseAndNormalizeAiMetadata(
-        rawAiText,
-        item.filename,
-        item.thumbnailDataUrl || `data:image/jpeg;base64,${item.thumbnailBase64}`,
-        this.currentBatchId,
-        isAiGenerated,
-        defaultModelName,
-        keywordPhrasing
-      );
-      masterRecord.id = item.id;
-      if (item.file?.size || item.originalSizeBytes) {
-        masterRecord.fileSize = item.file?.size || item.originalSizeBytes;
-      }
-      if (item.compressedSizeBytes) {
-        masterRecord.compressedSize = item.compressedSizeBytes;
-      } else if (item.thumbnailBase64) {
-        masterRecord.compressedSize = Math.round((item.thumbnailBase64.length * 3) / 4);
-      }
-      masterRecord.mediaType = item.mediaType || 'image';
-      if (item.videoDurationSeconds || item.videoResolution) {
-        masterRecord.videoMeta = {
-          durationSeconds: item.videoDurationSeconds,
-          resolution: item.videoResolution,
+        if (!item.attemptHistory) item.attemptHistory = [];
+        item.attemptHistory.push({
+          provider: keyRecord.providerId,
+          model: keyRecord.modelId,
+          keyId: keyRecord.id,
+          status: 'success',
+        });
+
+        const parsedPrompt = masterRecord.aiGenerationInfo?.prompt;
+        masterRecord.aiGenerationInfo = {
+          prompt: userPrompt || parsedPrompt || masterRecord.baseTitle,
+          model: defaultModelName || 'Google Nano Banana',
+          provider: keyRecord.providerId,
+          latencyMs,
+          attemptHistory: [...item.attemptHistory],
         };
-      }
+        masterRecord.status = 'completed';
 
-      if (!item.attemptHistory) item.attemptHistory = [];
-      item.attemptHistory.push({
-        provider: keyRecord.providerId,
-        model: keyRecord.modelId,
-        keyId: keyRecord.id,
-        status: 'success',
+        item.metadataRecord = masterRecord;
+        item.status = 'completed';
+        item.error = undefined;
+        this.completedSinceLastRetry++; // Track successful completions for opportunistic retry
+        this.notify(); // UI update: item completed
+
+        // Persist master record to IndexedDB
+        await db.masterRecords.put(masterRecord);
+
+        // Release key lease as success
+        await release(true, undefined, latencyMs);
+
+        // Opportunistic retry: Give failed items another chance after several successes
+        if (this.completedSinceLastRetry >= this.OPPORTUNISTIC_RETRY_THRESHOLD) {
+          this.completedSinceLastRetry = 0;
+          this.opportunisticRetryFailed();
+        }
+      })();
+
+      const watchdogPromise = new Promise((_, reject) => {
+        watchdogTimer = setTimeout(() => {
+          reject(new Error(`Processing watchdog timeout (${WATCHDOG_MS / 1000}s)`));
+        }, WATCHDOG_MS);
       });
 
-      const parsedPrompt = masterRecord.aiGenerationInfo?.prompt;
-      masterRecord.aiGenerationInfo = {
-        prompt: userPrompt || parsedPrompt || masterRecord.baseTitle,
-        model: defaultModelName || 'Google Nano Banana',
-        provider: keyRecord.providerId,
-        latencyMs,
-        attemptHistory: [...item.attemptHistory],
-      };
-      masterRecord.status = 'completed';
-
-      item.metadataRecord = masterRecord;
-      item.status = 'completed';
-      item.error = undefined;
-      this.completedSinceLastRetry++; // Track successful completions for opportunistic retry
-      this.notify(); // UI update: item completed
-
-      // Persist master record to IndexedDB
-      await db.masterRecords.put(masterRecord);
-
-      // Release key lease as success
-      await release(true, undefined, latencyMs);
-
-      // OPPORTUNISTIC RETRY: Give failed items another chance after several successes
-      // This helps recover from temporary API issues without user intervention
-      if (this.completedSinceLastRetry >= this.OPPORTUNISTIC_RETRY_THRESHOLD) {
-        this.completedSinceLastRetry = 0;
-        this.opportunisticRetryFailed();
-      }
+      await Promise.race([processingTask, watchdogPromise]);
     } catch (err: any) {
       item.retryCount++;
       const isRetryable = item.retryCount < this.maxRetries;
@@ -440,6 +447,8 @@ export class BatchQueueService {
         // Release key lease with error (scheduler handles 429 cooldowns and invalid status)
         await lease.release(false, err);
       }
+    } finally {
+      if (watchdogTimer) clearTimeout(watchdogTimer);
     }
   }
 
@@ -529,7 +538,6 @@ export class BatchQueueService {
       failedItem.status = 'ready';
       failedItem.error = undefined;
       // Don't reset retryCount - this is an opportunistic attempt
-      console.log(`[BatchQueue] Opportunistic retry for ${failedItem.filename} (attempt ${failedItem.retryCount + 1}/${this.maxRetries})`);
       this.notify();
     }
   }

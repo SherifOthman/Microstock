@@ -42,7 +42,7 @@ function captureVideoFrame(video: HTMLVideoElement, timeSeconds: number): Promis
     video.addEventListener('seeked', onSeeked, { once: true });
     video.currentTime = Math.max(0.05, Math.min(timeSeconds, Math.max(0.1, video.duration - 0.1)));
 
-    // Fallback timer
+    // Fallback timer: strict 2000ms per frame seek
     setTimeout(() => {
       if (!handled) {
         handled = true;
@@ -54,7 +54,7 @@ function captureVideoFrame(video: HTMLVideoElement, timeSeconds: number): Promis
         if (ctx) ctx.drawImage(video, 0, 0, c.width, c.height);
         resolve(c);
       }
-    }, 3000);
+    }, 2000);
   });
 }
 
@@ -64,14 +64,26 @@ export async function extractVideoStoryboard(
   targetGridHeight = 432,
   quality = 0.75
 ): Promise<VideoStoryboardResult> {
-  return new Promise((resolve, reject) => {
+  let timer: any;
+  let objectUrl = '';
+
+  const extractionPromise = new Promise<VideoStoryboardResult>((resolve, reject) => {
     const video = document.createElement('video');
     video.preload = 'auto';
     video.muted = true;
     video.playsInline = true;
 
-    const objectUrl = URL.createObjectURL(file);
+    objectUrl = URL.createObjectURL(file);
     video.src = objectUrl;
+
+    const cleanup = () => {
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+        objectUrl = '';
+      }
+      video.onloadedmetadata = null;
+      video.onerror = null;
+    };
 
     video.onloadedmetadata = async () => {
       try {
@@ -163,7 +175,7 @@ export async function extractVideoStoryboard(
         else if (vWidth >= 1920 || vHeight >= 1080) resLabel = '1080p FHD';
         else if (vWidth >= 1280 || vHeight >= 720) resLabel = '720p HD';
 
-        URL.revokeObjectURL(objectUrl);
+        cleanup();
 
         resolve({
           storyboardBase64: storyBase64,
@@ -176,14 +188,27 @@ export async function extractVideoStoryboard(
           resolutionLabel: resLabel,
         });
       } catch (err) {
-        URL.revokeObjectURL(objectUrl);
+        cleanup();
         reject(err);
       }
     };
 
     video.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
+      cleanup();
       reject(new Error(`Failed to decode video metadata for ${file.name}`));
     };
   });
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      reject(new Error(`Video storyboard extraction timed out after 8000ms for ${file.name}`));
+    }, 8000);
+  });
+
+  try {
+    return await Promise.race([extractionPromise, timeoutPromise]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }

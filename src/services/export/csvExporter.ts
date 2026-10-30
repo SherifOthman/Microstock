@@ -163,19 +163,15 @@ export function generatePlatformCsv(
 
 /**
  * Downloads a single platform CSV
- * Includes UTF-8 BOM for Excel compatibility (especially important for Adobe Stock CSV uploads)
+ * Pure UTF-8 without BOM (Adobe Stock and other agencies strictly reject CSVs with a BOM).
  */
 export function downloadSingleCsv(result: PlatformExportResult): void {
   if (result.isBlocked) {
     throw new Error(result.blockedReason || 'Export blocked for this platform');
   }
 
-  // Add UTF-8 BOM (Byte Order Mark) for Excel/Adobe Stock compatibility
-  // This ensures proper encoding recognition across all platforms
-  const BOM = '\uFEFF';
-  const csvWithBOM = BOM + result.csvString;
-
-  const blob = new Blob([csvWithBOM], { type: 'text/csv;charset=utf-8' });
+  // Pure UTF-8 without BOM: Adobe Stock strictly rejects/ignores the Filename column if a BOM is present
+  const blob = new Blob([result.csvString], { type: 'text/csv;charset=utf-8' });
   saveAs(blob, result.filename);
 }
 

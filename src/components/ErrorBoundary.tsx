@@ -43,6 +43,13 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public render() {
     if (this.state.hasError) {
+      const isTranslationError =
+        this.state.error?.name === 'NotFoundError' ||
+        (this.state.error?.message &&
+          (this.state.error.message.includes('removeChild') ||
+            this.state.error.message.includes('insertBefore') ||
+            this.state.error.message.includes('not a child of this node')));
+
       return (
         <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-6">
           <div className="max-w-md w-full bg-card border border-border rounded-2xl p-6 shadow-xl space-y-4 text-center">
@@ -51,9 +58,13 @@ export class ErrorBoundary extends Component<Props, State> {
             </div>
 
             <div className="space-y-1">
-              <h2 className="text-base font-semibold text-foreground">Something went wrong</h2>
+              <h2 className="text-base font-semibold text-foreground">
+                {isTranslationError ? 'Browser Translation Conflict' : 'Something went wrong'}
+              </h2>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                An unexpected interface error occurred. Your local stock images and API keys remain safe in your browser storage.
+                {isTranslationError
+                  ? 'Chrome/Google Translate mutated page elements during rendering. Your images, API keys, and drafts are 100% safe. Use the built-in EN/عربي toggle in the app header instead of browser translation.'
+                  : 'An unexpected interface error occurred. Your local stock images and API keys remain safe in your browser storage.'}
               </p>
             </div>
 

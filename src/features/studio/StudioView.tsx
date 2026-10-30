@@ -260,6 +260,11 @@ export const StudioView: React.FC = () => {
   const [assetToDelete, setAssetToDelete] = useState<{ id: string; filename: string } | null>(null);
   const [clearAllConfirmOpen, setClearAllConfirmOpen] = useState<boolean>(false);
   const [noticeDialog, setNoticeDialog] = useState<{ title: string; message: string } | null>(null);
+  const [incompleteExportDialog, setIncompleteExportDialog] = useState<{
+    completedCount: number;
+    incompleteCount: number;
+    onProceed: () => void;
+  } | null>(null);
 
   // Search Filter & View Mode ('compact' vs 'detailed')
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -564,8 +569,10 @@ export const StudioView: React.FC = () => {
     setMutingAssetId(assetId);
     try {
       const mutedBlob = await stripAudioTrackLossless(asset.queueItem.file);
-      const cleanName = asset.filename.replace(/\.[^/.]+$/, '_muted.mp4');
-      const mutedFile = new File([mutedBlob], cleanName, { type: 'video/mp4' });
+      // Keep exact original filename so disk files and CSV entries match 100%
+      const mutedFile = new File([mutedBlob], asset.filename, {
+        type: asset.queueItem.file.type || 'video/mp4',
+      });
       batchQueueService.markItemMuted(assetId, mutedFile);
     } catch (err: any) {
       setNoticeDialog({
@@ -585,8 +592,10 @@ export const StudioView: React.FC = () => {
       for (const asset of videosWithAudio) {
         if (asset.queueItem?.file) {
           const mutedBlob = await stripAudioTrackLossless(asset.queueItem.file);
-          const cleanName = asset.filename.replace(/\.[^/.]+$/, '_muted.mp4');
-          const mutedFile = new File([mutedBlob], cleanName, { type: 'video/mp4' });
+          // Keep exact original filename so disk files and CSV entries match 100%
+          const mutedFile = new File([mutedBlob], asset.filename, {
+            type: asset.queueItem.file.type || 'video/mp4',
+          });
           batchQueueService.markItemMuted(asset.id, mutedFile);
         }
       }
@@ -612,6 +621,9 @@ export const StudioView: React.FC = () => {
     (a) => a.status === 'queued' || a.status === 'processing'
   ).length;
   const completedCount = unifiedAssets.filter((a) => a.status === 'completed').length;
+  const nonAsciiCount = useMemo(() => {
+    return unifiedAssets.filter((a) => /\u2026|[^\x00-\x7F]/.test(a.filename)).length;
+  }, [unifiedAssets]);
 
   // Handlers
   const isSupportedMediaFile = (file: File): boolean => {
@@ -714,7 +726,7 @@ export const StudioView: React.FC = () => {
     setPreviewCopied(false);
   };
 
-  const handleSingleExport = (pid: SupportedPlatform) => {
+  const triggerSingleExport = (pid: SupportedPlatform) => {
     const res = generatePlatformCsv(pid, records, 'stock_metadata', getUniversalTransformOptions());
     if (res.isBlocked) {
       setNoticeDialog({
@@ -733,7 +745,7 @@ export const StudioView: React.FC = () => {
     }
   };
 
-  const handleZipExport = async () => {
+  const triggerZipExport = async () => {
     try {
       await downloadAllCsvsAsZip(
         selectedPlatforms,
@@ -747,6 +759,30 @@ export const StudioView: React.FC = () => {
         message: err.message || 'Export failed.',
       });
     }
+  };
+
+  const handleSingleExport = (pid: SupportedPlatform) => {
+    if (completedCount < unifiedAssets.length) {
+      setIncompleteExportDialog({
+        completedCount,
+        incompleteCount: unifiedAssets.length - completedCount,
+        onProceed: () => triggerSingleExport(pid),
+      });
+      return;
+    }
+    triggerSingleExport(pid);
+  };
+
+  const handleZipExport = async () => {
+    if (completedCount < unifiedAssets.length) {
+      setIncompleteExportDialog({
+        completedCount,
+        incompleteCount: unifiedAssets.length - completedCount,
+        onProceed: () => triggerZipExport(),
+      });
+      return;
+    }
+    triggerZipExport();
   };
 
   const isRunning = queueState.status === 'running';
@@ -1288,6 +1324,25 @@ export const StudioView: React.FC = () => {
                 <KeyRound className="w-3.5 h-3.5" />
                 <span>{t.manageKeysButton || t.manageKeys || 'Manage Keys'}</span>
               </Button>
+            </div>
+          </Alert>
+        )}
+
+        {/* Non-ASCII Filename Warning Banner */}
+        {nonAsciiCount > 0 && (
+          <Alert variant="warning" className="shadow-2xs">
+            <AlertTriangle className="w-4 h-4 text-amber-500" />
+            <div className="space-y-0.5">
+              <AlertTitle className="text-xs font-semibold text-amber-700 dark:text-amber-400">
+                {language === 'ar'
+                  ? `تنبيه: ${nonAsciiCount} ملف يحتوي على أحرف خاصة أو نقاط حذف (…)`
+                  : `Warning: ${nonAsciiCount} file(s) contain non-ASCII characters or ellipsis (…)`}
+              </AlertTitle>
+              <AlertDescription className="text-xs text-amber-800/90 dark:text-amber-300/80">
+                {language === 'ar'
+                  ? 'أدوبي ستوك وشترستوك تتطلب تطابقاً تاماً 100% بين اسم الملف في CSV واسم الملف المرفوع. قد تؤدي الأحرف غير الإنجليزية أو نقاط الحذف إلى فشل ربط البيانات الوصفية تلقائياً.'
+                  : 'Adobe Stock and Shutterstock require 100% exact matching between the CSV filename and your uploaded media. Special characters or Unicode ellipsis may cause metadata matching to fail.'}
+              </AlertDescription>
             </div>
           </Alert>
         )}
@@ -1924,6 +1979,26 @@ export const StudioView: React.FC = () => {
         confirmText="OK"
         hideCancel
         onConfirm={() => setNoticeDialog(null)}
+      />
+
+      {/* Incomplete Batch CSV Export Warning */}
+      <ConfirmDialog
+        open={!!incompleteExportDialog}
+        onOpenChange={(open) => !open && setIncompleteExportDialog(null)}
+        title={language === 'ar' ? 'تصدير دفعة غير مكتملة' : 'Incomplete Batch Export'}
+        description={
+          language === 'ar'
+            ? `تم إنشاء البيانات الوصفية لـ ${incompleteExportDialog?.completedCount || 0} من أصل ${unifiedAssets.length} ملف فقط (${incompleteExportDialog?.incompleteCount || 0} لم تكتمل بعد). هل تريد تصدير ملفات CSV للملفات المكتملة فقط؟`
+            : `Only ${incompleteExportDialog?.completedCount || 0} of ${unifiedAssets.length} assets have completed metadata (${incompleteExportDialog?.incompleteCount || 0} incomplete/pending). Do you want to export CSVs for the completed assets only?`
+        }
+        confirmText={language === 'ar' ? 'تصدير المكتمل فقط' : 'Export Completed Only'}
+        cancelText={language === 'ar' ? 'إلغاء' : 'Cancel'}
+        onConfirm={() => {
+          if (incompleteExportDialog) {
+            incompleteExportDialog.onProceed();
+            setIncompleteExportDialog(null);
+          }
+        }}
       />
 
       {/* Media Lightbox Modal */}

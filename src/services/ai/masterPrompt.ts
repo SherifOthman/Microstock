@@ -167,7 +167,8 @@ export function buildVisionPrompt(
   userCustomPrompt?: string,
   mediaType?: 'image' | 'video' | 'vector',
   keywordPhrasing: 'single' | 'double' | 'mixed' = 'mixed',
-  titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal'
+  titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal',
+  hasRealPreview?: boolean
 ): string {
   let prompt = 'Analyze this stock asset and output the requested microstock metadata JSON object according to all guidelines.';
 
@@ -194,7 +195,11 @@ export function buildVisionPrompt(
   if (mediaType === 'video') {
     prompt += '\nCRITICAL MEDIA TYPE: VIDEO FOOTAGE. The input image is a 4-frame chronological storyboard (F1, F2, F3, F4) of a stock video clip. Analyze both visual subject and temporal motion progression. Include video/motion tags (footage, video clip, motion, 4k, slow motion, loop, aerial, panning, camera movement). NEVER include photography/static terms (still life, photo, photograph, illustration, picture).';
   } else if (mediaType === 'vector') {
-    prompt += '\nCRITICAL MEDIA TYPE: VECTOR EPS ILLUSTRATION. This is a scalable vector graphic illustration. Analyze the actual ARTWORK CONTENT and visual elements shown (characters, objects, scenes, colors, style, composition). Describe what the illustration depicts, not just that it is a vector. Include vector-specific terms (vector, illustration, graphic, design, template, editable, scalable, flat, clip art, icon) alongside the SPECIFIC SUBJECT MATTER. NEVER include camera/photo terms (photo, photograph, shot, depth of field, bokeh, lens, shutter).';
+    if (hasRealPreview === false) {
+      prompt += '\nCRITICAL OVERRIDE: The provided image is a generic placeholder badge with NO actual artwork. COMPLETELY IGNORE the visual content, badge graphics, and words like "EPS 10 VECTOR". Generate ALL metadata, title, and keywords STRICTLY from the filename subject hint below. Infer the vector illustration\'s subject matter, design style, and commercial theme entirely from the filename.';
+    } else {
+      prompt += '\nCRITICAL MEDIA TYPE: VECTOR EPS ILLUSTRATION. This is a scalable vector graphic illustration. Analyze the actual ARTWORK CONTENT and visual elements shown (characters, objects, scenes, colors, style, composition). Describe what the illustration depicts, not just that it is a vector. Include vector-specific terms (vector, illustration, graphic, design, template, editable, scalable, flat, clip art, icon) alongside the SPECIFIC SUBJECT MATTER. NEVER include camera/photo terms (photo, photograph, shot, depth of field, bokeh, lens, shutter).';
+    }
   }
 
   if (filename) {

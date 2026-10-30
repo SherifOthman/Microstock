@@ -197,6 +197,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
   const isProcessing = asset.status === 'processing';
   const isQueued = asset.status === 'queued';
   const isError = asset.status === 'error';
+  const hasNonAsciiInFilename = /\u2026|[^\x00-\x7F]/.test(asset.filename);
 
   const originalSize =
     rec?.fileSize ||
@@ -286,6 +287,17 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                   {asset.filename}
                 </span>
 
+                {hasNonAsciiInFilename && (
+                  <Badge
+                    variant="outline"
+                    className="h-4 px-1 text-[9px] gap-0.5 font-semibold text-amber-500 border-amber-500/30 bg-amber-500/10 shrink-0"
+                    title={language === 'ar' ? 'اسم الملف يحتوي على أحرف غير إنجليزية أو نقاط حذف (…) مما قد يعطل مطابقة CSV' : 'Filename contains non-ASCII characters or ellipsis (…) which may fail CSV matching'}
+                  >
+                    <AlertTriangle className="w-2.5 h-2.5" />
+                    <span>Non-ASCII</span>
+                  </Badge>
+                )}
+
                 {/* Inline Audio Muting in Compact Mode */}
                 {(rec?.mediaType === 'video' || asset.queueItem?.mediaType === 'video') && asset.queueItem?.hasAudio && (
                   <Button
@@ -367,16 +379,20 @@ export const AssetCard: React.FC<AssetCardProps> = ({
               </div>
             </div>
 
-            {/* Quick Action Icons: Regenerate & Delete */}
+            {/* Quick Action Icons: Regenerate / Retry & Delete */}
             <div className="flex items-center gap-1 shrink-0">
-              {isCompleted && (
+              {(isCompleted || isError) && (
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
                   onClick={() => onRegenerate(asset.id)}
-                  className="h-8 w-8 text-muted-foreground hover:text-foreground cursor-pointer"
-                  title={t.regenerate}
+                  className={`h-8 w-8 cursor-pointer ${
+                    isError
+                      ? 'text-destructive hover:text-destructive hover:bg-destructive/10'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                  title={isError ? (t.retry || 'Retry') : t.regenerate}
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                 </Button>
@@ -514,9 +530,21 @@ export const AssetCard: React.FC<AssetCardProps> = ({
 
           {/* Filename & Dual Size Display: Original vs Compressed AI Payload */}
           <div className="space-y-1.5">
-            <p className="text-xs font-semibold text-foreground truncate max-w-full block" title={asset.filename}>
-              {asset.filename}
-            </p>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <p className="text-xs font-semibold text-foreground truncate max-w-full block" title={asset.filename}>
+                {asset.filename}
+              </p>
+              {hasNonAsciiInFilename && (
+                <Badge
+                  variant="outline"
+                  className="h-4 px-1 text-[9px] gap-0.5 font-semibold text-amber-500 border-amber-500/30 bg-amber-500/10 shrink-0"
+                  title={language === 'ar' ? 'اسم الملف يحتوي على أحرف غير إنجليزية أو نقاط حذف (…) مما قد يعطل مطابقة CSV' : 'Filename contains non-ASCII characters or ellipsis (…) which may fail CSV matching'}
+                >
+                  <AlertTriangle className="w-2.5 h-2.5" />
+                  <span>Non-ASCII</span>
+                </Badge>
+              )}
+            </div>
 
             <div className="rounded-lg bg-secondary/40 border border-border/70 p-2 space-y-1.5 text-[10px] font-mono">
               <div className="flex items-center justify-between text-muted-foreground">
@@ -663,6 +691,19 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             >
               <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />
               <span>{t.regenerate}</span>
+            </Button>
+          )}
+
+          {/* Retry Button on Error */}
+          {isError && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => onRegenerate(asset.id)}
+              className="w-full h-8 text-xs gap-1.5 cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>{t.retry || (language === 'ar' ? 'إعادة المحاولة' : 'Retry')}</span>
             </Button>
           )}
         </div>
