@@ -127,6 +127,10 @@ export function cleanFilenameHint(filename: string): string {
   const cleaned = filename
     // strip common image/video extensions
     .replace(/\.(jpe?g|png|webp|eps|ai|svg|mov|mp4|tiff?)$/i, '')
+    // strip leading zero-padded or sequential counters e.g. "001_", "02-", "001 "
+    .replace(/^\s*\d{1,4}[-_\s]+/i, '')
+    // strip trailing duplicate counters e.g. "_01", "-02", "_1"
+    .replace(/[-_\s]+\d{1,4}\s*$/i, '')
     // replace underscores and hyphens with spaces FIRST so word boundaries match clean words
     .replace(/[-_]+/g, ' ')
     // strip trailing or embedded timestamp strings like 20261015121812

@@ -4,6 +4,7 @@ import { hydrateVecteezyCsv } from '../src/services/rules/vecteezyHydrator';
 import { buildVisionPrompt, cleanFilenameHint } from '../src/services/ai/masterPrompt';
 import { parseAndNormalizeAiMetadata, deGlueCompoundWord, rebalanceTopKeywords } from '../src/services/ai/metadataParser';
 import { mapToDreamstimeCategories, getDreamstimeCategoryName, DREAMSTIME_CATEGORIES } from '../src/constants/categories';
+import { cleanRawFilename, autoDetectLastNumber, processFilesForRenaming } from '../src/services/cleaner/fileCleanerEngine';
 import Papa from 'papaparse';
 
 async function runTestSuite() {
@@ -366,6 +367,81 @@ async function runTestSuite() {
 
   assert(DREAMSTIME_CATEGORIES[212] === 'Illustrations & Clipart -> AI generated', 'DREAMSTIME_CATEGORIES: Verified official 212 category in legend');
   assert(DREAMSTIME_CATEGORIES[115] === 'People -> Couples', 'DREAMSTIME_CATEGORIES: Verified 115 is Couples (never defaulted for food)');
+
+  // -----------------------------------------------------------
+  // TEST 10: Smart File Cleaner & Renamer Engine
+  // -----------------------------------------------------------
+  console.log('\n--- Test Group 10: Smart File Cleaner & Renamer Engine ---');
+  
+  // 1. Raw filename cleaning & junk stripping
+  const rawJunk1 = 'Create_separate_images_featuring_assorted_fresh_fruits_in_rustic_ceramic_bowl_2K_20261015122121.jpg';
+  const cleanOut1 = cleanRawFilename(rawJunk1, '_', 'lowercase', 55);
+  assert(!cleanOut1.includes('create') && !cleanOut1.includes('2k') && !cleanOut1.includes('20261015122121'), 'cleanRawFilename: Strips AI boilerplate, 2K resolution & timestamps');
+  assert(cleanOut1.length <= 55, `cleanRawFilename: Respects <= 55 chars length cap (Got: ${cleanOut1.length})`);
+  assert(cleanOut1.includes('fruits') && cleanOut1.includes('bowl'), 'cleanRawFilename: Preserves meaningful English subject nouns');
+
+  // 2. Word boundary safe truncation (does not cut words in half)
+  const longName = 'A_very_long_descriptive_commercial_photography_title_with_extra_super_magnificent_aesthetic_elements_and_details_20261015.jpg';
+  const truncatedClean = cleanRawFilename(longName, '_', 'lowercase', 55);
+  assert(truncatedClean.length <= 55, `Word-boundary truncation: strictly <= 55 chars (Got: ${truncatedClean.length})`);
+  assert(!truncatedClean.endsWith('_') && !truncatedClean.endsWith('-'), 'Word-boundary truncation: does not end with dangling separator');
+
+  // 3. Auto-detect last number in folder
+  const existingFolderFiles = [
+    '001_apple_fruit.jpg',
+    '002_orange_fruit.jpg',
+    '019_grapes_macro.jpg',
+    '020_banana_yellow.jpg',
+    'random_unrelated_file.png',
+  ];
+  const nextNum = autoDetectLastNumber(existingFolderFiles);
+  assert(nextNum === 21, `autoDetectLastNumber: Correctly identifies 20 as highest and suggests 21 (Got: ${nextNum})`);
+
+  // 4. Sequential prefix mode (001_, 002_)
+  const mockFile1 = new File(['content'], 'avocado_toast_with_egg_20261015.jpg', { type: 'image/jpeg', lastModified: 1000 });
+  const mockFile2 = new File(['content'], 'fresh_orange_juice_glass_20261016.jpg', { type: 'image/jpeg', lastModified: 2000 });
+  const sequentialRenamed = processFilesForRenaming([mockFile2, mockFile1], {
+    mode: 'sequential',
+    separator: '_',
+    startCounter: 1,
+    zeroPadDigits: 3,
+    maxBaseLength: 55,
+    caseStyle: 'lowercase',
+    folderName: '_Cleaned_Ready',
+  });
+
+  assert(sequentialRenamed[0].cleanedName.startsWith('001_'), 'processFilesForRenaming: Pre-sorted chronologically, oldest is 001_');
+  assert(sequentialRenamed[0].cleanedName.includes('avocado_toast'), 'processFilesForRenaming: Oldest file (avocado) became 001_');
+  assert(sequentialRenamed[1].cleanedName.startsWith('002_'), 'processFilesForRenaming: Newer file (orange) became 002_');
+
+  // 5. Clean only mode with duplicate auto-numbering (_01, _02)
+  const dupFileA = new File(['content'], 'rustic_wooden_chair_2k_v1.jpg', { type: 'image/jpeg', lastModified: 1000 });
+  const dupFileB = new File(['content'], 'rustic_wooden_chair_4k_v2.jpg', { type: 'image/jpeg', lastModified: 2000 });
+  const cleanOnlyRenamed = processFilesForRenaming([dupFileA, dupFileB], {
+    mode: 'clean_only',
+    separator: '_',
+    startCounter: 1,
+    zeroPadDigits: 3,
+    maxBaseLength: 55,
+    caseStyle: 'lowercase',
+    folderName: '_Cleaned_Ready',
+  });
+  assert(cleanOnlyRenamed[0].cleanedName === 'rustic_wooden_chair.jpg', 'clean_only mode: First occurrence has no numeric suffix');
+  assert(cleanOnlyRenamed[1].cleanedName === 'rustic_wooden_chair_02.jpg', 'clean_only mode: Duplicate automatically gets _02 suffix');
+
+  // -----------------------------------------------------------
+  // TEST 11: Filename Hint Parser with Number Prefixes & Suffixes
+  // -----------------------------------------------------------
+  console.log('\n--- Test Group 11: Filename Hint Sequential Numbers Stripping ---');
+  const seqFile = '001_Assorted_fresh_fruits_in_bowl.jpg';
+  const cleanSeqHint = cleanFilenameHint(seqFile);
+  assert(!cleanSeqHint.includes('001'), 'cleanFilenameHint: Strips leading zero-padded prefix "001_" from prompt hint');
+  assert(cleanSeqHint.toLowerCase().includes('fruits') && cleanSeqHint.toLowerCase().includes('bowl'), 'cleanFilenameHint: Retains subject words from sequential filename');
+
+  const dupCounterFile = 'Wooden_dining_table_in_kitchen_02.jpg';
+  const cleanDupHint = cleanFilenameHint(dupCounterFile);
+  assert(!cleanDupHint.includes('02'), 'cleanFilenameHint: Strips trailing duplicate suffix "_02" from prompt hint');
+  assert(cleanDupHint.toLowerCase().includes('table'), 'cleanFilenameHint: Retains core subject from duplicate-numbered file');
 
   console.log('\n====================================================');
   console.log(`🏁 TEST RESULTS: ${passedTests} / ${totalTests} TESTS PASSED (100%)`);
