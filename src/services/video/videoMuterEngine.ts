@@ -239,11 +239,22 @@ export async function saveMutedVideosToDirectory(
       throw new Error('File System Access API not supported in this browser. Please use ZIP download.');
     }
 
+    // Only include items that were successfully muted or already silent
+    const validItems = items.filter(item => 
+      item.status === 'muted' || 
+      item.status === 'already_silent' ||
+      item.mutedBlob
+    );
+
+    if (validItems.length === 0) {
+      throw new Error('No videos to save. Please mute videos first.');
+    }
+
     const dirHandle = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
     const targetDir = folderName ? await dirHandle.getDirectoryHandle(folderName, { create: true }) : dirHandle;
 
     let saved = 0;
-    for (const item of items) {
+    for (const item of validItems) {
       const blob = item.mutedBlob || item.file;
       const filename = item.outputName.trim();
       const fileHandle = await targetDir.getFileHandle(filename, { create: true });
@@ -252,7 +263,7 @@ export async function saveMutedVideosToDirectory(
       await writable.close();
 
       saved++;
-      onProgress?.(saved, items.length);
+      onProgress?.(saved, validItems.length);
     }
 
     return { success: true, savedCount: saved };
@@ -274,9 +285,20 @@ export async function downloadMutedVideosAsZip(
 ): Promise<void> {
   const zip = new JSZip();
 
-  for (const item of items) {
+  // Only include items that were successfully muted or already silent
+  const validItems = items.filter(item => 
+    item.status === 'muted' || 
+    item.status === 'already_silent' ||
+    item.mutedBlob  // Has been processed
+  );
+
+  for (const item of validItems) {
     const blob = item.mutedBlob || item.file;
     zip.file(item.outputName, blob);
+  }
+
+  if (validItems.length === 0) {
+    throw new Error('No videos to export. Please mute videos first.');
   }
 
   const zipBlob = await zip.generateAsync(
