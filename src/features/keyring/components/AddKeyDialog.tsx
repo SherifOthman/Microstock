@@ -559,7 +559,7 @@ export const AddKeyDialog: React.FC<Props> = ({
               <SelectTrigger className="h-8 text-xs bg-card text-left">
                 <SelectValue placeholder="Select a vision model" />
               </SelectTrigger>
-              <SelectContent className="max-h-64 text-left">
+              <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60 text-left">
                 {availableModels.map((m) => {
                   const isDefault = m === currentMeta.defaultModelId;
                   const isFree =

@@ -60,7 +60,7 @@ export const KeyRingView: React.FC = () => {
   };
 
   return (
-    <div className="space-y-4 max-h-[80vh] overflow-y-auto pr-1">
+    <div className="space-y-4 max-h-[80vh] overflow-y-auto pe-1 max-w-full min-w-0">
       {/* Unified Collapsible Provider Priority Accordion Stack */}
       <PriorityCascadeCard
         settings={settings}

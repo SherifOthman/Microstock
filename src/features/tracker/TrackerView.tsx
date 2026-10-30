@@ -491,7 +491,7 @@ export const TrackerView: React.FC = () => {
               <SelectTrigger className="h-8 text-xs bg-primary-foreground/15 border-primary-foreground/30 text-primary-foreground w-[140px]">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60">
                 {ALL_PLATFORMS.map((p) => (
                   <SelectItem key={p} value={p} className="text-xs">
                     {DEFAULT_PLATFORM_LIMITS[p].name}
@@ -508,7 +508,7 @@ export const TrackerView: React.FC = () => {
               <SelectTrigger className="h-8 text-xs bg-primary-foreground/15 border-primary-foreground/30 text-primary-foreground w-[150px]">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60">
                 <SelectItem value="uploaded" className="text-xs">Uploaded ✓</SelectItem>
                 <SelectItem value="pending_review" className="text-xs">Pending Review ⏳</SelectItem>
                 <SelectItem value="not_uploaded" className="text-xs">Not Uploaded ✕</SelectItem>
@@ -633,7 +633,7 @@ export const TrackerView: React.FC = () => {
             <SelectTrigger className="h-8 text-xs bg-secondary/50 border-border text-foreground w-[140px]">
               <SelectValue placeholder="All Agencies" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60">
               <SelectItem value="all" className="text-xs">All Agencies</SelectItem>
               {ALL_PLATFORMS.map((p) => (
                 <SelectItem key={p} value={p} className="text-xs">
@@ -651,7 +651,7 @@ export const TrackerView: React.FC = () => {
             <SelectTrigger className="h-8 text-xs bg-secondary/50 border-border text-foreground w-[160px]">
               <SelectValue placeholder="All Statuses" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60">
               <SelectItem value="all" className="text-xs">All Statuses</SelectItem>
               <SelectItem value="not_uploaded" className="text-xs">Missing / Not Uploaded</SelectItem>
               <SelectItem value="uploaded" className="text-xs">Uploaded ✓</SelectItem>

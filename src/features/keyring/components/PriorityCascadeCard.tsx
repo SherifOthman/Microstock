@@ -221,7 +221,7 @@ export const PriorityCascadeCard: React.FC<Props> = ({
               {/* Main Provider Row (Collapsed Header) */}
               <div
                 onClick={() => toggleExpand(providerId)}
-                className="p-3 flex items-center justify-between gap-3 cursor-pointer select-none"
+                className="p-3 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2.5 cursor-pointer select-none"
               >
                 {/* Left Group: Drag Handle, Minimal Priority Badge, Provider Name */}
                 <div className="flex items-center gap-2.5 min-w-0">
@@ -254,21 +254,21 @@ export const PriorityCascadeCard: React.FC<Props> = ({
                 <div
                   dir="ltr"
                   onClick={(e) => e.stopPropagation()}
-                  className="flex items-center gap-2.5 shrink-0 text-left"
+                  className="flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0 text-left w-full sm:w-auto justify-between sm:justify-end"
                 >
                   {/* Model Selector Dropdown */}
                   <Select
                     value={savedModel}
                     onValueChange={(val) => handleModelChange(providerId, val)}
                   >
-                    <SelectTrigger className="h-8 text-xs bg-background border-border min-w-[200px] max-w-[240px] text-foreground">
+                    <SelectTrigger className="h-8 text-xs bg-background border-border min-w-[160px] sm:min-w-[200px] max-w-full sm:max-w-[240px] text-foreground flex-1 sm:flex-initial">
                       <SelectValue>
                         <span className="truncate">
                           {MODEL_DISPLAY_NAMES[savedModel] || savedModel}
                         </span>
                       </SelectValue>
                     </SelectTrigger>
-                    <SelectContent className="max-h-56 bg-popover border-border text-popover-foreground">
+                    <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60 bg-popover border-border text-popover-foreground">
                       {meta.recommendedVisionModels.map((m) => (
                         <SelectItem key={m} value={m} className="text-xs">
                           <span className="font-mono">{MODEL_DISPLAY_NAMES[m] || m}</span>

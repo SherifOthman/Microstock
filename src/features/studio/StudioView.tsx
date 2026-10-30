@@ -631,7 +631,7 @@ export const StudioView: React.FC = () => {
                             <SelectTrigger className="h-7 text-xs bg-card">
                               <SelectValue />
                             </SelectTrigger>
-                            <SelectContent>
+                            <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60">
                               <SelectItem value="pro" className="text-xs">
                                 {t.proDefault}
                               </SelectItem>
@@ -650,7 +650,7 @@ export const StudioView: React.FC = () => {
 
                   {/* Contextual Freepik Options */}
                   {p.id === 'freepik' && isSelected && (
-                    <div className="p-2.5 ml-4 rounded-md border border-border bg-secondary/20 space-y-2 text-xs">
+                    <div className="p-2.5 ms-3 rounded-md border border-border bg-secondary/20 space-y-2 text-xs">
                       {/* AI Generated Toggle Button */}
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
@@ -687,7 +687,7 @@ export const StudioView: React.FC = () => {
                                 <SelectTrigger className="h-7 text-xs bg-card">
                                   <SelectValue placeholder="Base model" />
                                 </SelectTrigger>
-                                <SelectContent className="max-h-64">
+                                <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60">
                                   {FREEPIK_BASE_MODELS.map((m) => (
                                     <SelectItem key={m} value={m} className="text-xs">
                                       {m}
@@ -878,32 +878,34 @@ export const StudioView: React.FC = () => {
       {/* ======================================================== */}
       <main className="flex-1 w-full min-w-0 space-y-4">
         {/* Top Action Toolbar */}
-        <div className="p-3 bg-card rounded-xl border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+        <div className="p-3 bg-card rounded-xl border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs w-full min-w-0">
           {/* File Ingestion Buttons */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isRunning}
-              className="gap-1.5 text-xs"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              {t.addImages}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => folderInputRef.current?.click()}
-              disabled={isRunning}
-              className="gap-1.5 text-xs"
-            >
-              <FolderUp className="w-3.5 h-3.5" />
-              {t.selectFolder}
-            </Button>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto min-w-0">
+            <div className="grid grid-cols-2 sm:flex items-center gap-2 w-full sm:w-auto">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isRunning}
+                className="gap-1.5 text-xs w-full sm:w-auto justify-center"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                {t.addImages}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => folderInputRef.current?.click()}
+                disabled={isRunning}
+                className="gap-1.5 text-xs w-full sm:w-auto justify-center"
+              >
+                <FolderUp className="w-3.5 h-3.5" />
+                {t.selectFolder}
+              </Button>
+            </div>
 
             {unifiedAssets.length > 0 && (
-              <span className="text-xs text-muted-foreground font-mono ml-1">
+              <span className="text-xs text-muted-foreground font-mono truncate w-full sm:w-auto text-center sm:text-start">
                 {(t.assetsCount || '{total} assets ({ready} ready, {queued} queued)')
                   .replace('{total}', String(unifiedAssets.length))
                   .replace('{ready}', String(completedCount))
@@ -913,65 +915,67 @@ export const StudioView: React.FC = () => {
           </div>
 
           {/* Queue Execution & Export Buttons */}
-          <div className="flex items-center gap-2 flex-wrap">
-            {/* Start / Pause / Resume Controls */}
-            {!isRunning && !isPaused && (
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end min-w-0">
+            <div className="grid grid-cols-2 sm:flex items-center gap-2 flex-1 sm:flex-initial min-w-0">
+              {/* Start / Pause / Resume Controls */}
+              {!isRunning && !isPaused && (
+                <Button
+                  size="sm"
+                  onClick={handleStartQueue}
+                  disabled={pendingCount === 0 || healthyKeys.length === 0}
+                  className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span className="truncate">{(t.startGeneration || 'Start Generation ({count})').replace('{count}', String(pendingCount))}</span>
+                </Button>
+              )}
+
+              {isRunning && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => batchQueueService.pause()}
+                  className="gap-1.5 text-xs w-full sm:w-auto justify-center"
+                >
+                  <Pause className="w-3.5 h-3.5" />
+                  <span>{t.pause}</span>
+                </Button>
+              )}
+
+              {isPaused && (
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    const finalFreepikModel =
+                      freepikModel === 'Other' ? customFreepikModel.trim() || 'Google Nano Banana' : freepikModel;
+                    batchQueueService.resume(isAiGenerated, '', finalFreepikModel);
+                  }}
+                  className="gap-1.5 text-xs w-full sm:w-auto justify-center"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>{t.resume}</span>
+                </Button>
+              )}
+
+              {/* Export All CSVs (.ZIP) */}
               <Button
                 size="sm"
-                onClick={handleStartQueue}
-                disabled={pendingCount === 0 || healthyKeys.length === 0}
-                className="gap-1.5 text-xs font-semibold"
+                variant="default"
+                onClick={() => setIsExportOpen(true)}
+                disabled={completedCount === 0}
+                className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center"
               >
-                <Play className="w-3.5 h-3.5 fill-current" />
-                {(t.startGeneration || 'Start Generation ({count})').replace('{count}', String(pendingCount))}
+                <Download className="w-3.5 h-3.5" />
+                <span className="truncate">{(t.exportCsvs || 'Export CSVs ({count})').replace('{count}', String(completedCount))}</span>
               </Button>
-            )}
-
-            {isRunning && (
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => batchQueueService.pause()}
-                className="gap-1.5 text-xs"
-              >
-                <Pause className="w-3.5 h-3.5" />
-                {t.pause}
-              </Button>
-            )}
-
-            {isPaused && (
-              <Button
-                size="sm"
-                onClick={() => {
-                  const finalFreepikModel =
-                    freepikModel === 'Other' ? customFreepikModel.trim() || 'Google Nano Banana' : freepikModel;
-                  batchQueueService.resume(isAiGenerated, '', finalFreepikModel);
-                }}
-                className="gap-1.5 text-xs"
-              >
-                <Play className="w-3.5 h-3.5 fill-current" />
-                {t.resume}
-              </Button>
-            )}
-
-            {/* Export All CSVs (.ZIP) */}
-            <Button
-              size="sm"
-              variant="default"
-              onClick={() => setIsExportOpen(true)}
-              disabled={completedCount === 0}
-              className="gap-1.5 text-xs font-semibold"
-            >
-              <Download className="w-3.5 h-3.5" />
-              {(t.exportCsvs || 'Export CSVs ({count})').replace('{count}', String(completedCount))}
-            </Button>
+            </div>
 
             {unifiedAssets.length > 0 && (
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={() => setClearAllConfirmOpen(true)}
-                className="h-8 w-8 text-muted-foreground hover:text-destructive cursor-pointer"
+                className="h-8 w-8 text-muted-foreground hover:text-destructive cursor-pointer shrink-0"
                 title={t.clearAll}
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -1091,30 +1095,30 @@ export const StudioView: React.FC = () => {
           /* Populated State: Full-Width Unified Data Grid Table */
           <div className="space-y-3">
             {/* Search Filter Bar & Optional Context Hint */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2 flex-1">
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-2" />
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs w-full min-w-0">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 flex-1 w-full min-w-0">
+                <div className="relative w-full min-w-0">
+                  <Search className="w-3.5 h-3.5 text-muted-foreground absolute start-2.5 top-2 pointer-events-none" />
                   <Input
                     placeholder={t.searchAssetsPlaceholder}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="h-7.5 pl-8 w-full sm:w-64 text-xs"
+                    className="h-7.5 ps-8 pe-2.5 w-full text-xs min-w-0"
                   />
                 </div>
 
-                <div className="flex-1 max-w-md">
+                <div className="w-full min-w-0">
                   <Input
                     placeholder={t.contextHintPlaceholder}
                     value={userCustomPrompt}
                     onChange={(e) => setUserCustomPrompt(e.target.value)}
-                    className="h-7.5 text-xs bg-secondary/30 border-border"
+                    className="h-7.5 text-xs bg-secondary/30 border-border w-full min-w-0"
                     title="This hint will be appended to the AI vision prompt for all assets in this session"
                   />
                 </div>
               </div>
 
-              <span className="text-muted-foreground text-xs font-mono">
+              <span className="text-muted-foreground text-xs font-mono shrink-0">
                 {(t.assetsShown || '{count} assets shown').replace('{count}', String(filteredAssets.length))}
               </span>
             </div>

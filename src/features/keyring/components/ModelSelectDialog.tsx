@@ -114,7 +114,7 @@ export const ModelSelectDialog: React.FC<Props> = ({ keyRecord, open, onClose, o
             <SelectTrigger className="w-full h-8 text-xs font-mono bg-card">
               <SelectValue placeholder="Select a model" />
             </SelectTrigger>
-            <SelectContent className="max-h-72">
+            <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60">
               <SelectGroup>
                 <SelectLabel>⭐ Recommended Vision Models</SelectLabel>
                 {providerMeta.recommendedVisionModels.map((m) => (

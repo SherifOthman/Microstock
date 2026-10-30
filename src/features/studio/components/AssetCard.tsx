@@ -199,11 +199,11 @@ export const AssetCard: React.FC<AssetCardProps> = ({
       : null;
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-4 sm:p-5 shadow-xs transition hover:border-border/80 flex flex-col md:flex-row gap-5 items-start">
+    <div className="rounded-2xl border border-border bg-card p-3 sm:p-5 shadow-xs transition hover:border-border/80 flex flex-col lg:flex-row gap-5 items-start min-w-0 w-full overflow-hidden">
       {/* ======================================================== */}
       {/* LEFT COLUMN: Thumbnail, Meta, Status, Live Model Tracker */}
       {/* ======================================================== */}
-      <div className="w-full md:w-56 shrink-0 flex flex-col gap-2.5">
+      <div className="w-full lg:w-56 shrink-0 flex flex-col gap-2.5 min-w-0">
         {/* Thumbnail with sleek subtle delete button pinned top-right */}
         <div className="relative rounded-xl overflow-hidden border border-border bg-muted/30 aspect-4/3 flex items-center justify-center group">
           {asset.thumbnailUrl ? (
@@ -256,7 +256,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
 
         {/* Filename & Dual Size Display: Original vs Compressed AI Payload */}
         <div className="space-y-1.5">
-          <p className="text-xs font-semibold text-foreground truncate" title={asset.filename}>
+          <p className="text-xs font-semibold text-foreground truncate max-w-full block" title={asset.filename}>
             {asset.filename}
           </p>
 
@@ -405,7 +405,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
       {/* ======================================================== */}
       {/* RIGHT COLUMN: Interactive Form Fields & Keywords List    */}
       {/* ======================================================== */}
-      <div className="flex-1 w-full min-w-0 space-y-3.5">
+      <div className="flex-1 w-full min-w-0 space-y-3.5 overflow-hidden">
         {/* Title Field with Copy & Character Counter */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
@@ -668,7 +668,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
 
         {/* Category Mapping Preview Footer */}
         {rec && (
-          <div dir="ltr" className="flex flex-wrap items-center gap-2 pt-2 border-t border-border/60 text-xs text-left">
+          <div dir="ltr" className="flex flex-wrap items-center gap-2 pt-2 border-t border-border/60 text-xs text-left w-full min-w-0">
             <div className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px] shrink-0">
               <Layers className="w-3.5 h-3.5 text-primary shrink-0" />
               <span>{t.categories || 'Categories:'}</span>
