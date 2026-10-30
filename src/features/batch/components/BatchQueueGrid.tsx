@@ -54,8 +54,9 @@ export const BatchQueueGrid: React.FC<Props> = ({ items, onRemoveItem, disabled 
               {/* Status Badge Over Image */}
               <div className="absolute top-1.5 left-1.5 z-10">
                 {isProcessing && (
-                  <Badge variant="default" className="gap-1 text-[10px] py-0 px-1.5">
-                    <Flame className="w-2.5 h-2.5" /> Analyzing
+                  <Badge variant="default" className="gap-1 text-[10px] py-0 px-1.5" title={item.assignedProvider && item.assignedModel ? `Using ${item.assignedProvider} / ${item.assignedModel}` : 'Analyzing image with AI vision'}>
+                    <Flame className="w-2.5 h-2.5" />
+                    <span className="font-mono">{item.assignedProvider || 'Analyzing'}</span>
                   </Badge>
                 )}
                 {isCompleted && (
@@ -117,6 +118,26 @@ export const BatchQueueGrid: React.FC<Props> = ({ items, onRemoveItem, disabled 
                 <p className="text-[10px] text-muted-foreground/60 italic truncate">
                   {item.error || 'Awaiting analysis'}
                 </p>
+              )}
+
+              {/* Failover Trail (NEW) */}
+              {item.attemptHistory && item.attemptHistory.length > 1 && (
+                <div className="text-[9px] font-mono text-amber-500/90 flex items-center gap-0.5 flex-wrap mt-1 pt-1 border-t border-border/30">
+                  <span className="text-muted-foreground text-[8px] uppercase tracking-wide">Trail:</span>
+                  {item.attemptHistory.map((att, idx) => (
+                    <React.Fragment key={idx}>
+                      {idx > 0 && <span className="text-muted-foreground/60">→</span>}
+                      <span 
+                        className={att.status === 'success' ? 'text-emerald-400 font-semibold' : 'text-red-400'}
+                        title={att.error || `${att.provider} / ${att.model}`}
+                      >
+                        {att.provider}
+                        {att.status === 'failed' && ' ✗'}
+                        {att.status === 'success' && ' ✓'}
+                      </span>
+                    </React.Fragment>
+                  ))}
+                </div>
               )}
             </div>
           </div>

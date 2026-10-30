@@ -124,10 +124,11 @@ export const PriorityCascadeCard: React.FC<Props> = ({
     });
     onSettingsUpdate(updated);
 
+    // FIXED: Await all key updates in parallel before refreshing
     const matchingKeys = keys.filter((k) => k.providerId === provider);
-    for (const k of matchingKeys) {
-      await updateApiKey(k.id, { modelId });
-    }
+    await Promise.all(
+      matchingKeys.map((k) => updateApiKey(k.id, { modelId }))
+    );
     await keyRingScheduler.refreshKeys();
   };
 

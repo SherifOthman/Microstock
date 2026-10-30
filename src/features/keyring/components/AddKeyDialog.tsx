@@ -144,9 +144,10 @@ export const AddKeyDialog: React.FC<Props> = ({
         return;
       }
 
+      // FIXED: Increased debounce from 500ms to 1000ms to reduce API spam
       const timer = setTimeout(() => {
         tryFetchLiveModels(rawLines[0]);
-      }, 500);
+      }, 1000);
       return () => clearTimeout(timer);
     }
   }, [inputKeysText, providerId]);
@@ -215,14 +216,38 @@ export const AddKeyDialog: React.FC<Props> = ({
     }
     setCfError(null);
 
+    // FIXED: Check for duplicate keys before testing
+    const existingKeySet = new Set(keysList.map((k) => k.key));
+    const duplicates: string[] = [];
+    const newLines = lines.filter((line) => {
+      const key = providerId === 'cloudflare' && !line.includes(':') 
+        ? `${cfAccountId.trim()}:${line.trim()}` 
+        : line;
+      
+      if (existingKeySet.has(key)) {
+        duplicates.push(key.slice(0, 12) + '...');
+        return false;
+      }
+      return true;
+    });
+
+    if (newLines.length === 0) {
+      alert(`All ${lines.length} key(s) are already registered:\n${duplicates.join('\n')}`);
+      return;
+    }
+
+    if (duplicates.length > 0) {
+      console.warn(`Skipped ${duplicates.length} duplicate key(s):`, duplicates);
+    }
+
     setIsProcessing(true);
     const adapter = getProviderAdapter(providerId);
     const newEntries: KeyEntry[] = [];
     const newSavedRecords: ApiKeyRecord[] = [];
     const baseNow = Date.now();
 
-    for (let i = 0; i < lines.length; i++) {
-      let rawKey = lines[i];
+    for (let i = 0; i < newLines.length; i++) {
+      let rawKey = newLines[i];
       if (providerId === 'cloudflare' && !rawKey.includes(':') && cfAccountId.trim()) {
         rawKey = `${cfAccountId.trim()}:${rawKey.trim()}`;
       }
@@ -375,8 +400,11 @@ export const AddKeyDialog: React.FC<Props> = ({
     .sort((a, b) => a.createdAt - b.createdAt);
 
   const handleTestAllKeys = async () => {
-    for (const item of currentProviderKeys) {
-      await handleTestSingleKey(item.id);
+    // FIXED: Test in parallel batches of 3 keys at a time
+    const batchSize = 3;
+    for (let i = 0; i < currentProviderKeys.length; i += batchSize) {
+      const batch = currentProviderKeys.slice(i, i + batchSize);
+      await Promise.all(batch.map((item) => handleTestSingleKey(item.id)));
     }
   };
 

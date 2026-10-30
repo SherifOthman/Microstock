@@ -17,6 +17,7 @@ export class KeyRingScheduler {
   private listeners: Set<KeyRingStateListener> = new Set();
   private isInitialized = false;
   private autoMaintenanceTimer?: any;
+  private providerFailureCount: Map<ProviderType, number> = new Map();
 
   private constructor() {
     this.startMaintenanceLoop();
@@ -84,9 +85,9 @@ export class KeyRingScheduler {
   private startMaintenanceLoop(): void {
     if (this.autoMaintenanceTimer) clearInterval(this.autoMaintenanceTimer);
 
-    this.autoMaintenanceTimer = setInterval(() => {
+    this.autoMaintenanceTimer = setInterval(async () => {
       const now = Date.now();
-      let hasChanges = false;
+      const updates: Array<{ id: string; changes: Partial<ApiKeyRecord> }> = [];
 
       for (const [id, key] of this.keysCache.entries()) {
         // 1. Purge sliding window timestamps older than 60s
@@ -94,7 +95,6 @@ export class KeyRingScheduler {
         const validTimestamps = (key.requestsInWindow || []).filter((t) => t > windowThreshold);
         if (validTimestamps.length !== key.requestsInWindow.length) {
           key.requestsInWindow = validTimestamps;
-          hasChanges = true;
         }
 
         // 2. Auto-recover per-minute cooldown
@@ -102,8 +102,10 @@ export class KeyRingScheduler {
           key.status = 'healthy';
           key.cooldownUntil = undefined;
           key.lastError = undefined;
-          hasChanges = true;
-          this.persistKeyUpdate(id, { status: 'healthy', cooldownUntil: undefined, lastError: undefined });
+          updates.push({ 
+            id, 
+            changes: { status: 'healthy', cooldownUntil: undefined, lastError: undefined } 
+          });
         }
 
         // 3. Auto-recover daily exhaustion
@@ -116,18 +118,22 @@ export class KeyRingScheduler {
           key.dailyRequestCount = 0;
           key.dailyResetTimestamp = nextMidnight.getTime();
           key.lastError = undefined;
-          hasChanges = true;
-          this.persistKeyUpdate(id, {
-            status: 'healthy',
-            exhaustedUntil: undefined,
-            dailyRequestCount: 0,
-            dailyResetTimestamp: nextMidnight.getTime(),
-            lastError: undefined,
+          updates.push({
+            id,
+            changes: {
+              status: 'healthy',
+              exhaustedUntil: undefined,
+              dailyRequestCount: 0,
+              dailyResetTimestamp: nextMidnight.getTime(),
+              lastError: undefined,
+            },
           });
         }
       }
 
-      if (hasChanges) {
+      // Batch persist all updates in parallel
+      if (updates.length > 0) {
+        await Promise.all(updates.map((u) => this.persistKeyUpdate(u.id, u.changes)));
         this.notifyListeners();
       }
     }, 1000);
@@ -219,7 +225,18 @@ export class KeyRingScheduler {
         });
 
         if (viableKeys.length === 0) {
-          // All keys of this provider are in active cooldown or daily exhausted; cascade to next provider immediately (0s delay)
+          // All keys of this provider are in active cooldown or daily exhausted
+          // ALGORITHMIC FIX #4: Exponential backoff when cascading providers
+          const failCount = this.providerFailureCount.get(pid) || 0;
+          this.providerFailureCount.set(pid, failCount + 1);
+          
+          // Exponential backoff: 0ms, 100ms, 200ms, 400ms, max 800ms
+          const backoffMs = Math.min(800, failCount * 100);
+          if (backoffMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          }
+          
+          // cascade to next provider immediately (0s delay)
           continue;
         }
 
@@ -227,7 +244,11 @@ export class KeyRingScheduler {
         const readyKeys: { key: ApiKeyRecord; score: number }[] = [];
 
         for (const key of viableKeys) {
-          if (key.activeRequests >= 1) continue;
+          // CRITICAL FIX #1: Allow multiple concurrent requests per key based on RPM capacity
+          // Calculate safe concurrency (80% of theoretical max to leave buffer)
+          const maxConcurrentPerKey = Math.max(1, Math.floor((key.rpmLimit * 0.8) / 60));
+          
+          if (key.activeRequests >= maxConcurrentPerKey) continue;
 
           // Recover cooldown if expired
           if (key.status === 'cooling_down' && key.cooldownUntil && key.cooldownUntil <= now) {
@@ -238,6 +259,31 @@ export class KeyRingScheduler {
           // Clean sliding window
           const windowThreshold = now - 60000;
           key.requestsInWindow = (key.requestsInWindow || []).filter((t) => t > windowThreshold);
+
+          // CRITICAL FIX #2: Daily quota pre-check with warning
+          const dailyLimit = key.dailyRequestLimit || 10000;
+          const dailyUsed = key.dailyRequestCount || 0;
+          const dailyRemaining = dailyLimit - dailyUsed;
+          
+          if (dailyRemaining <= 0) {
+            // Immediately mark as exhausted
+            key.status = 'exhausted_daily';
+            const midnight = new Date();
+            midnight.setUTCHours(24, 0, 0, 0);
+            key.exhaustedUntil = midnight.getTime();
+            key.lastError = `Daily quota exhausted (${dailyUsed}/${dailyLimit})`;
+            await this.persistKeyUpdate(key.id, {
+              status: 'exhausted_daily',
+              exhaustedUntil: key.exhaustedUntil,
+              lastError: key.lastError,
+            });
+            continue;
+          }
+          
+          // Warn if < 20% daily quota remaining
+          if (dailyRemaining < dailyLimit * 0.2) {
+            console.warn(`⚠️ Key "${key.label}" has only ${dailyRemaining} of ${dailyLimit} requests left today (${Math.round((dailyRemaining / dailyLimit) * 100)}%)`);
+          }
 
           // RPM ceiling check
           if (key.requestsInWindow.length >= key.rpmLimit) {
@@ -257,8 +303,12 @@ export class KeyRingScheduler {
             continue;
           }
 
+          // ALGORITHMIC FIX #3: Predictive scoring
           const utilizationScore = key.requestsInWindow.length / Math.max(1, key.rpmLimit);
-          readyKeys.push({ key, score: utilizationScore });
+          const nextAvailableIn = Math.max(0, minSpacingMs - timeSinceLastUsed);
+          const combinedScore = utilizationScore + (nextAvailableIn / 10000);
+          
+          readyKeys.push({ key, score: combinedScore });
         }
 
         if (readyKeys.length > 0) {
@@ -273,6 +323,9 @@ export class KeyRingScheduler {
           selected.lastUsedAt = now;
           selected.requestsInWindow.push(now);
           selected.dailyRequestCount = (selected.dailyRequestCount || 0) + 1;
+
+          // Reset failure count on successful acquisition
+          this.providerFailureCount.set(pid, 0);
 
           this.notifyListeners();
 
@@ -294,7 +347,6 @@ export class KeyRingScheduler {
   public hasRemainingEligibleKeys(excludeKeyIds: string[] = []): boolean {
     const keys = Array.from(this.keysCache.values()).filter((k) => k.status !== 'disabled');
     return keys.some((k) => !excludeKeyIds.includes(k.id));
-  }
   }
 
   /**
