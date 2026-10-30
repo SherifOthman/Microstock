@@ -13,6 +13,9 @@ export interface QueueItem {
   mediaType?: MediaType;
   videoDurationSeconds?: number;
   videoResolution?: string;
+  hasAudio?: boolean;
+  isMuted?: boolean;
+  mutedFile?: File;
   thumbnailBase64?: string;
   thumbnailDataUrl?: string;
   status: 'pending' | 'resizing' | 'ready' | 'processing' | 'completed' | 'error';
@@ -138,6 +141,7 @@ export class BatchQueueService {
           item.mediaType = media.mediaType;
           item.videoDurationSeconds = media.videoDurationSeconds;
           item.videoResolution = media.videoResolution;
+          item.hasAudio = media.hasAudio;
           item.status = 'ready';
 
           // Persist draft in Dexie IndexedDB so refresh never removes the asset
@@ -488,6 +492,17 @@ export class BatchQueueService {
       this.items.set(id, queueItem);
       this.notify();
       this.start(isAiGenerated, userPrompt, defaultModelName, keywordPhrasing, titleLengthPreset);
+    }
+  }
+
+  public markItemMuted(id: string, mutedFile: File): void {
+    const item = this.items.get(id);
+    if (item) {
+      item.isMuted = true;
+      item.hasAudio = false;
+      item.file = mutedFile;
+      item.mutedFile = mutedFile;
+      this.notify();
     }
   }
 

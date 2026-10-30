@@ -27,6 +27,8 @@ import {
   RefreshCw,
   Tag,
   Trash2,
+  Volume2,
+  VolumeX,
   X,
   Zap,
 } from 'lucide-react';
@@ -52,6 +54,9 @@ export interface AssetCardProps {
   onCopyAll: (rec: MasterMetadataRecord) => void;
   onDelete: (id: string, filename: string) => void;
   onRegenerate: (id: string) => void;
+  onOpenLightbox?: (assetId: string) => void;
+  onMuteSingleVideo?: (assetId: string) => void;
+  isMuting?: boolean;
 }
 
 export const AssetCard: React.FC<AssetCardProps> = ({
@@ -63,8 +68,11 @@ export const AssetCard: React.FC<AssetCardProps> = ({
   onCopyAll,
   onDelete,
   onRegenerate,
+  onOpenLightbox,
+  onMuteSingleVideo,
+  isMuting = false,
 }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [localTitle, setLocalTitle] = useState(rec?.baseTitle || '');
   const [localDesc, setLocalDesc] = useState(rec?.detailedDescription || '');
   const [isEditingKws, setIsEditingKws] = useState(false);
@@ -73,7 +81,8 @@ export const AssetCard: React.FC<AssetCardProps> = ({
   const [newTagInput, setNewTagInput] = useState('');
   const [draggedKwIndex, setDraggedKwIndex] = useState<number | null>(null);
   const [dragOverKwIndex, setDragOverKwIndex] = useState<number | null>(null);
-  const [isImageModalOpen, setIsImageModalOpen] = useState(false);
+  const [isHoverPlaying, setIsHoverPlaying] = useState(false);
+  const [hoverVideoUrl, setHoverVideoUrl] = useState<string | null>(null);
   const [isTagsExpanded, setIsTagsExpanded] = useState(false);
   const [isDescExpanded, setIsDescExpanded] = useState(false);
 
@@ -223,14 +232,37 @@ export const AssetCard: React.FC<AssetCardProps> = ({
         {/* ======================================================== */}
         {isCompact && (
           <div className="flex items-center justify-between gap-3 w-full min-w-0 pb-2.5 border-b border-border/60">
-            {/* Small Rounded Thumbnail (Click to open full preview dialog) */}
+            {/* Small Rounded Thumbnail (Click to open full Lightbox) */}
             <button
               type="button"
-              onClick={() => setIsImageModalOpen(true)}
+              onClick={() => onOpenLightbox ? onOpenLightbox(asset.id) : null}
+              onMouseEnter={() => {
+                if ((rec?.mediaType === 'video' || asset.queueItem?.mediaType === 'video') && asset.queueItem?.file) {
+                  const url = URL.createObjectURL(asset.queueItem.file);
+                  setHoverVideoUrl(url);
+                  setIsHoverPlaying(true);
+                }
+              }}
+              onMouseLeave={() => {
+                setIsHoverPlaying(false);
+                if (hoverVideoUrl) {
+                  URL.revokeObjectURL(hoverVideoUrl);
+                  setHoverVideoUrl(null);
+                }
+              }}
               className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-xl overflow-hidden border border-border bg-muted/30 shrink-0 group cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-ring"
-              title="Click to view full image"
+              title="Click to view in Full-Screen Lightbox"
             >
-              {asset.thumbnailUrl ? (
+              {isHoverPlaying && hoverVideoUrl ? (
+                <video
+                  src={hoverVideoUrl}
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                  className="w-full h-full object-cover"
+                />
+              ) : asset.thumbnailUrl ? (
                 <img
                   src={asset.thumbnailUrl}
                   alt={asset.filename}
@@ -244,7 +276,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
               </div>
             </button>
 
-            {/* Info Column (Filename, Status Badge, Provider + Latency) */}
+            {/* Info Column (Filename, Status Badge, Provider + Latency, Inline Audio Mute) */}
             <div className="flex-1 min-w-0 space-y-1">
               <div className="flex items-center gap-1.5 min-w-0">
                 <span
@@ -253,6 +285,27 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 >
                   {asset.filename}
                 </span>
+
+                {/* Inline Audio Muting in Compact Mode */}
+                {(rec?.mediaType === 'video' || asset.queueItem?.mediaType === 'video') && asset.queueItem?.hasAudio && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onMuteSingleVideo && onMuteSingleVideo(asset.id)}
+                    disabled={isMuting}
+                    className="h-5 px-1.5 text-[9px] gap-1 font-semibold text-amber-500 border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 shrink-0"
+                    title="Audio detected - Click to strip audio track"
+                  >
+                    <Volume2 className="w-2.5 h-2.5" />
+                    <span>{language === 'ar' ? 'كتم الصوت' : 'Mute'}</span>
+                  </Button>
+                )}
+                {asset.queueItem?.isMuted && (
+                  <Badge variant="outline" className="h-5 px-1.5 text-[9px] gap-1 text-emerald-500 border-emerald-500/30 bg-emerald-500/10 font-mono">
+                    <VolumeX className="w-2.5 h-2.5" />
+                    <span>{language === 'ar' ? 'صامت' : 'Silent'}</span>
+                  </Badge>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-1.5 text-xs">
@@ -350,9 +403,36 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             isCompact ? 'hidden' : 'flex'
           }`}
         >
-          {/* Thumbnail with sleek subtle delete button pinned top-right */}
-          <div className="relative rounded-xl overflow-hidden border border-border bg-muted/30 aspect-4/3 flex items-center justify-center group">
-            {asset.thumbnailUrl ? (
+          {/* Thumbnail with sleek subtle delete button pinned top-right and Hover-to-Play Video */}
+          <div
+            onClick={() => onOpenLightbox && onOpenLightbox(asset.id)}
+            onMouseEnter={() => {
+              if ((rec?.mediaType === 'video' || asset.queueItem?.mediaType === 'video') && asset.queueItem?.file) {
+                const url = URL.createObjectURL(asset.queueItem.file);
+                setHoverVideoUrl(url);
+                setIsHoverPlaying(true);
+              }
+            }}
+            onMouseLeave={() => {
+              setIsHoverPlaying(false);
+              if (hoverVideoUrl) {
+                URL.revokeObjectURL(hoverVideoUrl);
+                setHoverVideoUrl(null);
+              }
+            }}
+            className="relative rounded-xl overflow-hidden border border-border bg-muted/30 aspect-4/3 flex items-center justify-center group cursor-pointer"
+            title="Click to view in Full-Screen Lightbox"
+          >
+            {isHoverPlaying && hoverVideoUrl ? (
+              <video
+                src={hoverVideoUrl}
+                autoPlay
+                muted
+                loop
+                playsInline
+                className="w-full h-full object-cover"
+              />
+            ) : asset.thumbnailUrl ? (
               <img
                 src={asset.thumbnailUrl}
                 alt={asset.filename}
@@ -361,6 +441,11 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             ) : (
               <ImageIcon className="w-10 h-10 text-muted-foreground/40" />
             )}
+
+            {/* Hover overlay hint */}
+            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
+              <Maximize2 className="w-5 h-5 text-white drop-shadow" />
+            </div>
 
             {/* Media Type & Video Duration Badge */}
             {rec?.mediaType === 'video' || asset.queueItem?.mediaType === 'video' ? (
@@ -392,13 +477,40 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             {/* Subtle delete icon button */}
             <button
               type="button"
-              onClick={() => onDelete(asset.id, asset.filename)}
-              className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-background/80 hover:bg-destructive hover:text-destructive-foreground text-foreground border border-border/80 flex items-center justify-center shadow-xs transition cursor-pointer"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(asset.id, asset.filename);
+              }}
+              className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-background/80 hover:bg-destructive hover:text-destructive-foreground text-foreground border border-border/80 flex items-center justify-center shadow-xs transition cursor-pointer z-10"
               title={t.deleteAsset}
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
           </div>
+
+          {/* Inline Video Audio Action Button (Detailed Mode) */}
+          {(rec?.mediaType === 'video' || asset.queueItem?.mediaType === 'video') && (
+            <div className="w-full">
+              {asset.queueItem?.hasAudio ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onMuteSingleVideo && onMuteSingleVideo(asset.id)}
+                  disabled={isMuting}
+                  className="w-full h-7 px-2 text-[11px] gap-1.5 font-semibold text-amber-500 border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 cursor-pointer"
+                  title="Audio track detected in video file. Click to strip audio losslessly."
+                >
+                  {isMuting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Volume2 className="w-3 h-3" />}
+                  <span>{language === 'ar' ? '🔊 يوجد صوت — اضغط لكتمه' : '🔊 Audio Detected — Click to Mute'}</span>
+                </Button>
+              ) : asset.queueItem?.isMuted ? (
+                <div className="w-full py-1 px-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 text-[10px] font-mono text-center flex items-center justify-center gap-1">
+                  <VolumeX className="w-3 h-3" />
+                  <span>{language === 'ar' ? '🔇 صامت جاهز (Silent Ready)' : '🔇 Silent Ready'}</span>
+                </div>
+              ) : null}
+            </div>
+          )}
 
           {/* Filename & Dual Size Display: Original vs Compressed AI Payload */}
           <div className="space-y-1.5">
@@ -933,26 +1045,6 @@ export const AssetCard: React.FC<AssetCardProps> = ({
         )}
       </div>
     </div>
-
-    {/* Full-size Image Preview Dialog */}
-    <Dialog open={isImageModalOpen} onClose={() => setIsImageModalOpen(false)} className="max-w-3xl p-0 overflow-hidden">
-      <div className="p-2 sm:p-4 bg-card flex flex-col items-center">
-        <div className="w-full flex items-center justify-between pb-2 border-b border-border/60">
-          <span className="text-xs font-semibold truncate text-foreground">{asset.filename}</span>
-        </div>
-        <div className="mt-3 max-h-[75vh] flex items-center justify-center overflow-hidden rounded-xl bg-black/40">
-          {asset.thumbnailUrl ? (
-            <img
-              src={asset.thumbnailUrl}
-              alt={asset.filename}
-              className="max-h-[75vh] w-auto max-w-full object-contain rounded-lg"
-            />
-          ) : (
-            <ImageIcon className="w-16 h-16 text-muted-foreground/40" />
-          )}
-        </div>
-      </div>
-    </Dialog>
   </>
   );
 };

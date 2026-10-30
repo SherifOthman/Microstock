@@ -1,4 +1,7 @@
 import { MediaType } from '../types';
+import { rasterizeEpsFile } from '../services/eps/epsEngine';
+import { extractVideoStoryboard } from '../services/video/videoFrameExtractor';
+import { inspectVideoAudioTrack } from '../services/video/videoMuterEngine';
 
 export interface ExtractedMediaInfo {
   mediaType: MediaType;
@@ -8,6 +11,7 @@ export interface ExtractedMediaInfo {
   compressedSizeBytes: number;
   videoDurationSeconds?: number;
   videoResolution?: string;
+  hasAudio?: boolean;
   width?: number;
   height?: number;
 }
@@ -84,13 +88,39 @@ export async function processImageFile(
 }
 
 /**
- * Extracts a video snapshot frame at 15-20% timestamp, duration, and resolution
+ * Extracts a video snapshot frame at 15-20% timestamp, duration, resolution,
+ * and 2x2 multi-frame storyboard for Vision AI
  */
 export async function processVideoFile(
   file: File,
   maxDim = 512,
   quality = 0.75
 ): Promise<ExtractedMediaInfo> {
+  // First try 2x2 frame extractor
+  try {
+    const storyboard = await extractVideoStoryboard(file, 768, 432, quality);
+    // Also inspect audio presence
+    const audioInfo = await inspectVideoAudioTrack(file);
+
+    return {
+      mediaType: 'video',
+      // For Vision API analysis: we pass the 2x2 storyboard image!
+      thumbnailBase64: storyboard.storyboardBase64,
+      // For UI card display: we use the representative frame
+      thumbnailDataUrl: storyboard.thumbnailDataUrl,
+      originalSizeBytes: file.size,
+      compressedSizeBytes: Math.round((storyboard.storyboardBase64.length * 3) / 4),
+      videoDurationSeconds: storyboard.durationSeconds,
+      videoResolution: storyboard.resolutionLabel,
+      hasAudio: audioInfo.hasAudio,
+      width: storyboard.width,
+      height: storyboard.height,
+    };
+  } catch (storyboardErr) {
+    console.warn('Storyboard extraction fallback:', storyboardErr);
+  }
+
+  // Fallback to single frame snapshot
   return new Promise((resolve, reject) => {
     const video = document.createElement('video');
     video.preload = 'metadata';
@@ -103,12 +133,11 @@ export async function processVideoFile(
     let seeked = false;
 
     video.onloadedmetadata = () => {
-      // Seek to 1.5 seconds or 20% of duration to get a representative content frame (avoiding black first frame)
       const targetTime = Math.min(Math.max(video.duration * 0.2, 1.0), Math.max(video.duration - 0.5, 0.1));
       video.currentTime = targetTime;
     };
 
-    video.onseeked = () => {
+    video.onseeked = async () => {
       if (seeked) return;
       seeked = true;
 
@@ -143,17 +172,14 @@ export async function processVideoFile(
         const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
         const compressedSizeBytes = Math.round((base64.length * 3) / 4);
 
-        // Calculate resolution label (e.g. 4K UHD, 1080p FHD, etc.)
         let resLabel = `${vWidth}x${vHeight}`;
-        if (vWidth >= 3840 || vHeight >= 2160) {
-          resLabel = '4K UHD';
-        } else if (vWidth >= 1920 || vHeight >= 1080) {
-          resLabel = '1080p FHD';
-        } else if (vWidth >= 1280 || vHeight >= 720) {
-          resLabel = '720p HD';
-        }
+        if (vWidth >= 3840 || vHeight >= 2160) resLabel = '4K UHD';
+        else if (vWidth >= 1920 || vHeight >= 1080) resLabel = '1080p FHD';
+        else if (vWidth >= 1280 || vHeight >= 720) resLabel = '720p HD';
 
         URL.revokeObjectURL(objectUrl);
+
+        const audioInfo = await inspectVideoAudioTrack(file);
 
         resolve({
           mediaType: 'video',
@@ -163,6 +189,7 @@ export async function processVideoFile(
           compressedSizeBytes,
           videoDurationSeconds: Math.round(video.duration || 0),
           videoResolution: resLabel,
+          hasAudio: audioInfo.hasAudio,
           width: vWidth,
           height: vHeight,
         });
@@ -177,7 +204,6 @@ export async function processVideoFile(
       reject(new Error(`Failed to decode video "${file.name}"`));
     };
 
-    // Timeout safety fallback (5 seconds)
     setTimeout(() => {
       if (!seeked) {
         URL.revokeObjectURL(objectUrl);
@@ -188,7 +214,7 @@ export async function processVideoFile(
 }
 
 /**
- * Handles EPS / Vector files with custom placeholder badge or embedded SVG
+ * Handles EPS / Vector files with PostScript Level 2/3 vector rasterizer
  */
 export async function processVectorFile(
   file: File,
@@ -203,6 +229,22 @@ export async function processVectorFile(
       mediaType: 'vector',
       originalSizeBytes: file.size,
     };
+  }
+
+  // Use the True Multi-Tier EPS 10 Rasterizer Engine!
+  try {
+    const epsResult = await rasterizeEpsFile(file, maxDim, quality);
+    return {
+      mediaType: 'vector',
+      thumbnailBase64: epsResult.dataUrl.replace(/^data:image\/jpeg;base64,/, ''),
+      thumbnailDataUrl: epsResult.dataUrl,
+      originalSizeBytes: file.size,
+      compressedSizeBytes: Math.round((epsResult.dataUrl.length * 3) / 4),
+      width: epsResult.width,
+      height: epsResult.height,
+    };
+  } catch (err) {
+    console.warn('EPS rasterization fallback:', err);
   }
 
   // Draw clean vector asset placeholder canvas
@@ -220,23 +262,6 @@ export async function processVectorFile(
   grad.addColorStop(1, '#09090b');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, maxDim, maxDim);
-
-  // Grid pattern
-  ctx.strokeStyle = '#27272a';
-  ctx.lineWidth = 1;
-  const step = 32;
-  for (let x = 0; x < maxDim; x += step) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, maxDim);
-    ctx.stroke();
-  }
-  for (let y = 0; y < maxDim; y += step) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(maxDim, y);
-    ctx.stroke();
-  }
 
   // Vector Badge Center
   ctx.fillStyle = '#6366f1';

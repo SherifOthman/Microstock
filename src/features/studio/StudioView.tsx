@@ -34,6 +34,8 @@ import { MODEL_DISPLAY_NAMES } from '../../constants/providers';
 import { FREEPIK_BASE_MODELS } from '../../constants/categories';
 import { getPlatformLogo } from '../../components/icons/StockLogos';
 import { AssetCard, UnifiedAssetRow } from './components/AssetCard';
+import { MediaLightboxModal, LightboxAsset } from '../../components/MediaLightboxModal';
+import { stripAudioTrackLossless, saveMutedVideosToDirectory, VideoInspectionResult } from '../../services/video/videoMuterEngine';
 import { KeywordPhrasing } from '../../services/ai/metadataParser';
 import { useLanguage } from '../../context/LanguageContext';
 import {
@@ -51,10 +53,12 @@ import {
   Eye,
   FileCheck,
   FileText,
+  Film,
   FolderUp,
   Image as ImageIcon,
   Info,
   KeyRound,
+  Layers,
   LayoutGrid,
   LayoutList,
   Loader2,
@@ -71,13 +75,15 @@ import {
   Tag,
   Trash2,
   UploadCloud,
+  Volume2,
+  VolumeX,
   Wand2,
   X,
   Zap,
 } from 'lucide-react';
 
 export const StudioView: React.FC = () => {
-  const { t, isRtl } = useLanguage();
+  const { t, isRtl, language } = useLanguage();
   // Queue & Database States
   const [queueState, setQueueState] = useState<QueueState>(batchQueueService.getState());
   const liveRecords = useLiveQuery(() => db.masterRecords.toArray(), []) || [];
@@ -243,6 +249,12 @@ export const StudioView: React.FC = () => {
   // Quick Copy Feedback State (key = "id_field")
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [previewCopied, setPreviewCopied] = useState<boolean>(false);
+
+  // Lightbox & Media Filter States
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [mediaTypeFilter, setMediaTypeFilter] = useState<'all' | 'image' | 'video' | 'vector'>('all');
+  const [isMutingBatch, setIsMutingBatch] = useState<boolean>(false);
+  const [mutingAssetId, setMutingAssetId] = useState<string | null>(null);
 
   // Dialog & Confirmation States (replaces native alert/confirm)
   const [assetToDelete, setAssetToDelete] = useState<{ id: string; filename: string } | null>(null);
@@ -471,17 +483,129 @@ export const StudioView: React.FC = () => {
     return Array.from(rowMap.values());
   }, [queueState.items, queueState.status, records]);
 
-  // Filter unified assets by search query
+  // Detect coexistence of distinct media types
+  const mediaTypeCounts = useMemo(() => {
+    let images = 0;
+    let videos = 0;
+    let vectors = 0;
+
+    unifiedAssets.forEach((a) => {
+      const type = a.masterRecord?.mediaType || a.queueItem?.mediaType || 'image';
+      if (type === 'video') videos++;
+      else if (type === 'vector') vectors++;
+      else images++;
+    });
+
+    const distinctTypesCount = (images > 0 ? 1 : 0) + (videos > 0 ? 1 : 0) + (vectors > 0 ? 1 : 0);
+
+    return { images, videos, vectors, distinctTypesCount };
+  }, [unifiedAssets]);
+
+  // Video Audio status in batch
+  const videosWithAudio = useMemo(() => {
+    return unifiedAssets.filter((a) => {
+      const isVid = a.masterRecord?.mediaType === 'video' || a.queueItem?.mediaType === 'video';
+      return isVid && a.queueItem?.hasAudio && !a.queueItem?.isMuted;
+    });
+  }, [unifiedAssets]);
+
+  // Filter unified assets by search query AND conditional media type filter
   const filteredAssets = useMemo(() => {
-    if (!searchQuery.trim()) return unifiedAssets;
+    let list = unifiedAssets;
+
+    if (mediaTypeCounts.distinctTypesCount >= 2 && mediaTypeFilter !== 'all') {
+      list = list.filter((a) => {
+        const type = a.masterRecord?.mediaType || a.queueItem?.mediaType || 'image';
+        return type === mediaTypeFilter;
+      });
+    }
+
+    if (!searchQuery.trim()) return list;
     const q = searchQuery.toLowerCase();
-    return unifiedAssets.filter(
+    return list.filter(
       (a) =>
         a.filename.toLowerCase().includes(q) ||
         a.masterRecord?.baseTitle.toLowerCase().includes(q) ||
         a.masterRecord?.rankedKeywords.some((k) => k.toLowerCase().includes(q))
     );
-  }, [unifiedAssets, searchQuery]);
+  }, [unifiedAssets, searchQuery, mediaTypeFilter, mediaTypeCounts.distinctTypesCount]);
+
+  // Prepare assets for Lightbox Modal
+  const lightboxAssets: LightboxAsset[] = useMemo(() => {
+    return filteredAssets.map((a) => {
+      const type = a.masterRecord?.mediaType || a.queueItem?.mediaType || 'image';
+      return {
+        id: a.id,
+        filename: a.filename,
+        mediaType: type,
+        previewUrl: a.thumbnailUrl,
+        file: a.queueItem?.file,
+        originalSizeBytes: a.masterRecord?.fileSize || a.queueItem?.originalSizeBytes,
+        width: a.masterRecord?.videoMeta ? undefined : 2000,
+        height: a.masterRecord?.videoMeta ? undefined : 2000,
+        durationSeconds: a.masterRecord?.videoMeta?.durationSeconds || a.queueItem?.videoDurationSeconds,
+        resolution: a.masterRecord?.videoMeta?.resolution || a.queueItem?.videoResolution,
+        masterRecord: a.masterRecord,
+      };
+    });
+  }, [filteredAssets]);
+
+  const handleOpenLightbox = (assetId: string) => {
+    const idx = filteredAssets.findIndex((a) => a.id === assetId);
+    if (idx >= 0) {
+      setLightboxIndex(idx);
+    }
+  };
+
+  const handleMuteSingleVideo = async (assetId: string) => {
+    const asset = unifiedAssets.find((a) => a.id === assetId);
+    if (!asset || !asset.queueItem?.file) return;
+
+    setMutingAssetId(assetId);
+    try {
+      const mutedBlob = await stripAudioTrackLossless(asset.queueItem.file);
+      const cleanName = asset.filename.replace(/\.[^/.]+$/, '_muted.mp4');
+      const mutedFile = new File([mutedBlob], cleanName, { type: 'video/mp4' });
+      batchQueueService.markItemMuted(assetId, mutedFile);
+    } catch (err: any) {
+      setNoticeDialog({
+        title: 'Audio Mute Failed',
+        message: err.message || 'Could not strip audio track from video file',
+      });
+    } finally {
+      setMutingAssetId(null);
+    }
+  };
+
+  const handleMuteAllVideosInBatch = async () => {
+    if (videosWithAudio.length === 0) return;
+    setIsMutingBatch(true);
+
+    try {
+      for (const asset of videosWithAudio) {
+        if (asset.queueItem?.file) {
+          const mutedBlob = await stripAudioTrackLossless(asset.queueItem.file);
+          const cleanName = asset.filename.replace(/\.[^/.]+$/, '_muted.mp4');
+          const mutedFile = new File([mutedBlob], cleanName, { type: 'video/mp4' });
+          batchQueueService.markItemMuted(asset.id, mutedFile);
+        }
+      }
+      setNoticeDialog({
+        title: language === 'ar' ? 'تم كتم جميع الفيديوهات' : 'All Videos Muted',
+        message:
+          language === 'ar'
+            ? `تم حذف المسارات الصوتية بنجاح من ${videosWithAudio.length} فيديو دون إعادة ترميز!`
+            : `Successfully stripped audio tracks from ${videosWithAudio.length} videos without re-encoding!`,
+      });
+    } catch (err: any) {
+      setNoticeDialog({
+        title: 'Batch Audio Mute Error',
+        message: err.message || 'Error occurred while muting videos',
+      });
+    } finally {
+      setIsMutingBatch(false);
+    }
+  };
 
   // Counts
   const pendingCount = unifiedAssets.filter(
@@ -490,10 +614,19 @@ export const StudioView: React.FC = () => {
   const completedCount = unifiedAssets.filter((a) => a.status === 'completed').length;
 
   // Handlers
+  const isSupportedMediaFile = (file: File): boolean => {
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    return (
+      file.type.startsWith('image/') ||
+      file.type.startsWith('video/') ||
+      ['jpg', 'jpeg', 'png', 'webp', 'mp4', 'mov', 'webm', 'eps', 'ai'].includes(ext)
+    );
+  };
+
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'));
+    const files = Array.from(e.dataTransfer.files).filter(isSupportedMediaFile);
     if (files.length > 0) {
       await batchQueueService.addFiles(files);
     }
@@ -501,7 +634,7 @@ export const StudioView: React.FC = () => {
 
   const handleFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      const files = Array.from(e.target.files).filter((f) => f.type.startsWith('image/'));
+      const files = Array.from(e.target.files).filter(isSupportedMediaFile);
       await batchQueueService.addFiles(files);
       e.target.value = '';
     }
@@ -1476,6 +1609,115 @@ export const StudioView: React.FC = () => {
               </div>
             </div>
 
+            {/* Batch Video Audio Mute Banner */}
+            {videosWithAudio.length > 0 && (
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-300">
+                <div className="flex items-center gap-2.5">
+                  <Volume2 className="w-4 h-4 shrink-0 text-amber-400" />
+                  <div>
+                    <p className="text-xs font-semibold">
+                      {language === 'ar'
+                        ? `تم اكتشاف صوت في ${videosWithAudio.length} فيديو (وكالات الستوك تتطلب فيديوهات صامتة)`
+                        : `Audio detected in ${videosWithAudio.length} video${videosWithAudio.length > 1 ? 's' : ''} (stock agencies require silent footage)`}
+                    </p>
+                    <p className="text-[11px] text-amber-200/80">
+                      {language === 'ar'
+                        ? 'يمكنك كتم جميع المقاطع دفعة واحدة فائق السرعة وبدون أي إعادة ترميز أو فقدان للجودة.'
+                        : 'Lossless 1-click audio removal for microstock compliance without re-encoding.'}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={isMutingBatch}
+                  onClick={handleMuteAllVideosInBatch}
+                  className="h-8 gap-1.5 text-xs bg-amber-500 hover:bg-amber-600 text-black font-semibold shrink-0 cursor-pointer w-full sm:w-auto"
+                >
+                  {isMutingBatch ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <VolumeX className="w-3.5 h-3.5" />
+                  )}
+                  {language === 'ar' ? '🔇 كتم جميع الفيديوهات (نقرة واحدة)' : '🔇 Mute All Videos (1-Click)'}
+                </Button>
+              </div>
+            )}
+
+            {/* Conditional Media Filter Bar (Revealed ONLY when >= 2 distinct media types coexist) */}
+            {mediaTypeCounts.distinctTypesCount >= 2 && (
+              <div className="flex items-center gap-1.5 p-1 rounded-xl bg-secondary/30 border border-border overflow-x-auto">
+                <button
+                  type="button"
+                  onClick={() => setMediaTypeFilter('all')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer flex items-center gap-1.5 ${
+                    mediaTypeFilter === 'all'
+                      ? 'bg-foreground text-background font-semibold shadow-2xs'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-secondary/40'
+                  }`}
+                >
+                  <span>{language === 'ar' ? 'الكل' : 'All'}</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-secondary text-secondary-foreground font-mono">
+                    {unifiedAssets.length}
+                  </span>
+                </button>
+
+                {mediaTypeCounts.images > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setMediaTypeFilter('image')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer flex items-center gap-1.5 ${
+                      mediaTypeFilter === 'image'
+                        ? 'bg-foreground text-background font-semibold shadow-2xs'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-secondary/40'
+                    }`}
+                  >
+                    <ImageIcon className="w-3.5 h-3.5" />
+                    <span>{language === 'ar' ? 'الصور' : 'Photos'}</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-secondary text-secondary-foreground font-mono">
+                      {mediaTypeCounts.images}
+                    </span>
+                  </button>
+                )}
+
+                {mediaTypeCounts.videos > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setMediaTypeFilter('video')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer flex items-center gap-1.5 ${
+                      mediaTypeFilter === 'video'
+                        ? 'bg-foreground text-background font-semibold shadow-2xs'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-secondary/40'
+                    }`}
+                  >
+                    <Film className="w-3.5 h-3.5" />
+                    <span>{language === 'ar' ? 'الفيديو' : 'Videos'}</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-secondary text-secondary-foreground font-mono">
+                      {mediaTypeCounts.videos}
+                    </span>
+                  </button>
+                )}
+
+                {mediaTypeCounts.vectors > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setMediaTypeFilter('vector')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer flex items-center gap-1.5 ${
+                      mediaTypeFilter === 'vector'
+                        ? 'bg-foreground text-background font-semibold shadow-2xs'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-secondary/40'
+                    }`}
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>{language === 'ar' ? 'فكتور EPS' : 'EPS Vectors'}</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-secondary text-secondary-foreground font-mono">
+                      {mediaTypeCounts.vectors}
+                    </span>
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* Asset Cards List */}
             <div className={viewMode === 'compact' ? 'space-y-2.5' : 'space-y-4'}>
               {filteredAssets.map((asset) => (
@@ -1489,6 +1731,9 @@ export const StudioView: React.FC = () => {
                   onCopyAll={handleCopyAllRecord}
                   onDelete={handleDeleteAsset}
                   onRegenerate={handleRegenerateSingle}
+                  onOpenLightbox={handleOpenLightbox}
+                  onMuteSingleVideo={handleMuteSingleVideo}
+                  isMuting={mutingAssetId === asset.id}
                 />
               ))}
             </div>
@@ -1680,6 +1925,16 @@ export const StudioView: React.FC = () => {
         hideCancel
         onConfirm={() => setNoticeDialog(null)}
       />
+
+      {/* Media Lightbox Modal */}
+      {lightboxIndex !== null && (
+        <MediaLightboxModal
+          open={lightboxIndex !== null}
+          onClose={() => setLightboxIndex(null)}
+          assets={lightboxAssets}
+          initialIndex={lightboxIndex}
+        />
+      )}
     </div>
   );
 };

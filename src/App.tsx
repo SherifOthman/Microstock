@@ -5,6 +5,8 @@ import { StudioView } from './features/studio/StudioView';
 import { TrackerView } from './features/tracker/TrackerView';
 import { FileCleanerView } from './features/cleaner/FileCleanerView';
 import { VideoMuterView } from './features/video/VideoMuterView';
+import { EpsConverterView } from './features/eps/EpsConverterView';
+import { batchQueueService } from './services/queue/BatchQueueService';
 import { keyRingScheduler } from './services/scheduler/KeyRingScheduler';
 import { db, getAllApiKeys, updateApiKey } from './db';
 import { ApiKeyRecord } from './types';
@@ -26,7 +28,7 @@ import { KeyRingView } from './features/keyring/components/KeyRingView';
 import { AppLogo } from './components/icons/AppLogo';
 import { useLanguage } from './context/LanguageContext';
 
-export type AppTab = 'home' | 'studio' | 'tracker' | 'cleaner' | 'muter';
+export type AppTab = 'home' | 'studio' | 'tracker' | 'cleaner' | 'muter' | 'eps';
 
 const TAB_TO_PATH: Record<AppTab, string> = {
   home: '/',
@@ -34,6 +36,7 @@ const TAB_TO_PATH: Record<AppTab, string> = {
   tracker: '/tracker',
   cleaner: '/file-cleaner',
   muter: '/video-muter',
+  eps: '/eps-converter',
 };
 
 const PATH_TO_TAB: Record<string, AppTab> = {
@@ -42,6 +45,7 @@ const PATH_TO_TAB: Record<string, AppTab> = {
   '/tracker': 'tracker',
   '/file-cleaner': 'cleaner',
   '/video-muter': 'muter',
+  '/eps-converter': 'eps',
 };
 
 function getInitialTab(): AppTab {
@@ -230,6 +234,14 @@ export function App() {
         {activeTab === 'tracker' && <TrackerView />}
         {activeTab === 'cleaner' && <FileCleanerView />}
         {activeTab === 'muter' && <VideoMuterView />}
+        {activeTab === 'eps' && (
+          <EpsConverterView
+            onSendToStudio={(files) => {
+              batchQueueService.addFiles(files);
+              handleTabChange('studio');
+            }}
+          />
+        )}
       </main>
 
       {/* Global API KeyRing Dialog */}

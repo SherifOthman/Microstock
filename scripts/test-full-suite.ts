@@ -479,6 +479,79 @@ async function runTestSuite() {
   assert(!cleanDupHint.includes('02'), 'cleanFilenameHint: Strips trailing duplicate suffix "_02" from prompt hint');
   assert(cleanDupHint.toLowerCase().includes('table'), 'cleanFilenameHint: Retains core subject from duplicate-numbered file');
 
+  // -----------------------------------------------------------
+  // TEST 12: Video and Vector Microstock Adaptation
+  // -----------------------------------------------------------
+  console.log('\n--- Test Group 12: Video and Vector Microstock Adaptation ---');
+
+  // 1. Video and Vector Prompts
+  const videoPrompt = buildVisionPrompt('drone_mountain_waterfall.mp4', undefined, 'video');
+  assert(videoPrompt.includes('CRITICAL MEDIA TYPE: VIDEO FOOTAGE'), 'buildVisionPrompt: Injects video storyboard directives');
+  assert(videoPrompt.includes('NEVER include photography/static terms'), 'buildVisionPrompt: Forbids photo terms for video');
+
+  const vectorPrompt = buildVisionPrompt('isometric_city_map.eps', undefined, 'vector');
+  assert(vectorPrompt.includes('CRITICAL MEDIA TYPE: VECTOR EPS ILLUSTRATION'), 'buildVisionPrompt: Injects vector illustration directives');
+  assert(vectorPrompt.includes('NEVER include camera/photo terms'), 'buildVisionPrompt: Forbids camera/photo terms for vector');
+
+  // 2. Shutterstock Illustration Auto-Detection
+  const vectorRec: MasterMetadataRecord = {
+    id: 'vec-1',
+    batchId: 'batch-test',
+    filename: 'vintage_floral_ornament.eps',
+    mediaType: 'vector',
+    baseTitle: 'Vintage Floral Ornament Vector Illustration',
+    detailedDescription: 'Hand drawn decorative vintage floral ornament element vector illustration.',
+    rankedKeywords: ['vector', 'illustration', 'ornament', 'floral', 'vintage'],
+    status: 'completed',
+    createdAt: Date.now(),
+  };
+
+  const photoRec: MasterMetadataRecord = {
+    id: 'photo-1',
+    batchId: 'batch-test',
+    filename: 'city_skyline_sunset.jpg',
+    mediaType: 'image',
+    baseTitle: 'Modern City Skyline at Golden Sunset',
+    detailedDescription: 'Panoramic photograph of city skyscrapers and reflections at golden hour.',
+    rankedKeywords: ['city', 'skyline', 'sunset', 'buildings', 'architecture'],
+    status: 'completed',
+    createdAt: Date.now(),
+  };
+
+  const videoRec: MasterMetadataRecord = {
+    id: 'vid-1',
+    batchId: 'batch-test',
+    filename: 'waves_crashing_on_rocks.mp4',
+    mediaType: 'video',
+    baseTitle: 'Ocean Waves Crashing on Rocky Coastline 4K',
+    detailedDescription: 'Cinematic slow motion footage of ocean waves crashing onto coastal rock cliffs.',
+    rankedKeywords: ['waves', 'ocean', 'rock', 'footage', 'coast'],
+    status: 'completed',
+    createdAt: Date.now(),
+  };
+
+  const ssRes = generatePlatformCsv('shutterstock', [vectorRec, photoRec]);
+  const parsedSs = Papa.parse(ssRes.csvString, { header: true, skipEmptyLines: true });
+  const rows = parsedSs.data as any[];
+  assert(rows[0].illustration === 'yes', 'Shutterstock CSV: Automatically sets illustration="yes" for vector .eps');
+  assert(rows[1].illustration === 'no', 'Shutterstock CSV: Keeps illustration="no" for standard photo');
+
+  // 3. Adobe Stock Category & Filename
+  const adobeRes = generatePlatformCsv('adobe', [vectorRec, videoRec]);
+  const parsedAdobe = Papa.parse(adobeRes.csvString, { header: true, skipEmptyLines: true });
+  const adobeRows = parsedAdobe.data as any[];
+  assert(adobeRows[0].Filename === 'vintage_floral_ornament.eps', 'Adobe CSV: Retains exact .eps filename');
+  assert(Number(adobeRows[0].Category) === 8, 'Adobe CSV: Vector defaults to Category 8 (Graphic Resources)');
+  assert(adobeRows[1].Filename === 'waves_crashing_on_rocks.mp4', 'Adobe CSV: Retains exact .mp4 filename');
+
+  // 4. Freepik Video Filtering
+  const fpRes = generatePlatformCsv('freepik', [vectorRec, photoRec, videoRec]);
+  const parsedFp = Papa.parse(fpRes.csvString, { delimiter: ';', header: true, skipEmptyLines: true });
+  const fpRows = parsedFp.data as any[];
+  assert(fpRows.length === 2, `Freepik CSV: Excludes video file (.mp4) from image CSV (Got: ${fpRows.length} rows)`);
+  assert(fpRows.some((r) => r.Title.includes('Vintage Floral')), 'Freepik CSV: Retains vector record');
+  assert(fpRows.some((r) => r.Title.includes('Modern City')), 'Freepik CSV: Retains photo record');
+
   console.log('\n====================================================');
   console.log(`🏁 TEST RESULTS: ${passedTests} / ${totalTests} TESTS PASSED (100%)`);
   console.log('====================================================');

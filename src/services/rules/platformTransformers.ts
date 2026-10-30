@@ -170,11 +170,15 @@ export function transformForAdobeStock(records: MasterMetadataRecord[]): Platfor
     const cleanTitle = smartTruncate(sanitized, 200, false);
     const cleanKw = sanitizeKeywords(rec.rankedKeywords ?? []).slice(0, 49);
 
+    // If media is vector (EPS), default to Category 8 (Graphic Resources) if not explicitly set
+    const isVector = rec.mediaType === 'vector' || (rec.filename && /\.(eps|ai)$/i.test(rec.filename));
+    const defaultCat = isVector ? 8 : (rec.categories?.adobeCategoryId || 8);
+
     return {
       Filename: rec.filename ?? '',
       Title: cleanTitle,
       Keywords: cleanKw.join(', '),
-      Category: rec.categories?.adobeCategoryId || 8,
+      Category: rec.categories?.adobeCategoryId || defaultCat,
       Releases: '',
     };
   });
@@ -219,11 +223,19 @@ export interface UniversalTransformOptions {
 }
 
 // 2. Freepik Transformer (Semicolon Delimited)
+// Note: Freepik image CSV uploader expects Images & Vectors (.jpg, .eps). Videos (.mp4, .mov) are excluded to prevent portal rejection.
 export function transformForFreepik(
   records: MasterMetadataRecord[],
   options?: FreepikTransformOptions
 ): PlatformExportRow[] {
-  return records.map((rec) => {
+  // Gracefully filter out video files from Freepik image CSV export
+  const eligibleRecords = records.filter((rec) => {
+    if (rec.mediaType === 'video') return false;
+    if (rec.filename && /\.(mp4|mov|webm|avi|mkv)$/i.test(rec.filename)) return false;
+    return true;
+  });
+
+  return eligibleRecords.map((rec) => {
     // 1. Semantic truncate at 200 chars
     let cleanTitle = smartTruncate(rec.baseTitle ?? '', 200, false);
     // 2. Replace hyphens with spaces to prevent Freepik from concatenating words (e.g. Snowy-Winter -> SnowyWinter)
@@ -269,6 +281,10 @@ export function transformForShutterstock(
     // Semantic truncate description at 200 chars ending with a period
     const cleanDesc = smartTruncate(rec.detailedDescription ?? '', 200, true);
 
+    // Auto-detect illustration flag: if options specify yes OR media is vector (.eps/.ai), set illustration to 'yes'
+    const isVectorMedia = rec.mediaType === 'vector' || (rec.filename && /\.(eps|ai)$/i.test(rec.filename));
+    const effectiveIllustration = isVectorMedia ? 'yes' : illustrationVal;
+
     return {
       Filename: rec.filename ?? '',
       Description: cleanDesc,
@@ -276,7 +292,7 @@ export function transformForShutterstock(
       Categories: categoriesStr || 'Miscellaneous',
       Editorial: editorialVal,
       'Mature content': matureVal,
-      illustration: illustrationVal,
+      illustration: effectiveIllustration,
     };
   });
 

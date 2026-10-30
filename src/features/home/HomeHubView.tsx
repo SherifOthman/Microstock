@@ -18,7 +18,7 @@ import {
 import { useLanguage } from '../../context/LanguageContext';
 
 export interface HomeHubViewProps {
-  onNavigate: (tool: 'studio' | 'tracker' | 'cleaner' | 'muter') => void;
+  onNavigate: (tool: 'studio' | 'tracker' | 'cleaner' | 'muter' | 'eps') => void;
 }
 
 export const HomeHubView: React.FC<HomeHubViewProps> = ({ onNavigate }) => {
@@ -101,6 +101,25 @@ export const HomeHubView: React.FC<HomeHubViewProps> = ({ onNavigate }) => {
         'Optional automatic filename cleaning upon export',
       ],
       ctaText: language === 'ar' ? 'فتح أداة حذف الصوت' : 'Open Video Muter',
+    },
+    {
+      id: 'eps' as const,
+      title: language === 'ar' ? 'مستخرج ومعالج فكتور EPS 10 إلى JPG فائق الدقة' : 'EPS 10 to High-Res JPG Extractor',
+      subtitle: 'Microstock Vector Rasterizer',
+      badge: language === 'ar' ? 'محرك فكتور متقدم' : 'True Vector PostScript',
+      badgeColor: 'border-rose-500/30 text-rose-500 bg-rose-500/10',
+      icon: Layers,
+      iconColor: 'text-rose-500 bg-rose-500/10 border-rose-500/20',
+      description:
+        language === 'ar'
+          ? 'استخراج صور JPG نقية بدقة 4MP أو 16MP من ملفات Illustrator EPS 10 مع خلفية بيضاء نقية وتوافق 100% مع شروط الوكالات دون الحاجة لفتح برامج التصميم.'
+          : 'Convert Adobe Illustrator EPS 10 files into 4MP+ or 16MP ultra-high-resolution agency-ready JPEGs on pure white backgrounds without opening Adobe Illustrator.',
+      highlights: [
+        'PostScript BoundingBox & CMYK/RGB to sRGB conversion',
+        'Agency 4MP+ (2500px) & Ultra 16MP (4000px) presets',
+        'Direct ZIP download, Directory save, or 1-Click Send to Studio',
+      ],
+      ctaText: language === 'ar' ? 'فتح محول فكتور EPS' : 'Open EPS Converter',
     },
   ];
 

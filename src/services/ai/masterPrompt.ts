@@ -185,9 +185,9 @@ export function buildVisionPrompt(
   }
 
   if (mediaType === 'video') {
-    prompt += '\nNOTE: This is a representative video snapshot frame from stock footage. Include video-specific search keywords where appropriate (e.g. footage, video clip, motion, slow motion, cinematic).';
+    prompt += '\nCRITICAL MEDIA TYPE: VIDEO FOOTAGE. The input image is a 4-frame chronological storyboard (F1, F2, F3, F4) of a stock video clip. Analyze both visual subject and temporal motion progression. Include video/motion tags (footage, video clip, motion, 4k, slow motion, loop, aerial, panning, camera movement). NEVER include photography/static terms (still life, photo, photograph, illustration, picture).';
   } else if (mediaType === 'vector') {
-    prompt += '\nNOTE: This is a vector illustration/graphic resource asset. Include vector-specific terms (e.g. vector illustration, graphic design, scalable, clip art, icon).';
+    prompt += '\nCRITICAL MEDIA TYPE: VECTOR EPS ILLUSTRATION. This is a scalable vector graphic illustration. Include vector-specific terms (vector, illustration, graphic, design, template, editable, scalable, flat, clip art, icon). NEVER include camera/photo terms (photo, photograph, shot, depth of field, bokeh, lens, shutter).';
   }
 
   if (filename) {
