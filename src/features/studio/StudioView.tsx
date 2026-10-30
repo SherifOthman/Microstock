@@ -19,6 +19,7 @@ import { Dialog } from '../../components/ui/dialog';
 import { ConfirmDialog } from '../../components/ui/alert-dialog';
 import { Switch } from '../../components/ui/switch';
 import { Tooltip } from '../../components/ui/tooltip';
+import { Alert, AlertTitle, AlertDescription } from '../../components/ui/alert';
 import {
   Select,
   SelectContent,
@@ -35,6 +36,7 @@ import { AssetCard, UnifiedAssetRow } from './components/AssetCard';
 import { KeywordPhrasing } from '../../services/ai/metadataParser';
 import { useLanguage } from '../../context/LanguageContext';
 import {
+  AlertCircle,
   AlertTriangle,
   Archive,
   BookOpen,
@@ -204,6 +206,7 @@ export const StudioView: React.FC = () => {
 
   // Search Filter
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isKeyShake, setIsKeyShake] = useState(false);
 
   // File Inputs
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -403,7 +406,16 @@ export const StudioView: React.FC = () => {
     }
   };
 
+  const triggerKeyAlertShake = () => {
+    setIsKeyShake(true);
+    setTimeout(() => setIsKeyShake(false), 800);
+  };
+
   const handleStartQueue = () => {
+    if (healthyKeys.length === 0) {
+      triggerKeyAlertShake();
+      return;
+    }
     const finalFreepikModel =
       freepikModel === 'Other' ? customFreepikModel.trim() || 'Google Nano Banana' : freepikModel;
     batchQueueService.start(isAiGenerated, userCustomPrompt.trim(), finalFreepikModel, keywordPhrasing, titleLengthPreset);
@@ -877,6 +889,39 @@ export const StudioView: React.FC = () => {
       {/* RIGHT WORKSPACE: Batch Action Bar, Live Progress, Table   */}
       {/* ======================================================== */}
       <main className="flex-1 w-full min-w-0 space-y-4">
+        {/* Missing API Key Alert Banner (Guards Zero Key Empty State) */}
+        {healthyKeys.length === 0 && (
+          <Alert
+            variant="warning"
+            className={`transition-all duration-300 shadow-2xs ${
+              isKeyShake ? 'animate-shake ring-2 ring-amber-500/50' : ''
+            }`}
+          >
+            <KeyRound className="w-4 h-4" />
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full">
+              <div className="space-y-0.5">
+                <AlertTitle className="text-xs font-semibold text-amber-700 dark:text-amber-400">
+                  {t.apiKeyMissingBannerTitle || 'API Key Required for AI Generation'}
+                </AlertTitle>
+                <AlertDescription className="text-xs text-amber-800/90 dark:text-amber-300/80">
+                  {t.apiKeyMissingBannerDesc ||
+                    'Please add at least one API key (e.g., Gemini or Groq) to start AI metadata generation.'}
+                </AlertDescription>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setIsKeyRingOpen(true)}
+                className="h-7.5 px-3 text-xs font-semibold border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 shrink-0 self-start sm:self-center gap-1.5 cursor-pointer shadow-2xs"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                <span>{t.manageKeysButton || t.manageKeys || 'Manage Keys'}</span>
+              </Button>
+            </div>
+          </Alert>
+        )}
+
         {/* Top Action Toolbar */}
         <div className="p-3 bg-card rounded-xl border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs w-full min-w-0">
           {/* File Ingestion Buttons */}
@@ -919,15 +964,53 @@ export const StudioView: React.FC = () => {
             <div className="grid grid-cols-2 sm:flex items-center gap-2 flex-1 sm:flex-initial min-w-0">
               {/* Start / Pause / Resume Controls */}
               {!isRunning && !isPaused && (
-                <Button
-                  size="sm"
-                  onClick={handleStartQueue}
-                  disabled={pendingCount === 0 || healthyKeys.length === 0}
-                  className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center"
-                >
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span className="truncate">{(t.startGeneration || 'Start Generation ({count})').replace('{count}', String(pendingCount))}</span>
-                </Button>
+                healthyKeys.length === 0 || pendingCount === 0 ? (
+                  <Tooltip
+                    content={
+                      healthyKeys.length === 0
+                        ? t.noActiveKeysTooltip || 'Add at least one active API key to start generating metadata'
+                        : t.addImages || 'Add images first'
+                    }
+                  >
+                    <div
+                      className="w-full sm:w-auto"
+                      onClick={() => {
+                        if (healthyKeys.length === 0) triggerKeyAlertShake();
+                      }}
+                    >
+                      <Button
+                        size="sm"
+                        onClick={handleStartQueue}
+                        disabled={pendingCount === 0 || healthyKeys.length === 0}
+                        className={`gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center transition-all ${
+                          isKeyShake ? 'animate-shake ring-2 ring-destructive' : ''
+                        }`}
+                      >
+                        <Play className="w-3.5 h-3.5 fill-current" />
+                        <span className="truncate">
+                          {(t.startGeneration || 'Start Generation ({count})').replace(
+                            '{count}',
+                            String(pendingCount)
+                          )}
+                        </span>
+                      </Button>
+                    </div>
+                  </Tooltip>
+                ) : (
+                  <Button
+                    size="sm"
+                    onClick={handleStartQueue}
+                    className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    <span className="truncate">
+                      {(t.startGeneration || 'Start Generation ({count})').replace(
+                        '{count}',
+                        String(pendingCount)
+                      )}
+                    </span>
+                  </Button>
+                )
               )}
 
               {isRunning && (
