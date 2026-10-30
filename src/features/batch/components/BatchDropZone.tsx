@@ -79,10 +79,10 @@ export const BatchDropZone: React.FC<Props> = ({ onFilesSelected, disabled = fal
       </div>
 
       <h3 className="text-sm font-semibold text-foreground">
-        Drop stock photos, 4K videos, or vector EPS files here
+        Drop stock images here or browse files
       </h3>
       <p className="text-xs text-muted-foreground mt-0.5 mb-4">
-        Original files are untouched. Lightweight 512px frames are extracted for AI analysis.
+        Supports JPG, PNG, WebP. Original files on disk are completely untouched
       </p>
 
       <div className="flex items-center justify-center gap-2">

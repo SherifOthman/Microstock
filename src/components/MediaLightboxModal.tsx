@@ -202,25 +202,28 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
         )}
 
         {/* Content Viewer */}
-        <div className="flex items-center justify-center max-w-full max-h-full">
+        <div className="flex items-center justify-center w-full h-full">
           {isVideo ? (
             <video
+              key={currentAsset.id}
               src={videoObjectUrl || currentAsset.previewUrl}
               controls
               autoPlay
               loop
               playsInline
-              className="max-h-[75vh] max-w-full rounded-xl shadow-2xl bg-black border border-zinc-800 object-contain"
+              muted={false}
+              className="w-full h-full max-h-[85vh] object-contain rounded-lg shadow-2xl bg-black"
+              style={{ minHeight: '400px', maxWidth: '95vw' }}
             />
           ) : (
             <div
-              className="overflow-auto max-h-[75vh] max-w-full flex items-center justify-center transition-transform duration-100"
+              className="overflow-auto max-h-[85vh] max-w-full flex items-center justify-center transition-transform duration-100"
               style={{ transform: `scale(${zoomLevel})` }}
             >
               <img
                 src={currentAsset.previewUrl}
                 alt={currentAsset.filename}
-                className="max-h-[75vh] max-w-full rounded-xl shadow-2xl object-contain bg-zinc-900 border border-zinc-800"
+                className="max-h-[85vh] max-w-full rounded-xl shadow-2xl object-contain bg-zinc-900 border border-zinc-800"
               />
             </div>
           )}

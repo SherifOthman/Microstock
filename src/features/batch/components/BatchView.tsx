@@ -88,29 +88,65 @@ export const BatchView: React.FC<Props> = ({ onNavigateTab }) => {
 
       {/* Completion CTA */}
       {hasProcessed && !isRunning && onNavigateTab && (
-        <div className="flex items-center justify-between p-3 rounded-lg border border-emerald-500/20 bg-emerald-500/10 text-xs">
-          <div className="flex items-center gap-2 text-emerald-400 font-medium">
-            <CheckCircle2 className="w-4 h-4" />
-            <span>{queueState.processedCount} images ready</span>
+        <div className={`flex items-center justify-between p-3 rounded-lg border ${
+          queueState.failedCount > 0 
+            ? 'border-destructive/30 bg-destructive/10' 
+            : 'border-emerald-500/20 bg-emerald-500/10'
+        } text-xs`}>
+          <div className="flex items-center gap-2">
+            {queueState.failedCount > 0 ? (
+              <>
+                <Badge variant="destructive" className="gap-1">
+                  {queueState.failedCount} Failed
+                </Badge>
+                <Badge variant="outline" className="gap-1 text-emerald-400 border-emerald-500/30">
+                  {queueState.processedCount - queueState.failedCount} Success
+                </Badge>
+                <span className="text-muted-foreground font-medium">
+                  Processing incomplete!
+                </span>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <span className="text-emerald-400 font-medium">
+                  {queueState.processedCount} images completed successfully
+                </span>
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onNavigateTab('review')}
-              className="h-7 text-xs"
-            >
-              Review
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => onNavigateTab('export')}
-              className="h-7 text-xs gap-1"
-            >
-              Export CSVs
-              <ArrowRight className="w-3 h-3" />
-            </Button>
+            {queueState.failedCount > 0 && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleRetryFailed}
+                className="h-7 text-xs gap-1"
+              >
+                Retry {queueState.failedCount} Failed
+              </Button>
+            )}
+            {queueState.processedCount - queueState.failedCount > 0 && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onNavigateTab('review')}
+                  className="h-7 text-xs"
+                >
+                  Review
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => onNavigateTab('export')}
+                  className="h-7 text-xs gap-1"
+                >
+                  Export CSVs
+                  <ArrowRight className="w-3 h-3" />
+                </Button>
+              </>
+            )}
           </div>
         </div>
       )}

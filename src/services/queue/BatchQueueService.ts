@@ -285,6 +285,7 @@ export class BatchQueueService {
     if (!item.thumbnailBase64) {
       item.status = 'error';
       item.error = 'Thumbnail data missing';
+      this.notify(); // UI update: item errored
       await db.masterRecords.update(item.id, {
         status: 'error',
         errorMessage: 'Thumbnail data missing',
@@ -375,6 +376,7 @@ export class BatchQueueService {
       item.metadataRecord = masterRecord;
       item.status = 'completed';
       item.error = undefined;
+      this.notify(); // UI update: item completed
 
       // Persist master record to IndexedDB
       await db.masterRecords.put(masterRecord);
@@ -398,6 +400,7 @@ export class BatchQueueService {
 
       item.status = isRetryable ? 'ready' : 'error';
       item.error = err.message || String(err);
+      this.notify(); // UI update: item failed/ready for retry
 
       // Update Dexie database so failed image persists and can be retried
       await db.masterRecords.update(item.id, {

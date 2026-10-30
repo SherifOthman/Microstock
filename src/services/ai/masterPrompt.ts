@@ -194,7 +194,7 @@ export function buildVisionPrompt(
   if (mediaType === 'video') {
     prompt += '\nCRITICAL MEDIA TYPE: VIDEO FOOTAGE. The input image is a 4-frame chronological storyboard (F1, F2, F3, F4) of a stock video clip. Analyze both visual subject and temporal motion progression. Include video/motion tags (footage, video clip, motion, 4k, slow motion, loop, aerial, panning, camera movement). NEVER include photography/static terms (still life, photo, photograph, illustration, picture).';
   } else if (mediaType === 'vector') {
-    prompt += '\nCRITICAL MEDIA TYPE: VECTOR EPS ILLUSTRATION. This is a scalable vector graphic illustration. Include vector-specific terms (vector, illustration, graphic, design, template, editable, scalable, flat, clip art, icon). NEVER include camera/photo terms (photo, photograph, shot, depth of field, bokeh, lens, shutter).';
+    prompt += '\nCRITICAL MEDIA TYPE: VECTOR EPS ILLUSTRATION. This is a scalable vector graphic illustration. Analyze the actual ARTWORK CONTENT and visual elements shown (characters, objects, scenes, colors, style, composition). Describe what the illustration depicts, not just that it is a vector. Include vector-specific terms (vector, illustration, graphic, design, template, editable, scalable, flat, clip art, icon) alongside the SPECIFIC SUBJECT MATTER. NEVER include camera/photo terms (photo, photograph, shot, depth of field, bokeh, lens, shutter).';
   }
 
   if (filename) {
