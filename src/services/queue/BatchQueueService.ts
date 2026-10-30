@@ -327,6 +327,12 @@ export class BatchQueueService {
       // and generate metadata purely from the filename hint.
       const isEpsNoPreview = item.mediaType === 'vector' && item.hasRealPreview === false;
       
+      console.log(`[AI Processing] ${item.filename}:`, {
+        mediaType: item.mediaType,
+        hasRealPreview: item.hasRealPreview,
+        isEpsNoPreview,
+      });
+      
       const finalPrompt = isEpsNoPreview
         ? basePrompt + '\n\n🚨 CRITICAL OVERRIDE: The image you see is a placeholder badge with NO actual artwork. COMPLETELY IGNORE the visual content (text, colors, badge). Generate ALL metadata based ONLY on the filename hint above. Analyze the filename to infer the vector subject, style, and theme. Do NOT mention "badge", "text", "placeholder", "EPS 10 VECTOR", or describe what you see visually.'
         : basePrompt;

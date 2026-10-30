@@ -236,16 +236,21 @@ export async function processVectorFile(
   // Use the True Multi-Tier EPS 10 Rasterizer Engine!
   try {
     const epsResult = await rasterizeEpsFile(file, maxDim, quality);
+    console.log(`[EPS Rasterizer] ${file.name}:`, {
+      sourceTier: epsResult.sourceTier,
+      pathOpCount: epsResult.pathOpCount,
+      width: epsResult.width,
+      height: epsResult.height,
+    });
+    
     // sourceTier 'vector' from Tier 1 (PS paths) or 'binary_preview'/'xmp' from Tier 2 = real content
-    // sourceTier 'vector' from Tier 3 fallback badge = no real preview (detected by white/dark bg + text badge size)
-    // We distinguish by checking pathOpCount indirectly: Tier 3 has a dark background, Tier 1/2 has real artwork.
-    // The engine exposes `sourceTier` — binary_preview and xmp are always real; 'vector' from Tier 1 is real.
-    // The only fake is the Tier 3 badge, which epsEngine.ts returns with sourceTier 'vector' but writes
-    // "EPS 10 VECTOR" text onto a dark canvas. We detect this via the sourceTier returned.
+    // sourceTier 'vector' from Tier 3 fallback badge = no real preview (detected by pathOpCount = 0)
     const isRealContent =
       epsResult.sourceTier === 'binary_preview' ||
       epsResult.sourceTier === 'xmp' ||
       (epsResult.sourceTier === 'vector' && epsResult.pathOpCount !== undefined && epsResult.pathOpCount >= 10);
+
+    console.log(`[EPS Rasterizer] hasRealPreview: ${isRealContent}`);
 
     return {
       mediaType: 'vector',
