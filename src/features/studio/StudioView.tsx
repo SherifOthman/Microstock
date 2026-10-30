@@ -12,6 +12,7 @@ import {
   generatePlatformCsv,
 } from '../../services/export/csvExporter';
 import { UniversalTransformOptions } from '../../services/rules/platformTransformers';
+import { COUNTRIES } from '../../constants/countries';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import { Input } from '../../components/ui/input';
@@ -947,14 +948,8 @@ export const StudioView: React.FC = () => {
                   {/* Contextual Shutterstock Options */}
                   {p.id === 'shutterstock' && isSelected && (
                     <div className="p-2.5 ml-4 rounded-md border border-border bg-secondary/20 space-y-2 text-xs">
-                      {/* Header info */}
-                      <div className="text-[10px] text-muted-foreground space-y-0.5">
-                        <p className="text-foreground/90 font-medium">• {t.shutterOptionsDesc}</p>
-                        <p>• 7 Columns: Filename, Description, Keywords, Categories, Editorial, Mature content, illustration</p>
-                      </div>
-
                       {/* Collapsible Advanced Compliance Options (Protected with Safety Lock) */}
-                      <div className="pt-1.5 border-t border-border/50">
+                      <div>
                         <button
                           type="button"
                           onClick={() => setShutterAdvancedOpen(!shutterAdvancedOpen)}
@@ -972,7 +967,7 @@ export const StudioView: React.FC = () => {
                         </button>
 
                         {shutterAdvancedOpen && (
-                          <div className="space-y-2 pt-1.5 pl-1 animate-in fade-in-50 duration-150">
+                          <div className="space-y-2 pt-1.5 pl-1 animate-in fade-in-50 duration-150 border-t border-border/40 mt-1">
                             {/* Safety Lock & Reset Controls */}
                             <div className="flex items-center justify-between gap-1 pb-1.5 border-b border-border/40">
                               {isShutterLocked ? (
@@ -1057,27 +1052,31 @@ export const StudioView: React.FC = () => {
                   {/* Contextual 123RF Options */}
                   {p.id === '123rf' && isSelected && (
                     <div className="p-2.5 ml-4 rounded-md border border-border bg-secondary/20 space-y-2 text-xs">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1 shrink-0">
                           <span className="text-[11px] text-muted-foreground font-medium">{t.rfCountry}:</span>
                           <Tooltip content={t.rfCountryDesc}>
                             <Info className="w-3 h-3 text-muted-foreground hover:text-foreground cursor-pointer" />
                           </Tooltip>
                         </div>
-                        <div className="w-24">
-                          <Input
+                        <div className="w-40 sm:w-48">
+                          <Select
                             value={rfCountry}
-                            onChange={(e) => setRfCountry(e.target.value.toUpperCase().slice(0, 2))}
-                            placeholder="EG"
-                            maxLength={2}
-                            dir="ltr"
-                            className="h-7 text-xs font-mono uppercase bg-card text-center font-bold"
-                          />
+                            onValueChange={(val) => setRfCountry(val)}
+                          >
+                            <SelectTrigger className="h-7 text-xs bg-card font-medium">
+                              <SelectValue placeholder="Select country..." />
+                            </SelectTrigger>
+                            <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60">
+                              {COUNTRIES.map((c) => (
+                                <SelectItem key={c.code} value={c.code} className="text-xs">
+                                  <span className="font-semibold">{c.name}</span>{' '}
+                                  <span className="font-mono text-muted-foreground text-[10px]">({c.code})</span>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
-                      </div>
-                      <div className="pt-1 border-t border-border/50 text-[10px] text-muted-foreground space-y-0.5">
-                        <p className="text-foreground/90 font-medium">• 123RF Official 5-Col (oldfilename, description, keywords, country)</p>
-                        <p>• Default location set to <span className="font-semibold text-foreground">EG (Egypt)</span></p>
                       </div>
                     </div>
                   )}

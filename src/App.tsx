@@ -28,12 +28,40 @@ import { useLanguage } from './context/LanguageContext';
 
 export type AppTab = 'home' | 'studio' | 'tracker' | 'cleaner' | 'muter';
 
+const TAB_TO_PATH: Record<AppTab, string> = {
+  home: '/',
+  studio: '/metadata',
+  tracker: '/tracker',
+  cleaner: '/file-cleaner',
+  muter: '/video-muter',
+};
+
+const PATH_TO_TAB: Record<string, AppTab> = {
+  '/': 'home',
+  '/metadata': 'studio',
+  '/tracker': 'tracker',
+  '/file-cleaner': 'cleaner',
+  '/video-muter': 'muter',
+};
+
+function getInitialTab(): AppTab {
+  if (typeof window !== 'undefined') {
+    const pathname = window.location.pathname.toLowerCase().replace(/\/$/, '') || '/';
+    if (PATH_TO_TAB[pathname]) {
+      return PATH_TO_TAB[pathname];
+    }
+    const saved = localStorage.getItem('stock_active_tab') as AppTab;
+    if (saved && TAB_TO_PATH[saved]) {
+      return saved;
+    }
+  }
+  return 'home';
+}
+
 export function App() {
   const { language, setLanguage, t } = useLanguage();
   const [, setKeys] = useState<ApiKeyRecord[]>([]);
-  const [activeTab, setActiveTab] = useState<AppTab>(() => {
-    return (localStorage.getItem('stock_active_tab') as AppTab) || 'home';
-  });
+  const [activeTab, setActiveTab] = useState<AppTab>(getInitialTab);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('stock_theme');
     if (saved === 'light' || saved === 'dark') return saved;
@@ -53,9 +81,26 @@ export function App() {
     localStorage.setItem('stock_theme', theme);
   }, [theme]);
 
+  // Handle browser popstate (Back/Forward navigation)
+  useEffect(() => {
+    const handlePopState = () => {
+      const pathname = window.location.pathname.toLowerCase().replace(/\/$/, '') || '/';
+      if (PATH_TO_TAB[pathname]) {
+        setActiveTab(PATH_TO_TAB[pathname]);
+        localStorage.setItem('stock_active_tab', PATH_TO_TAB[pathname]);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
   const handleTabChange = (tab: AppTab) => {
     setActiveTab(tab);
     localStorage.setItem('stock_active_tab', tab);
+    const targetPath = TAB_TO_PATH[tab] || '/';
+    if (window.location.pathname !== targetPath) {
+      window.history.pushState({ tab }, '', targetPath);
+    }
   };
 
   useEffect(() => {
