@@ -347,8 +347,15 @@ export const StudioView: React.FC = () => {
       const existing = rowMap.get(rec.filename);
       if (existing) {
         existing.masterRecord = rec;
-        // If in-memory item is finished or queue is idle, adopt DB status
-        if (queueState.status === 'idle' || existing.status === 'queued') {
+        // Priority rule for status:
+        // While the queue is running or resizing, the in-memory item state ('processing' vs 'queued') is authoritative!
+        if (queueState.status === 'running' || queueState.status === 'resizing') {
+          // If in-memory is completed or error, reflect it
+          if (rec.baseTitle && existing.status !== 'processing') {
+            existing.status = 'completed';
+          }
+        } else {
+          // When queue is idle, adopted status from DB
           existing.status = recStatus;
           if (rec.errorMessage && !existing.error) {
             existing.error = rec.errorMessage;

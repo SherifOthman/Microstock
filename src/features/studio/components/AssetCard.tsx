@@ -304,10 +304,10 @@ export const AssetCard: React.FC<AssetCardProps> = ({
         {isQueued && (
           <Badge
             variant="outline"
-            className="w-full py-1.5 px-3 rounded-lg border-border bg-muted/40 text-muted-foreground font-semibold text-xs flex items-center justify-center gap-1.5"
+            className="w-full py-1.5 px-3 rounded-lg border-border/80 bg-secondary/60 text-muted-foreground font-medium text-xs flex items-center justify-center gap-1.5"
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-pulse" />
-            <span>{t.queuedStatus}</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60" />
+            <span>{t.queuedStatus || 'Waiting'}</span>
           </Badge>
         )}
 
@@ -327,7 +327,14 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             <div className="space-y-1">
               <div className="flex items-center gap-1.5 text-sky-500 font-semibold text-[11px]">
                 <Zap className="w-3 h-3 animate-pulse" />
-                <span>{t.activeInference}</span>
+                <span>
+                  {asset.queueItem?.retryCount && asset.queueItem.retryCount > 0
+                    ? t.retryingViaFallback || 'Retrying via fallback...'
+                    : (t.analyzingWith || 'Analyzing with {provider}...').replace(
+                        '{provider}',
+                        getCleanProviderName(asset.queueItem?.assignedProvider)
+                      )}
+                </span>
               </div>
               <div className="text-[10px] text-muted-foreground font-mono">
                 {t.provider || 'Provider:'}{' '}
