@@ -156,16 +156,18 @@ export function App() {
               )}
             </button>
 
-            {/* API Keys */}
-            <button
-              type="button"
-              onClick={() => setIsKeyRingOpen(true)}
-              className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-card hover:bg-accent border border-border text-xs text-foreground cursor-pointer transition shadow-2xs"
-              title="Manage API Keys & Priority Cascade"
-            >
-              <KeyRound className="w-3.5 h-3.5 text-primary shrink-0" />
-              <span className="font-medium hidden sm:inline">{t.apiKeys}</span>
-            </button>
+            {/* API Keys (Only displayed in tools that require AI keys, like Metadata Studio) */}
+            {activeTab === 'studio' && (
+              <button
+                type="button"
+                onClick={() => setIsKeyRingOpen(true)}
+                className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-card hover:bg-accent border border-border text-xs text-foreground cursor-pointer transition shadow-2xs"
+                title="Manage API Keys & Priority Cascade"
+              >
+                <KeyRound className="w-3.5 h-3.5 text-primary shrink-0" />
+                <span className="font-medium hidden sm:inline">{t.apiKeys}</span>
+              </button>
+            )}
 
             {/* 100% Local DB badge on desktop */}
             <div className="hidden md:flex items-center gap-1 text-[11px] text-muted-foreground font-mono pl-1 border-l border-border">
