@@ -53,6 +53,10 @@ export const BatchView: React.FC<Props> = ({ onNavigateTab }) => {
     batchQueueService.retryFailed(isAiGenerated, userPrompt, aiModelName);
   };
 
+  const handleRetryItem = (id: string) => {
+    batchQueueService.retryItem(id, isAiGenerated, userPrompt, aiModelName);
+  };
+
   const handleRemoveItem = (id: string) => {
     batchQueueService.removeItem(id);
   };
@@ -156,6 +160,7 @@ export const BatchView: React.FC<Props> = ({ onNavigateTab }) => {
       <BatchQueueGrid
         items={queueState.items}
         onRemoveItem={handleRemoveItem}
+        onRetryItem={handleRetryItem}
         disabled={isRunning}
       />
     </div>

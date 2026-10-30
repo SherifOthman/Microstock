@@ -1,17 +1,20 @@
 import React from 'react';
 import { QueueItem } from '../../../services/queue/BatchQueueService';
 import { Badge } from '../../../components/ui/badge';
+import { Button } from '../../../components/ui/button';
 import {
   AlertCircle,
   CheckCircle2,
   Flame,
   Loader2,
   Trash2,
+  RotateCw,
 } from 'lucide-react';
 
 interface Props {
   items: QueueItem[];
   onRemoveItem: (id: string) => void;
+  onRetryItem: (id: string) => void;
   disabled?: boolean;
 }
 
@@ -22,7 +25,7 @@ const formatBytes = (bytes?: number): string => {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 };
 
-export const BatchQueueGrid: React.FC<Props> = ({ items, onRemoveItem, disabled = false }) => {
+export const BatchQueueGrid: React.FC<Props> = ({ items, onRemoveItem, onRetryItem, disabled = false }) => {
   if (items.length === 0) return null;
 
   return (
@@ -76,17 +79,29 @@ export const BatchQueueGrid: React.FC<Props> = ({ items, onRemoveItem, disabled 
                 )}
               </div>
 
-              {/* Delete Button */}
-              {!disabled && (
-                <button
-                  type="button"
-                  onClick={() => onRemoveItem(item.id)}
-                  className="absolute top-1.5 right-1.5 p-1 rounded-md bg-background/80 hover:bg-destructive hover:text-destructive-foreground text-muted-foreground transition opacity-0 group-hover:opacity-100 cursor-pointer"
-                  title="Remove"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              )}
+              {/* Action Buttons - Retry for failed, Delete for others */}
+              <div className="absolute top-1.5 right-1.5 z-10 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                {isError && !disabled && (
+                  <button
+                    type="button"
+                    onClick={() => onRetryItem(item.id)}
+                    className="p-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white transition shadow-sm cursor-pointer"
+                    title="Retry this item"
+                  >
+                    <RotateCw className="w-3 h-3" />
+                  </button>
+                )}
+                {!disabled && (
+                  <button
+                    type="button"
+                    onClick={() => onRemoveItem(item.id)}
+                    className="p-1 rounded-md bg-background/80 hover:bg-destructive hover:text-destructive-foreground text-muted-foreground transition cursor-pointer"
+                    title="Remove"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Info */}

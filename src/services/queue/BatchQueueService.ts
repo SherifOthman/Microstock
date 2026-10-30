@@ -318,24 +318,24 @@ export class BatchQueueService {
       item.assignedModel = keyRecord.modelId;
       this.notify();
 
-      // 2. Build prompt & invoke vision API (or text-only for EPS without preview)
+      // 2. Build prompt & invoke vision API
       const adapter = getProviderAdapter(keyRecord.providerId);
-      const prompt = buildVisionPrompt(item.filename, userPrompt, item.mediaType, keywordPhrasing, titleLengthPreset);
+      const basePrompt = buildVisionPrompt(item.filename, userPrompt, item.mediaType, keywordPhrasing, titleLengthPreset);
 
-      // For EPS/vector files where no real artwork preview was generated, don't send the
-      // placeholder badge image — send a 1×1 white pixel so the API call still works,
-      // while the enhanced prompt tells the AI to rely on the filename hint instead.
+      // For EPS/vector files where no real artwork preview was generated (only a placeholder badge),
+      // send the placeholder BUT with a special prompt override telling the AI to IGNORE the visual
+      // and generate metadata purely from the filename hint.
       const isEpsNoPreview = item.mediaType === 'vector' && item.hasRealPreview === false;
-      // 1×1 white pixel JPEG (minimal image that won't confuse the AI with badge text)
-      const WHITE_PIXEL_JPEG = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFgABAQEAAAAAAAAAAAAAAAAABgUEA/8QAHhAAAgICAwEAAAAAAAAAAAAAAQIDBAUREiEx/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCwzNi5vFWoK11jLGV9jXi3pJYU2rYNQAAAA==';
+      
+      const finalPrompt = isEpsNoPreview
+        ? basePrompt + '\n\n🚨 CRITICAL OVERRIDE: The image you see is a placeholder badge with NO actual artwork. COMPLETELY IGNORE the visual content (text, colors, badge). Generate ALL metadata based ONLY on the filename hint above. Analyze the filename to infer the vector subject, style, and theme. Do NOT mention "badge", "text", "placeholder", "EPS 10 VECTOR", or describe what you see visually.'
+        : basePrompt;
 
       const rawAiText = await adapter.analyzeImage(
         keyRecord.key,
         keyRecord.modelId,
-        isEpsNoPreview ? WHITE_PIXEL_JPEG : item.thumbnailBase64!,
-        isEpsNoPreview
-          ? prompt + '\nIMPORTANT: No visual preview is available for this EPS vector file. Generate all metadata based entirely on the filename hint above and your expertise in microstock vector illustration. Do NOT describe a white or blank image — describe the vector subject the filename suggests.'
-          : prompt,
+        item.thumbnailBase64!,
+        finalPrompt,
         SYSTEM_VISION_PROMPT
       );
 
@@ -480,6 +480,30 @@ export class BatchQueueService {
       }
     }
     this.start(isAiGenerated, userPrompt, defaultModelName, keywordPhrasing, titleLengthPreset);
+  }
+
+  /**
+   * Retry a single failed item
+   */
+  public retryItem(
+    id: string,
+    isAiGenerated = true,
+    userPrompt?: string,
+    defaultModelName?: string,
+    keywordPhrasing: KeywordPhrasing = 'mixed',
+    titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal'
+  ): void {
+    const item = this.items.get(id);
+    if (item && item.status === 'error') {
+      item.status = 'ready';
+      item.error = undefined;
+      item.retryCount = 0;
+      this.notify();
+      // If not already running, start processing
+      if (this.status !== 'running') {
+        this.start(isAiGenerated, userPrompt, defaultModelName, keywordPhrasing, titleLengthPreset);
+      }
+    }
   }
 
   /**

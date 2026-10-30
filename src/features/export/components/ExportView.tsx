@@ -100,7 +100,21 @@ export const ExportView: React.FC = () => {
   };
 
   const handleSingleExport = (pid: SupportedPlatform) => {
-    const res = generatePlatformCsv(pid, records, 'stock_metadata', getTransformOptions());
+    // Check for incomplete work
+    const completedRecords = records.filter(r => r.status === 'completed');
+    const failedOrPendingCount = records.length - completedRecords.length;
+    
+    if (failedOrPendingCount > 0) {
+      const proceed = window.confirm(
+        `⚠️ Warning: ${failedOrPendingCount} file(s) are incomplete or failed.\n\n` +
+        `Completed: ${completedRecords.length}\n` +
+        `Incomplete/Failed: ${failedOrPendingCount}\n\n` +
+        `Do you want to export the ${completedRecords.length} completed items only?`
+      );
+      if (!proceed) return;
+    }
+
+    const res = generatePlatformCsv(pid, completedRecords, 'stock_metadata', getTransformOptions());
     if (res.isBlocked) {
       setNoticeDialog({
         title: 'Export Blocked',
@@ -146,9 +160,24 @@ export const ExportView: React.FC = () => {
       });
       return;
     }
+
+    // Check for incomplete work
+    const completedRecords = records.filter(r => r.status === 'completed');
+    const failedOrPendingCount = records.length - completedRecords.length;
+    
+    if (failedOrPendingCount > 0) {
+      const proceed = window.confirm(
+        `⚠️ Warning: ${failedOrPendingCount} file(s) are incomplete or failed.\n\n` +
+        `Completed: ${completedRecords.length}\n` +
+        `Incomplete/Failed: ${failedOrPendingCount}\n\n` +
+        `Do you want to export the ${completedRecords.length} completed items only?`
+      );
+      if (!proceed) return;
+    }
+
     setIsZipping(true);
     try {
-      await downloadAllCsvsAsZip(selectedPlatforms, records, 'stock_metadata', getTransformOptions());
+      await downloadAllCsvsAsZip(selectedPlatforms, completedRecords, 'stock_metadata', getTransformOptions());
     } catch (err: any) {
       setNoticeDialog({
         title: 'ZIP Export Failed',
