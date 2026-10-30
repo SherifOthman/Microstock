@@ -90,9 +90,9 @@ export function App() {
     <div className="min-h-screen bg-background text-foreground flex flex-col antialiased">
       {/* Sleek Minimal Responsive Header */}
       <header className="border-b border-border bg-card/90 backdrop-blur-md sticky top-0 z-40 w-full overflow-hidden">
-        <div className="max-w-[1700px] w-full mx-auto px-3 sm:px-6 py-2 sm:py-0 sm:h-14 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 sm:gap-4">
-          {/* Mobile Top Row / Desktop Left: Logo & Brand + Mobile Quick Utilities */}
-          <div className="flex items-center justify-between w-full sm:w-auto min-w-0">
+        <div className="max-w-[1700px] w-full mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-3">
+          {/* Left: Brand Logo & Title (Clickable) + Return to Hub Grid Button */}
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               type="button"
               onClick={() => handleTabChange('home')}
@@ -110,154 +110,35 @@ export function App() {
               </div>
             </button>
 
-            {/* Mobile-only utilities on top row (Home, Language, Theme, API Keys) */}
-            <div className="flex sm:hidden items-center gap-1.5 shrink-0">
-              {/* Home Hub shortcut */}
-              <button
-                type="button"
-                onClick={() => handleTabChange('home')}
-                className={`w-7.5 h-7.5 rounded-lg border flex items-center justify-center cursor-pointer transition shadow-2xs ${
-                  activeTab === 'home'
-                    ? 'bg-primary text-primary-foreground border-primary'
-                    : 'bg-card text-foreground border-border hover:bg-accent'
-                }`}
-                title="All Tools Dashboard"
-              >
-                <LayoutGrid className="w-3.5 h-3.5" />
-              </button>
-
-              {/* Language Switcher */}
-              <button
-                type="button"
-                onClick={() => setLanguage(language === 'en' ? 'ar' : 'en')}
-                className="px-2 h-7.5 rounded-lg bg-card hover:bg-accent border border-border flex items-center gap-1 text-xs font-semibold text-foreground cursor-pointer transition shadow-2xs"
-                title="Toggle Language / تبديل اللغة"
-              >
-                <Languages className="w-3.5 h-3.5 text-primary" />
-                <span className="text-[11px] font-mono">{language === 'en' ? 'عربي' : 'EN'}</span>
-              </button>
-
-              {/* Theme Toggle */}
-              <button
-                type="button"
-                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                className="w-7.5 h-7.5 rounded-lg bg-card hover:bg-accent border border-border flex items-center justify-center text-foreground cursor-pointer transition shadow-2xs"
-                title={theme === 'dark' ? t.switchToLight : t.switchToDark}
-                aria-label="Toggle theme"
-              >
-                {theme === 'dark' ? (
-                  <Sun className="w-3.5 h-3.5 text-amber-400" />
-                ) : (
-                  <Moon className="w-3.5 h-3.5 text-slate-700" />
-                )}
-              </button>
-
-              {/* API Keys Icon Button */}
-              <button
-                type="button"
-                onClick={() => setIsKeyRingOpen(true)}
-                className="w-7.5 h-7.5 rounded-lg bg-card hover:bg-accent border border-border flex items-center justify-center text-foreground cursor-pointer transition shadow-2xs"
-                title="Manage API Keys"
-              >
-                <KeyRound className="w-3.5 h-3.5 text-primary" />
-              </button>
-            </div>
-          </div>
-
-          {/* Row 2 on Mobile (Horizontal Scroll Tabs) / Center on Desktop */}
-          <div className="flex items-center gap-1 bg-secondary/50 p-1 rounded-xl border border-border shrink-0 min-w-0 w-full sm:w-auto overflow-x-auto no-scrollbar">
-            {/* All Tools Hub Tab */}
+            {/* Hub / All Tools Button */}
             <button
               type="button"
               onClick={() => handleTabChange('home')}
-              className={`flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer shrink-0 ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer shrink-0 ${
                 activeTab === 'home'
-                  ? 'bg-card text-foreground shadow-2xs border border-border/80'
-                  : 'text-muted-foreground hover:text-foreground'
+                  ? 'bg-primary text-primary-foreground border-primary shadow-xs'
+                  : 'bg-card text-foreground border-border hover:bg-accent'
               }`}
+              title="All Tools Dashboard / لوحة جميع الأدوات"
             >
-              <LayoutGrid className="w-3.5 h-3.5 text-primary shrink-0" />
-              <span className="whitespace-nowrap">{t.allTools || 'All Tools'}</span>
-            </button>
-
-            {/* Tool 1: Metadata Studio */}
-            <button
-              type="button"
-              onClick={() => handleTabChange('studio')}
-              className={`flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer shrink-0 ${
-                activeTab === 'studio'
-                  ? 'bg-card text-foreground shadow-2xs border border-border/80'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Wand2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-              <span className="whitespace-nowrap">{t.metadataStudio}</span>
-              {masterCount > 0 && (
-                <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-mono hidden md:inline-flex">
-                  {masterCount}
-                </Badge>
-              )}
-            </button>
-
-            {/* Tool 2: Distribution Tracker */}
-            <button
-              type="button"
-              onClick={() => handleTabChange('tracker')}
-              className={`flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer shrink-0 ${
-                activeTab === 'tracker'
-                  ? 'bg-card text-foreground shadow-2xs border border-border/80'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Layers className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-              <span className="whitespace-nowrap">{t.distributionTracker}</span>
-              {trackerCount > 0 && (
-                <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-mono hidden md:inline-flex">
-                  {trackerCount}
-                </Badge>
-              )}
-            </button>
-
-            {/* Tool 3: Smart File Cleaner & Renamer */}
-            <button
-              type="button"
-              onClick={() => handleTabChange('cleaner')}
-              className={`flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer shrink-0 ${
-                activeTab === 'cleaner'
-                  ? 'bg-card text-foreground shadow-2xs border border-border/80'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Sparkles className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-              <span className="whitespace-nowrap">{t.fileCleaner || 'File Cleaner'}</span>
-            </button>
-
-            {/* Tool 4: Lossless Video Muter */}
-            <button
-              type="button"
-              onClick={() => handleTabChange('muter')}
-              className={`flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer shrink-0 ${
-                activeTab === 'muter'
-                  ? 'bg-card text-foreground shadow-2xs border border-border/80'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <VolumeX className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-              <span className="whitespace-nowrap">{t.videoMuter || 'Video Muter'}</span>
+              <LayoutGrid className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline">{t.allTools || 'All Tools'}</span>
             </button>
           </div>
 
-          {/* Desktop-only Right Header Utilities (Language, Manage Keys, Theme Toggle, & Local DB Indicator) */}
-          <div className="hidden sm:flex items-center gap-2 shrink-0">
+          {/* Right Header Utilities (Language, Manage Keys, Theme Toggle, & Local DB Indicator) */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {/* Language Switcher */}
             <button
               type="button"
               onClick={() => setLanguage(language === 'en' ? 'ar' : 'en')}
-              className="px-2.5 h-8 rounded-lg bg-card hover:bg-accent border border-border flex items-center gap-1.5 text-xs font-semibold text-foreground cursor-pointer transition shadow-2xs"
+              className="px-2 sm:px-2.5 h-8 rounded-lg bg-card hover:bg-accent border border-border flex items-center gap-1 sm:gap-1.5 text-xs font-semibold text-foreground cursor-pointer transition shadow-2xs"
               title="Toggle Language / تبديل اللغة"
             >
-              <Languages className="w-3.5 h-3.5 text-primary" />
-              <span>{t.switchLanguage}</span>
+              <Languages className="w-3.5 h-3.5 text-primary shrink-0" />
+              <span className="text-[11px] sm:text-xs font-mono sm:font-sans">
+                {language === 'en' ? 'عربي' : 'EN'}
+              </span>
             </button>
 
             {/* Theme Toggle */}
@@ -275,16 +156,18 @@ export function App() {
               )}
             </button>
 
+            {/* API Keys */}
             <button
               type="button"
               onClick={() => setIsKeyRingOpen(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-card hover:bg-accent border border-border text-xs text-foreground cursor-pointer transition"
+              className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-card hover:bg-accent border border-border text-xs text-foreground cursor-pointer transition shadow-2xs"
               title="Manage API Keys & Priority Cascade"
             >
-              <KeyRound className="w-3.5 h-3.5 text-primary" />
-              <span className="font-medium">{t.apiKeys}</span>
+              <KeyRound className="w-3.5 h-3.5 text-primary shrink-0" />
+              <span className="font-medium hidden sm:inline">{t.apiKeys}</span>
             </button>
 
+            {/* 100% Local DB badge on desktop */}
             <div className="hidden md:flex items-center gap-1 text-[11px] text-muted-foreground font-mono pl-1 border-l border-border">
               <ShieldCheck className="w-3.5 h-3.5 text-foreground" />
               <span>{t.localDb}</span>
