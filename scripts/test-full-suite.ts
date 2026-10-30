@@ -37,6 +37,10 @@ async function runTestSuite() {
   const clean2 = cleanFilenameHint(rawFile2);
   assert(clean2 === 'Brushed copper metal texture', 'cleanFilenameHint handles copper texture file', `Got: "${clean2}"`);
 
+  const rawFile3 = 'Helmet.eps';
+  const clean3 = cleanFilenameHint(rawFile3);
+  assert(clean3 === 'Helmet', 'cleanFilenameHint preserves single subject word filename (e.g. Helmet.eps)', `Got: "${clean3}"`);
+
   const prompt = buildVisionPrompt(rawFile1, 'commercial microstock style');
   assert(prompt.includes('Tan leather texture close up'), 'buildVisionPrompt includes clean subject hint');
   assert(!prompt.includes('20261015121707'), 'buildVisionPrompt does not leak timestamp numbers');
@@ -492,6 +496,10 @@ async function runTestSuite() {
   const vectorPrompt = buildVisionPrompt('isometric_city_map.eps', undefined, 'vector');
   assert(vectorPrompt.includes('CRITICAL MEDIA TYPE: VECTOR EPS ILLUSTRATION'), 'buildVisionPrompt: Injects vector illustration directives');
   assert(vectorPrompt.includes('NEVER include camera/photo terms'), 'buildVisionPrompt: Forbids camera/photo terms for vector');
+
+  const helmetBadgePrompt = buildVisionPrompt('Helmet.eps', undefined, 'vector', 'mixed', 'optimal', false);
+  assert(helmetBadgePrompt.includes('CRITICAL VECTOR SUBJECT OVERRIDE'), 'buildVisionPrompt: Overrides placeholder badge with specific subject');
+  assert(helmetBadgePrompt.includes('Helmet'), 'buildVisionPrompt: Injects "Helmet" into placeholder vector prompt');
 
   // 2. Shutterstock Illustration Auto-Detection
   const vectorRec: MasterMetadataRecord = {

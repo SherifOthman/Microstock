@@ -78,33 +78,205 @@ export function parseEpsBoundingBox(headerText: string): EpsBoundingBox | null {
 }
 
 /**
- * Tier 2A: Extracts embedded high-res preview from DOS EPS binary header (0xC5D0D3C6)
+ * Pure-TypeScript TIFF preview decoder for Adobe Illustrator DOS EPS files.
+ * Decodes uncompressed and PackBits-compressed RGB, RGBA, 8-bit Palette, and Monochrome TIFF previews.
  */
-function extractBinaryDosEpsPreview(buffer: ArrayBuffer): { blob: Blob; mime: string } | null {
+export function decodeTiffToCanvas(buffer: ArrayBuffer): HTMLCanvasElement | null {
+  if (buffer.byteLength < 8) return null;
+  const view = new DataView(buffer);
+  const byteOrder = view.getUint16(0, false);
+  const isLe = byteOrder === 0x4949; // 'II' (Little Endian)
+  if (!isLe && byteOrder !== 0x4d4d) return null; // 'MM' (Big Endian)
+  const magic = view.getUint16(2, isLe);
+  if (magic !== 42) return null;
+
+  const firstIfdOffset = view.getUint32(4, isLe);
+  if (firstIfdOffset >= buffer.byteLength || firstIfdOffset < 8) return null;
+
+  let width = 0;
+  let height = 0;
+  let bitsPerSample = 8;
+  let compression = 1;
+  let photometric = 2; // RGB default
+  let stripOffsets: number[] = [];
+  let stripByteCounts: number[] = [];
+  let samplesPerPixel = 1;
+  let colorMap: number[] = [];
+
+  const readTagValue = (type: number, count: number, offsetVal: number): number[] => {
+    const values: number[] = [];
+    if (count === 1) {
+      if (type === 3) values.push(offsetVal & 0xffff);
+      else if (type === 4 || type === 1) values.push(offsetVal);
+      return values;
+    }
+    const valOffset = offsetVal;
+    if (valOffset + count * (type === 3 ? 2 : 4) > buffer.byteLength) return values;
+    for (let c = 0; c < count; c++) {
+      if (type === 3) values.push(view.getUint16(valOffset + c * 2, isLe));
+      else if (type === 4) values.push(view.getUint32(valOffset + c * 4, isLe));
+      else if (type === 1) values.push(view.getUint8(valOffset + c));
+    }
+    return values;
+  };
+
+  const numEntries = view.getUint16(firstIfdOffset, isLe);
+  let entryPos = firstIfdOffset + 2;
+
+  for (let i = 0; i < numEntries && entryPos + 12 <= buffer.byteLength; i++, entryPos += 12) {
+    const tag = view.getUint16(entryPos, isLe);
+    const type = view.getUint16(entryPos + 2, isLe);
+    const count = view.getUint32(entryPos + 4, isLe);
+    const offsetVal = view.getUint32(entryPos + 8, isLe);
+
+    if (tag === 256) width = count === 1 ? (type === 3 ? (offsetVal & 0xffff) : offsetVal) : 0;
+    else if (tag === 257) height = count === 1 ? (type === 3 ? (offsetVal & 0xffff) : offsetVal) : 0;
+    else if (tag === 258) {
+      const bps = readTagValue(type, count, offsetVal);
+      if (bps.length > 0) bitsPerSample = bps[0];
+    } else if (tag === 259) compression = offsetVal & 0xffff;
+    else if (tag === 262) photometric = offsetVal & 0xffff;
+    else if (tag === 273) stripOffsets = readTagValue(type, count, offsetVal);
+    else if (tag === 277) samplesPerPixel = offsetVal & 0xffff;
+    else if (tag === 279) stripByteCounts = readTagValue(type, count, offsetVal);
+    else if (tag === 320) colorMap = readTagValue(type, count, offsetVal);
+  }
+
+  if (width <= 0 || height <= 0 || stripOffsets.length === 0) return null;
+
+  const u8Buffer = new Uint8Array(buffer);
+  const rgba = new Uint8ClampedArray(width * height * 4);
+  let pixelIndex = 0;
+
+  for (let s = 0; s < stripOffsets.length; s++) {
+    const offset = stripOffsets[s];
+    const byteCount = stripByteCounts[s] || (buffer.byteLength - offset);
+    if (offset + byteCount > buffer.byteLength) continue;
+
+    let stripBytes = u8Buffer.subarray(offset, offset + byteCount);
+
+    // Decompress PackBits (tag 259 === 32773)
+    if (compression === 32773) {
+      const decompressed: number[] = [];
+      let p = 0;
+      while (p < stripBytes.length) {
+        const n = (stripBytes[p++] << 24) >> 24; // signed int8
+        if (n >= 0 && n <= 127) {
+          for (let k = 0; k < n + 1 && p < stripBytes.length; k++) {
+            decompressed.push(stripBytes[p++]);
+          }
+        } else if (n >= -127 && n <= -1) {
+          if (p < stripBytes.length) {
+            const b = stripBytes[p++];
+            for (let k = 0; k < -n + 1; k++) {
+              decompressed.push(b);
+            }
+          }
+        }
+      }
+      stripBytes = new Uint8Array(decompressed);
+    }
+
+    // Decode strip pixels to RGBA
+    if (photometric === 2) {
+      // 24-bit RGB or 32-bit RGBA
+      const bytesPerPixel = samplesPerPixel >= 3 ? samplesPerPixel : 3;
+      for (let p = 0; p + bytesPerPixel <= stripBytes.length && pixelIndex < rgba.length; p += bytesPerPixel) {
+        rgba[pixelIndex++] = stripBytes[p];     // R
+        rgba[pixelIndex++] = stripBytes[p + 1]; // G
+        rgba[pixelIndex++] = stripBytes[p + 2]; // B
+        rgba[pixelIndex++] = bytesPerPixel >= 4 ? stripBytes[p + 3] : 255; // A
+      }
+    } else if (photometric === 3 && colorMap.length > 0) {
+      // 8-bit Palette Indexed Color
+      const numColors = 1 << bitsPerSample;
+      for (let p = 0; p < stripBytes.length && pixelIndex < rgba.length; p++) {
+        const colorIdx = stripBytes[p];
+        if (colorIdx < numColors) {
+          const r = (colorMap[colorIdx] >> 8) & 0xff;
+          const g = (colorMap[colorIdx + numColors] >> 8) & 0xff;
+          const b = (colorMap[colorIdx + 2 * numColors] >> 8) & 0xff;
+          rgba[pixelIndex++] = r;
+          rgba[pixelIndex++] = g;
+          rgba[pixelIndex++] = b;
+          rgba[pixelIndex++] = 255;
+        } else {
+          rgba[pixelIndex++] = 255;
+          rgba[pixelIndex++] = 255;
+          rgba[pixelIndex++] = 255;
+          rgba[pixelIndex++] = 255;
+        }
+      }
+    } else if (photometric === 0 || photometric === 1) {
+      // Grayscale or Monochrome
+      if (bitsPerSample === 8) {
+        for (let p = 0; p < stripBytes.length && pixelIndex < rgba.length; p++) {
+          let val = stripBytes[p];
+          if (photometric === 0) val = 255 - val;
+          rgba[pixelIndex++] = val;
+          rgba[pixelIndex++] = val;
+          rgba[pixelIndex++] = val;
+          rgba[pixelIndex++] = 255;
+        }
+      } else if (bitsPerSample === 1) {
+        // 1-bit monochrome
+        for (let p = 0; p < stripBytes.length && pixelIndex < rgba.length; p++) {
+          const byte = stripBytes[p];
+          for (let bit = 7; bit >= 0 && pixelIndex < rgba.length; bit--) {
+            const isWhite = (byte >> bit) & 1 ? (photometric === 1 ? 255 : 0) : (photometric === 1 ? 0 : 255);
+            rgba[pixelIndex++] = isWhite;
+            rgba[pixelIndex++] = isWhite;
+            rgba[pixelIndex++] = isWhite;
+            rgba[pixelIndex++] = 255;
+          }
+        }
+      }
+    }
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  const imgData = new ImageData(rgba, width, height);
+  ctx.putImageData(imgData, 0, 0);
+  return canvas;
+}
+
+/**
+ * Tier 2A: Extracts embedded high-res preview from DOS EPS binary header (0xC5D0D3C6)
+ * Supports embedded JPEG and true native TIFF decoding.
+ */
+function extractBinaryDosEpsPreview(buffer: ArrayBuffer): { blob?: Blob; canvas?: HTMLCanvasElement; mime: string } | null {
   if (buffer.byteLength < 30) return null;
   const view = new DataView(buffer);
   const magic = view.getUint32(0, true);
   if (magic !== 0xc5d0d3c6) return null;
 
-  // DOS EPS Header:
-  // Offset 0: 0xC5D0D3C6
-  // Offset 4: PS offset
-  // Offset 8: PS length
-  // Offset 12: WMF offset
-  // Offset 16: WMF length
-  // Offset 20: TIFF offset
-  // Offset 24: TIFF length
   const tiffOffset = view.getUint32(20, true);
   const tiffLength = view.getUint32(24, true);
 
   if (tiffOffset > 0 && tiffLength > 0 && tiffOffset + tiffLength <= buffer.byteLength) {
     const slice = buffer.slice(tiffOffset, tiffOffset + tiffLength);
     const u8 = new Uint8Array(slice, 0, 4);
-    // Only return JPEG previews — browsers cannot decode TIFF in <img>
+
+    // Direct JPEG preview embedded at tiffOffset
     if (u8[0] === 0xff && u8[1] === 0xd8) {
       return { blob: new Blob([slice], { type: 'image/jpeg' }), mime: 'image/jpeg' };
     }
-    // TIFF preview: scan inside it for an embedded JPEG (Illustrator often embeds a JPEG inside the TIFF)
+
+    // Try TIFF decoder directly
+    try {
+      const tiffCanvas = decodeTiffToCanvas(slice);
+      if (tiffCanvas && tiffCanvas.width > 10 && tiffCanvas.height > 10) {
+        return { canvas: tiffCanvas, mime: 'image/tiff' };
+      }
+    } catch {
+      // Fall through to inner JPEG scan
+    }
+
+    // Scan inside TIFF for embedded JPEG stream
     const tiffBytes = new Uint8Array(slice);
     for (let i = 0; i < tiffBytes.length - 100; i++) {
       if (tiffBytes[i] === 0xff && tiffBytes[i + 1] === 0xd8 && tiffBytes[i + 2] === 0xff) {
@@ -119,30 +291,32 @@ function extractBinaryDosEpsPreview(buffer: ArrayBuffer): { blob: Blob; mime: st
         }
       }
     }
-    // Pure TIFF — skip (browser can't decode it natively)
   }
 
   return null;
 }
 
 /**
- * Tier 2B: Extracts embedded XMP thumbnail (`xmpGImg:image`)
+ * Tier 2B: Extracts embedded XMP thumbnail (`xmpGImg:image`, `xapGImg:image`, `photoshop:Thumbnail`, `xmpG:image`)
  */
 function extractXmpThumbnail(epsText: string): string | null {
-  // Look for xmpGImg:image base64 block
-  const match = epsText.match(/<xmpGImg:image>([\s\S]*?)<\/xmpGImg:image>/i);
-  if (match) {
-    const cleanB64 = match[1].replace(/[\s\r\n]+/g, '');
-    if (cleanB64.length > 100) {
-      return `data:image/jpeg;base64,${cleanB64}`;
-    }
-  }
+  // Look for any standard XMP image tag
+  const patterns = [
+    /<xmpGImg:image>([\s\S]*?)<\/xmpGImg:image>/i,
+    /<xapGImg:image>([\s\S]*?)<\/xapGImg:image>/i,
+    /<photoshop:Thumbnail>([\s\S]*?)<\/photoshop:Thumbnail>/i,
+    /<xmpG:image>([\s\S]*?)<\/xmpG:image>/i,
+    /xmpGImg:image="([^"]+)"/i,
+  ];
 
-  // Also check standard Base64 preview streams
-  const altMatch = epsText.match(/xmpGImg:image="([^"]+)"/i);
-  if (altMatch && altMatch[1].length > 100) {
-    const clean = altMatch[1].replace(/[\s\r\n]+/g, '');
-    return `data:image/jpeg;base64,${clean}`;
+  for (const regex of patterns) {
+    const match = epsText.match(regex);
+    if (match && match[1]) {
+      const cleanB64 = match[1].replace(/[\s\r\n]+/g, '');
+      if (cleanB64.length > 100) {
+        return `data:image/jpeg;base64,${cleanB64}`;
+      }
+    }
   }
 
   return null;
@@ -153,7 +327,7 @@ function extractXmpThumbnail(epsText: string): string | null {
  */
 function extractEmbeddedJpegStream(buffer: ArrayBuffer): Blob | null {
   const bytes = new Uint8Array(buffer);
-  const maxScan = Math.min(bytes.length - 100, 2 * 1024 * 1024); // Scan first 2MB
+  const maxScan = Math.min(bytes.length - 100, 10 * 1024 * 1024); // Scan up to 10MB
 
   for (let i = 0; i < maxScan; i++) {
     // JPEG SOI marker 0xFF 0xD8 0xFF
@@ -165,7 +339,7 @@ function extractEmbeddedJpegStream(buffer: ArrayBuffer): Blob | null {
           if (jpegSlice.length > 1024) {
             return new Blob([jpegSlice], { type: 'image/jpeg' });
           }
-          break; // EOI found but too small — stop inner scan and try next SOI
+          break;
         }
       }
     }
@@ -176,6 +350,7 @@ function extractEmbeddedJpegStream(buffer: ArrayBuffer): Blob | null {
 /**
  * Tier 1: PostScript Level 2/3 Vector Path Parser
  * Extracts vector commands and executes them directly on an HTML5 Canvas context
+ * Uses a token-stream operand stack to handle multiple operators per line and Illustrator procsets.
  */
 function renderPostScriptVectorPaths(
   epsContent: string,
@@ -184,10 +359,7 @@ function renderPostScriptVectorPaths(
   scale: number,
   targetWidth: number,
   targetHeight: number
-): number {  // returns pathOpCount (0 = nothing rendered)
-  // PostScript transforms:
-  // EPS coordinate system has origin (0,0) at bottom-left, increasing upward.
-  // Canvas coordinate system has origin (0,0) at top-left, increasing downward.
+): number {
   ctx.save();
 
   // Background is pure white (#FFFFFF)
@@ -195,7 +367,6 @@ function renderPostScriptVectorPaths(
   ctx.fillRect(0, 0, targetWidth, targetHeight);
 
   // Apply world transform
-  // Shift so bounding box lower-left aligns with (0,0), scale, and flip Y
   ctx.translate(-bb.llx * scale, targetHeight + bb.lly * scale);
   ctx.scale(scale, -scale);
 
@@ -206,183 +377,234 @@ function renderPostScriptVectorPaths(
   ctx.lineCap = 'butt';
   ctx.lineJoin = 'miter';
 
-  // Fast tokenizer of PostScript vector stream
-  // We extract the PostScript body (strip binary preview header if present)
   const psStart = epsContent.indexOf('%!PS-Adobe');
   const body = psStart >= 0 ? epsContent.slice(psStart) : epsContent;
 
   const lines = body.split(/[\r\n]+/);
   let pathOpCount = 0;
   let inPath = false;
+  const stack: number[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i].trim();
-    if (!rawLine || rawLine.startsWith('%')) continue;
-
-    // Check for EOF or end of page
-    if (rawLine === 'showpage' || rawLine === '%%Trailer' || rawLine === '%%EOF') {
-      break;
+    if (!rawLine) continue;
+    // Skip comments, but do not break on showpage inside comments or procsets
+    if (rawLine.startsWith('%')) {
+      if (rawLine.startsWith('%%Trailer') || rawLine.startsWith('%%EOF')) {
+        break;
+      }
+      continue;
     }
 
-    // Tokenize line by whitespace
     const tokens = rawLine.split(/\s+/);
-    const len = tokens.length;
-    if (len === 0) continue;
+    for (let t = 0; t < tokens.length; t++) {
+      const tok = tokens[t];
+      if (!tok) continue;
 
-    const op = tokens[len - 1];
+      const num = parseFloat(tok);
+      if (!isNaN(num) && isFinite(num) && !tok.startsWith('/') && !tok.startsWith('(')) {
+        stack.push(num);
+        continue;
+      }
 
-    // 1. Color Operators:
-    // CMYK: c m y k setcmykcolor OR c m y k k
-    if ((op === 'setcmykcolor' || op === 'k' || op === 'K') && len >= 5) {
-      const c = parseFloat(tokens[len - 5]);
-      const m = parseFloat(tokens[len - 4]);
-      const y = parseFloat(tokens[len - 3]);
-      const k = parseFloat(tokens[len - 2]);
-      if (!isNaN(c) && !isNaN(m) && !isNaN(y) && !isNaN(k)) {
-        const [r, g, b] = cmykToRgb(c, m, y, k);
-        const col = `rgb(${r},${g},${b})`;
-        if (op === 'K') {
-          ctx.strokeStyle = col;
-        } else {
-          ctx.fillStyle = col;
-          if (op === 'k') ctx.strokeStyle = col;
+      // It's an operator!
+      const op = tok;
+
+      // Color operators
+      if (op === 'setcmykcolor' || op === 'k' || op === 'K' || op === 'x' || op === 'X') {
+        if (stack.length >= 4) {
+          const k = stack.pop()!;
+          const y = stack.pop()!;
+          const m = stack.pop()!;
+          const c = stack.pop()!;
+          const [r, g, b] = cmykToRgb(c, m, y, k);
+          const col = `rgb(${r},${g},${b})`;
+          if (op === 'K' || op === 'X') {
+            ctx.strokeStyle = col;
+          } else {
+            ctx.fillStyle = col;
+            if (op === 'k') ctx.strokeStyle = col;
+          }
         }
+        continue;
       }
-      continue;
-    }
 
-    // RGB: r g b setrgbcolor OR r g b rg / RG
-    if ((op === 'setrgbcolor' || op === 'rg' || op === 'RG') && len >= 4) {
-      const r = Math.round(parseFloat(tokens[len - 4]) * 255);
-      const g = Math.round(parseFloat(tokens[len - 3]) * 255);
-      const b = Math.round(parseFloat(tokens[len - 2]) * 255);
-      if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
-        const col = `rgb(${r},${g},${b})`;
-        if (op === 'RG') {
-          ctx.strokeStyle = col;
-        } else {
-          ctx.fillStyle = col;
-          ctx.strokeStyle = col;
+      if (op === 'setrgbcolor' || op === 'rg' || op === 'RG') {
+        if (stack.length >= 3) {
+          const b = Math.round(stack.pop()! * 255);
+          const g = Math.round(stack.pop()! * 255);
+          const r = Math.round(stack.pop()! * 255);
+          const col = `rgb(${r},${g},${b})`;
+          if (op === 'RG') {
+            ctx.strokeStyle = col;
+          } else {
+            ctx.fillStyle = col;
+            ctx.strokeStyle = col;
+          }
         }
+        continue;
       }
-      continue;
-    }
 
-    // Grayscale: g setgray OR g g / G
-    if ((op === 'setgray' || op === 'g' || op === 'G') && len >= 2) {
-      const gVal = Math.round(parseFloat(tokens[len - 2]) * 255);
-      if (!isNaN(gVal)) {
-        const col = `rgb(${gVal},${gVal},${gVal})`;
-        if (op === 'G') {
-          ctx.strokeStyle = col;
-        } else {
-          ctx.fillStyle = col;
-          ctx.strokeStyle = col;
+      if (op === 'setgray' || op === 'g' || op === 'G') {
+        if (stack.length >= 1) {
+          const gVal = Math.round(stack.pop()! * 255);
+          const col = `rgb(${gVal},${gVal},${gVal})`;
+          if (op === 'G') {
+            ctx.strokeStyle = col;
+          } else {
+            ctx.fillStyle = col;
+            ctx.strokeStyle = col;
+          }
         }
+        continue;
       }
-      continue;
-    }
 
-    // Line width: w setlinewidth OR w w
-    if ((op === 'setlinewidth' || op === 'w') && len >= 2) {
-      const lw = parseFloat(tokens[len - 2]);
-      if (!isNaN(lw) && lw > 0) {
-        ctx.lineWidth = lw;
-      }
-      continue;
-    }
-
-    // 2. Vector Path Construction Operators:
-    // moveto / m: x y m
-    if ((op === 'moveto' || op === 'm') && len >= 3) {
-      const x = parseFloat(tokens[len - 3]);
-      const y = parseFloat(tokens[len - 2]);
-      if (!isNaN(x) && !isNaN(y)) {
-        if (!inPath) {
-          ctx.beginPath();
-          inPath = true;
+      if (op === 'setlinewidth' || op === 'w') {
+        if (stack.length >= 1) {
+          const lw = stack.pop()!;
+          if (lw > 0) ctx.lineWidth = lw;
         }
-        ctx.moveTo(x, y);
-        pathOpCount++;
+        continue;
       }
-      continue;
-    }
 
-    // lineto / l: x y l
-    if ((op === 'lineto' || op === 'l') && len >= 3) {
-      const x = parseFloat(tokens[len - 3]);
-      const y = parseFloat(tokens[len - 2]);
-      if (!isNaN(x) && !isNaN(y)) {
-        ctx.lineTo(x, y);
-        pathOpCount++;
+      // Path operators
+      if (op === 'moveto' || op === 'm') {
+        if (stack.length >= 2) {
+          const y = stack.pop()!;
+          const x = stack.pop()!;
+          if (!inPath) {
+            ctx.beginPath();
+            inPath = true;
+          }
+          ctx.moveTo(x, y);
+          pathOpCount++;
+        }
+        continue;
       }
-      continue;
-    }
 
-    // curveto / c: x1 y1 x2 y2 x3 y3 c
-    if ((op === 'curveto' || op === 'c') && len >= 7) {
-      const x1 = parseFloat(tokens[len - 7]);
-      const y1 = parseFloat(tokens[len - 6]);
-      const x2 = parseFloat(tokens[len - 5]);
-      const y2 = parseFloat(tokens[len - 4]);
-      const x3 = parseFloat(tokens[len - 3]);
-      const y3 = parseFloat(tokens[len - 2]);
-      if (!isNaN(x1) && !isNaN(x3)) {
-        ctx.bezierCurveTo(x1, y1, x2, y2, x3, y3);
-        pathOpCount++;
+      if (op === 'lineto' || op === 'l') {
+        if (stack.length >= 2) {
+          const y = stack.pop()!;
+          const x = stack.pop()!;
+          ctx.lineTo(x, y);
+          pathOpCount++;
+        }
+        continue;
       }
-      continue;
-    }
 
-    // closepath / h / cp
-    if (op === 'closepath' || op === 'h' || op === 'cp') {
-      ctx.closePath();
-      continue;
-    }
+      if (op === 'curveto' || op === 'c') {
+        if (stack.length >= 6) {
+          const y3 = stack.pop()!;
+          const x3 = stack.pop()!;
+          const y2 = stack.pop()!;
+          const x2 = stack.pop()!;
+          const y1 = stack.pop()!;
+          const x1 = stack.pop()!;
+          ctx.bezierCurveTo(x1, y1, x2, y2, x3, y3);
+          pathOpCount++;
+        }
+        continue;
+      }
 
-    // 3. Path Painting Operators:
-    // fill / f / F
-    if (op === 'fill' || op === 'f' || op === 'F') {
-      ctx.fill();
-      inPath = false;
-      continue;
-    }
+      if (op === 'v') {
+        if (stack.length >= 4) {
+          const y3 = stack.pop()!;
+          const x3 = stack.pop()!;
+          const y2 = stack.pop()!;
+          const x2 = stack.pop()!;
+          ctx.quadraticCurveTo(x2, y2, x3, y3);
+          pathOpCount++;
+        }
+        continue;
+      }
 
-    // eofill / f*
-    if (op === 'eofill' || op === 'f*') {
-      ctx.fill('evenodd');
-      inPath = false;
-      continue;
-    }
+      if (op === 'y') {
+        if (stack.length >= 4) {
+          const y3 = stack.pop()!;
+          const x3 = stack.pop()!;
+          const y1 = stack.pop()!;
+          const x1 = stack.pop()!;
+          ctx.quadraticCurveTo(x1, y1, x3, y3);
+          pathOpCount++;
+        }
+        continue;
+      }
 
-    // stroke / s / S
-    if (op === 'stroke' || op === 's' || op === 'S') {
-      ctx.stroke();
-      inPath = false;
-      continue;
-    }
+      if (op === 're') {
+        if (stack.length >= 4) {
+          const h = stack.pop()!;
+          const w = stack.pop()!;
+          const y = stack.pop()!;
+          const x = stack.pop()!;
+          ctx.rect(x, y, w, h);
+          pathOpCount++;
+        }
+        continue;
+      }
 
-    // b / B: fill and stroke
-    if (op === 'b' || op === 'B') {
-      ctx.fill();
-      ctx.stroke();
-      inPath = false;
-      continue;
-    }
+      if (op === 'closepath' || op === 'h' || op === 'H' || op === 'cp') {
+        ctx.closePath();
+        continue;
+      }
 
-    // b* / B*: eofill and stroke
-    if (op === 'b*' || op === 'B*') {
-      ctx.fill('evenodd');
-      ctx.stroke();
-      inPath = false;
-      continue;
-    }
+      // Painting operators
+      if (op === 'fill' || op === 'f' || op === 'F') {
+        ctx.fill();
+        inPath = false;
+        stack.length = 0;
+        continue;
+      }
 
-    // newpath / n
-    if (op === 'newpath' || op === 'n') {
-      ctx.beginPath();
-      inPath = true;
-      continue;
+      if (op === 'eofill' || op === 'f*') {
+        ctx.fill('evenodd');
+        inPath = false;
+        stack.length = 0;
+        continue;
+      }
+
+      if (op === 'stroke' || op === 's' || op === 'S') {
+        ctx.stroke();
+        inPath = false;
+        stack.length = 0;
+        continue;
+      }
+
+      if (op === 'b' || op === 'B') {
+        ctx.fill();
+        ctx.stroke();
+        inPath = false;
+        stack.length = 0;
+        continue;
+      }
+
+      if (op === 'b*' || op === 'B*') {
+        ctx.fill('evenodd');
+        ctx.stroke();
+        inPath = false;
+        stack.length = 0;
+        continue;
+      }
+
+      if (op === 'newpath' || op === 'n') {
+        ctx.beginPath();
+        inPath = true;
+        stack.length = 0;
+        continue;
+      }
+
+      if (op === 'q' || op === 'gsave') {
+        ctx.save();
+        continue;
+      }
+
+      if (op === 'Q' || op === 'grestore') {
+        ctx.restore();
+        continue;
+      }
+
+      if (stack.length > 10) {
+        stack.length = 0;
+      }
     }
   }
 
@@ -405,8 +627,7 @@ function loadImageElement(src: string): Promise<HTMLImageElement> {
 
 /**
  * Core Rasterizer Function:
- * Renders any Illustrator EPS 10 / EPS 8 file to a pristine, high-resolution JPG Canvas
- * Target longest side can be set to e.g. 512 for thumbnails, 2500 for Agency 4MP+, 4000 for Ultra HD 16MP.
+ * Multi-tier engine that extracts pixel-perfect embedded previews or executes vector paths.
  */
 export async function rasterizeEpsFile(
   file: File | Blob,
@@ -415,7 +636,7 @@ export async function rasterizeEpsFile(
 ): Promise<EpsRenderResult> {
   const buffer = await file.arrayBuffer();
 
-  // 1. Text decoding of the first 256KB to inspect PostScript headers and BoundingBox
+  // 1. Text decoding of the first 512KB to inspect PostScript headers and BoundingBox
   const decoder = new TextDecoder('latin1');
   const headerSlice = buffer.slice(0, Math.min(buffer.byteLength, 512 * 1024));
   const headerText = decoder.decode(headerSlice);
@@ -453,38 +674,13 @@ export async function rasterizeEpsFile(
   ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
   // ==========================================
-  // TIER 1: PostScript Level 2/3 Vector Engine
+  // TIER 1: Check High-Resolution Embedded Previews FIRST
   // ==========================================
-  const fullText = decoder.decode(buffer);
-  const scale = canvasWidth / bb.width;
-  const pathOpCount = renderPostScriptVectorPaths(fullText, ctx, bb, scale, canvasWidth, canvasHeight);
-
-  if (pathOpCount >= 10) {
-    const dataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
-    const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/jpeg', jpegQuality));
-    return {
-      width: canvasWidth,
-      height: canvasHeight,
-      canvas,
-      dataUrl,
-      blob,
-      sourceTier: 'vector',
-      boundingBox: bb,
-      pathOpCount,
-    };
-  }
-
-  // ==========================================
-  // TIER 2: High-Resolution Embedded Previews
-  // ==========================================
-  // Check 2A: DOS EPS Binary Header (TIFF/JPEG preview)
+  // 1A. DOS EPS Binary Header (TIFF or JPEG preview)
   const dosPreview = extractBinaryDosEpsPreview(buffer);
   if (dosPreview) {
-    const objUrl = URL.createObjectURL(dosPreview.blob);
-    try {
-      const img = await loadImageElement(objUrl);
-      ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
-      URL.revokeObjectURL(objUrl);
+    if (dosPreview.canvas) {
+      ctx.drawImage(dosPreview.canvas, 0, 0, canvasWidth, canvasHeight);
       const dataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
       const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/jpeg', jpegQuality));
       return {
@@ -495,13 +691,57 @@ export async function rasterizeEpsFile(
         blob,
         sourceTier: 'binary_preview',
         boundingBox: bb,
+        pathOpCount: 100, // real artwork
       };
-    } catch {
-      URL.revokeObjectURL(objUrl);
+    } else if (dosPreview.blob) {
+      const objUrl = URL.createObjectURL(dosPreview.blob);
+      try {
+        const img = await loadImageElement(objUrl);
+        ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+        URL.revokeObjectURL(objUrl);
+        const dataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
+        const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/jpeg', jpegQuality));
+        return {
+          width: canvasWidth,
+          height: canvasHeight,
+          canvas,
+          dataUrl,
+          blob,
+          sourceTier: 'binary_preview',
+          boundingBox: bb,
+          pathOpCount: 100, // real artwork
+        };
+      } catch {
+        URL.revokeObjectURL(objUrl);
+      }
     }
   }
 
-  // Check 2B: Embedded JPEG Stream anywhere in the file
+  // 1B. Embedded XMP Base64 Thumbnail
+  const fullText = decoder.decode(buffer);
+  const xmpB64 = extractXmpThumbnail(fullText);
+  if (xmpB64) {
+    try {
+      const img = await loadImageElement(xmpB64);
+      ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+      const dataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
+      const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/jpeg', jpegQuality));
+      return {
+        width: canvasWidth,
+        height: canvasHeight,
+        canvas,
+        dataUrl,
+        blob,
+        sourceTier: 'xmp',
+        boundingBox: bb,
+        pathOpCount: 100, // real artwork
+      };
+    } catch {
+      // Fall through to other tiers
+    }
+  }
+
+  // 1C. Embedded JPEG Stream anywhere in buffer
   const jpegStream = extractEmbeddedJpegStream(buffer);
   if (jpegStream) {
     const objUrl = URL.createObjectURL(jpegStream);
@@ -519,32 +759,32 @@ export async function rasterizeEpsFile(
         blob,
         sourceTier: 'binary_preview',
         boundingBox: bb,
+        pathOpCount: 100, // real artwork
       };
     } catch {
       URL.revokeObjectURL(objUrl);
     }
   }
 
-  // Check 2C: XMP Base64 image
-  const xmpB64 = extractXmpThumbnail(fullText);
-  if (xmpB64) {
-    try {
-      const img = await loadImageElement(xmpB64);
-      ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
-      const dataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
-      const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/jpeg', jpegQuality));
-      return {
-        width: canvasWidth,
-        height: canvasHeight,
-        canvas,
-        dataUrl,
-        blob,
-        sourceTier: 'xmp',
-        boundingBox: bb,
-      };
-    } catch {
-      // Fall through to fallback
-    }
+  // ==========================================
+  // TIER 2: PostScript Level 2/3 Vector Engine
+  // ==========================================
+  const scale = canvasWidth / bb.width;
+  const pathOpCount = renderPostScriptVectorPaths(fullText, ctx, bb, scale, canvasWidth, canvasHeight);
+
+  if (pathOpCount >= 10) {
+    const dataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
+    const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/jpeg', jpegQuality));
+    return {
+      width: canvasWidth,
+      height: canvasHeight,
+      canvas,
+      dataUrl,
+      blob,
+      sourceTier: 'vector',
+      boundingBox: bb,
+      pathOpCount,
+    };
   }
 
   // ==========================================

@@ -154,8 +154,8 @@ export function cleanFilenameHint(filename: string): string {
     .map((w) => w.trim())
     .filter((w) => w.length >= 2 && !/^\d+$/.test(w) && !GENERIC_AI_BOILERPLATE.has(w.toLowerCase()));
 
-  // If less than 2 meaningful subject words remain, omit filename hint completely
-  if (tokens.length < 2) {
+  // If at least 1 meaningful subject word remains (e.g. "Helmet", "Lion", "Car"), return it!
+  if (tokens.length < 1) {
     return '';
   }
 
@@ -171,6 +171,10 @@ export function buildVisionPrompt(
   hasRealPreview?: boolean
 ): string {
   let prompt = 'Analyze this stock asset and output the requested microstock metadata JSON object according to all guidelines.';
+
+  const hint = filename ? cleanFilenameHint(filename) : '';
+  const fallbackSubject = filename ? filename.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').trim() : '';
+  const identifiedSubject = hint || fallbackSubject;
 
   if (keywordPhrasing === 'single') {
     prompt += '\nCRITICAL KEYWORD REQUIREMENT: Output concise single words or 1-2 word tags. Maximum 2 words per tag. NEVER glue or concatenate multiple words together without a space (e.g., NEVER output "homegym", "fitnessequipment", "recoverytool"). Always put a normal space between words in compound tags.';
@@ -196,17 +200,21 @@ export function buildVisionPrompt(
     prompt += '\nCRITICAL MEDIA TYPE: VIDEO FOOTAGE. The input image is a 4-frame chronological storyboard (F1, F2, F3, F4) of a stock video clip. Analyze both visual subject and temporal motion progression. Include video/motion tags (footage, video clip, motion, 4k, slow motion, loop, aerial, panning, camera movement). NEVER include photography/static terms (still life, photo, photograph, illustration, picture).';
   } else if (mediaType === 'vector') {
     if (hasRealPreview === false) {
-      prompt += '\nCRITICAL OVERRIDE: The provided image is a generic placeholder badge with NO actual artwork. COMPLETELY IGNORE the visual content, badge graphics, and words like "EPS 10 VECTOR". Generate ALL metadata, title, and keywords STRICTLY from the filename subject hint below. Infer the vector illustration\'s subject matter, design style, and commercial theme entirely from the filename.';
+      prompt += `\n🚨 CRITICAL VECTOR SUBJECT OVERRIDE:
+The vector artwork file is named "${filename || 'vector.eps'}" depicting the subject: "${identifiedSubject}".
+The attached image is a generic placeholder badge with NO actual artwork. You MUST COMPLETELY IGNORE the badge visual, dark background, and the words "EPS 10 VECTOR".
+Generate ALL metadata, title, description, and 45-49 keywords specifically for a commercial stock vector illustration of: "${identifiedSubject}".
+- Base Title: Commercial descriptive title for a "${identifiedSubject}" vector illustration (e.g. "${identifiedSubject} Vector Icon Isolated on White Background").
+- Detailed Description: Full sentence describing a professional vector graphic of "${identifiedSubject}".
+- Ranked Keywords: 45 to 49 commercial tags focusing on "${identifiedSubject}" (synonyms, uses, category terms, equipment, design, icon, symbol, clipart, vector, graphic, flat, isolated).
+- NEVER generate generic abstract background patterns, geometric shapes, or describe the placeholder badge! Focus 100% on "${identifiedSubject}".`;
     } else {
-      prompt += '\nCRITICAL MEDIA TYPE: VECTOR EPS ILLUSTRATION. This is a scalable vector graphic illustration. Analyze the actual ARTWORK CONTENT and visual elements shown (characters, objects, scenes, colors, style, composition). Describe what the illustration depicts, not just that it is a vector. Include vector-specific terms (vector, illustration, graphic, design, template, editable, scalable, flat, clip art, icon) alongside the SPECIFIC SUBJECT MATTER. NEVER include camera/photo terms (photo, photograph, shot, depth of field, bokeh, lens, shutter).';
+      prompt += `\nCRITICAL MEDIA TYPE: VECTOR EPS ILLUSTRATION. This is a scalable vector graphic illustration${identifiedSubject ? ` depicting: "${identifiedSubject}"` : ''}. Analyze the actual ARTWORK CONTENT and visual elements shown (characters, objects, scenes, colors, style, composition). Describe what the illustration depicts, not just that it is a vector. Include vector-specific terms (vector, illustration, graphic, design, template, editable, scalable, flat, clip art, icon) alongside the SPECIFIC SUBJECT MATTER "${identifiedSubject}". NEVER include camera/photo terms (photo, photograph, shot, depth of field, bokeh, lens, shutter).`;
     }
   }
 
-  if (filename) {
-    const hint = cleanFilenameHint(filename);
-    if (hint && hint.length >= 3 && !/^\d+$/.test(hint)) {
-      prompt += `\nSubject hint from photographer filename: "${hint}". Use this as helpful domain context to accurately identify the specific material, subject, botanic species, or scene (do not copy raw numbers, dimensions, or timestamps).`;
-    }
+  if (identifiedSubject) {
+    prompt += `\nSubject hint from photographer filename: "${identifiedSubject}". Use this as primary domain context to accurately identify the specific material, subject, botanic species, object, or scene.`;
   }
 
   if (userCustomPrompt?.trim()) {
