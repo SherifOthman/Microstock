@@ -204,17 +204,36 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
         {/* Content Viewer */}
         <div className="flex items-center justify-center w-full h-full">
           {isVideo ? (
-            <video
-              key={currentAsset.id}
-              src={videoObjectUrl || currentAsset.previewUrl}
-              controls
-              autoPlay
-              loop
-              playsInline
-              muted={false}
-              className="w-full h-full max-h-[85vh] object-contain rounded-lg shadow-2xl bg-black"
-              style={{ minHeight: '400px', maxWidth: '95vw' }}
-            />
+            videoObjectUrl ? (
+              <video
+                key={currentAsset.id}
+                src={videoObjectUrl}
+                controls
+                autoPlay
+                loop
+                playsInline
+                muted
+                className="w-full h-full max-h-[85vh] object-contain rounded-lg shadow-2xl bg-black"
+                style={{ minHeight: '400px', maxWidth: '95vw' }}
+                onCanPlay={(e) => {
+                  // Unmute after autoplay starts (browser policy: autoplay requires muted initially)
+                  const vid = e.currentTarget;
+                  vid.muted = false;
+                }}
+              />
+            ) : (
+              /* File not in memory (e.g. loaded from DB after reload) — show the storyboard thumbnail */
+              <div className="flex flex-col items-center justify-center gap-3">
+                <img
+                  src={currentAsset.previewUrl}
+                  alt={currentAsset.filename}
+                  className="max-h-[65vh] max-w-full rounded-xl shadow-2xl object-contain bg-zinc-900 border border-zinc-800 opacity-60"
+                />
+                <p className="text-zinc-400 text-xs font-mono bg-zinc-900/80 px-3 py-1.5 rounded-md border border-zinc-700">
+                  Video preview — original file not in memory. Re-upload to play.
+                </p>
+              </div>
+            )
           ) : (
             <div
               className="overflow-auto max-h-[85vh] max-w-full flex items-center justify-center transition-transform duration-100"

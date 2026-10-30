@@ -28,6 +28,8 @@ export interface EpsRenderResult {
   blob: Blob;
   sourceTier: 'vector' | 'xmp' | 'binary_preview' | 'ascii_preview';
   boundingBox?: EpsBoundingBox;
+  /** Number of path operations rendered (only meaningful for Tier 1 vector render; 0 for placeholder) */
+  pathOpCount?: number;
 }
 
 /**
@@ -97,12 +99,27 @@ function extractBinaryDosEpsPreview(buffer: ArrayBuffer): { blob: Blob; mime: st
 
   if (tiffOffset > 0 && tiffLength > 0 && tiffOffset + tiffLength <= buffer.byteLength) {
     const slice = buffer.slice(tiffOffset, tiffOffset + tiffLength);
-    // Check if it's actually a JPEG disguised as TIFF or pure TIFF
     const u8 = new Uint8Array(slice, 0, 4);
+    // Only return JPEG previews — browsers cannot decode TIFF in <img>
     if (u8[0] === 0xff && u8[1] === 0xd8) {
       return { blob: new Blob([slice], { type: 'image/jpeg' }), mime: 'image/jpeg' };
     }
-    return { blob: new Blob([slice], { type: 'image/tiff' }), mime: 'image/tiff' };
+    // TIFF preview: scan inside it for an embedded JPEG (Illustrator often embeds a JPEG inside the TIFF)
+    const tiffBytes = new Uint8Array(slice);
+    for (let i = 0; i < tiffBytes.length - 100; i++) {
+      if (tiffBytes[i] === 0xff && tiffBytes[i + 1] === 0xd8 && tiffBytes[i + 2] === 0xff) {
+        for (let j = i + 100; j < Math.min(tiffBytes.length - 1, i + 5 * 1024 * 1024); j++) {
+          if (tiffBytes[j] === 0xff && tiffBytes[j + 1] === 0xd9) {
+            const jpegSlice = tiffBytes.subarray(i, j + 2);
+            if (jpegSlice.length > 1024) {
+              return { blob: new Blob([jpegSlice], { type: 'image/jpeg' }), mime: 'image/jpeg' };
+            }
+            break;
+          }
+        }
+      }
+    }
+    // Pure TIFF — skip (browser can't decode it natively)
   }
 
   return null;
@@ -148,6 +165,7 @@ function extractEmbeddedJpegStream(buffer: ArrayBuffer): Blob | null {
           if (jpegSlice.length > 1024) {
             return new Blob([jpegSlice], { type: 'image/jpeg' });
           }
+          break; // EOI found but too small — stop inner scan and try next SOI
         }
       }
     }
@@ -166,7 +184,7 @@ function renderPostScriptVectorPaths(
   scale: number,
   targetWidth: number,
   targetHeight: number
-): boolean {
+): number {  // returns pathOpCount (0 = nothing rendered)
   // PostScript transforms:
   // EPS coordinate system has origin (0,0) at bottom-left, increasing upward.
   // Canvas coordinate system has origin (0,0) at top-left, increasing downward.
@@ -369,7 +387,7 @@ function renderPostScriptVectorPaths(
   }
 
   ctx.restore();
-  return pathOpCount >= 10;
+  return pathOpCount;
 }
 
 /**
@@ -439,9 +457,9 @@ export async function rasterizeEpsFile(
   // ==========================================
   const fullText = decoder.decode(buffer);
   const scale = canvasWidth / bb.width;
-  const vectorSuccess = renderPostScriptVectorPaths(fullText, ctx, bb, scale, canvasWidth, canvasHeight);
+  const pathOpCount = renderPostScriptVectorPaths(fullText, ctx, bb, scale, canvasWidth, canvasHeight);
 
-  if (vectorSuccess) {
+  if (pathOpCount >= 10) {
     const dataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
     const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/jpeg', jpegQuality));
     return {
@@ -452,6 +470,7 @@ export async function rasterizeEpsFile(
       blob,
       sourceTier: 'vector',
       boundingBox: bb,
+      pathOpCount,
     };
   }
 
@@ -553,5 +572,6 @@ export async function rasterizeEpsFile(
     blob,
     sourceTier: 'vector',
     boundingBox: bb,
+    pathOpCount: 0, // Tier 3 badge — no real artwork rendered
   };
 }

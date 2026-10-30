@@ -21,14 +21,24 @@ export const BatchDropZone: React.FC<Props> = ({ onFilesSelected, disabled = fal
     setIsDragOver(false);
   };
 
+  /** Returns true for image, video, and vector (EPS/AI/SVG) files */
+  const isAcceptedFile = (file: File): boolean => {
+    if (file.type.startsWith('image/')) return true;
+    if (file.type.startsWith('video/')) return true;
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+    if (['eps', 'ai', 'svg'].includes(ext)) return true;
+    // Some systems report EPS/AI as application/postscript or application/illustrator
+    if (file.type === 'application/postscript') return true;
+    if (file.type === 'application/illustrator') return true;
+    return false;
+  };
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
     if (disabled) return;
 
-    const droppedFiles = Array.from(e.dataTransfer.files).filter((file) =>
-      file.type.startsWith('image/')
-    );
+    const droppedFiles = Array.from(e.dataTransfer.files).filter(isAcceptedFile);
     if (droppedFiles.length > 0) {
       onFilesSelected(droppedFiles);
     }
@@ -36,9 +46,7 @@ export const BatchDropZone: React.FC<Props> = ({ onFilesSelected, disabled = fal
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      const selected = Array.from(e.target.files).filter((file) =>
-        file.type.startsWith('image/')
-      );
+      const selected = Array.from(e.target.files).filter(isAcceptedFile);
       onFilesSelected(selected);
       e.target.value = '';
     }
@@ -79,10 +87,10 @@ export const BatchDropZone: React.FC<Props> = ({ onFilesSelected, disabled = fal
       </div>
 
       <h3 className="text-sm font-semibold text-foreground">
-        Drop stock images here or browse files
+        Drop stock files here or browse
       </h3>
       <p className="text-xs text-muted-foreground mt-0.5 mb-4">
-        Supports JPG, PNG, WebP. Original files on disk are completely untouched
+        Supports images (JPG, PNG, WebP), videos (MP4, MOV) and vectors (EPS, AI, SVG). Original files on disk are completely untouched.
       </p>
 
       <div className="flex items-center justify-center gap-2">

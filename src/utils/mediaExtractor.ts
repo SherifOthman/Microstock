@@ -14,6 +14,8 @@ export interface ExtractedMediaInfo {
   hasAudio?: boolean;
   width?: number;
   height?: number;
+  /** false when the EPS/vector had no embedded preview — only a placeholder badge was generated */
+  hasRealPreview?: boolean;
 }
 
 /**
@@ -234,6 +236,17 @@ export async function processVectorFile(
   // Use the True Multi-Tier EPS 10 Rasterizer Engine!
   try {
     const epsResult = await rasterizeEpsFile(file, maxDim, quality);
+    // sourceTier 'vector' from Tier 1 (PS paths) or 'binary_preview'/'xmp' from Tier 2 = real content
+    // sourceTier 'vector' from Tier 3 fallback badge = no real preview (detected by white/dark bg + text badge size)
+    // We distinguish by checking pathOpCount indirectly: Tier 3 has a dark background, Tier 1/2 has real artwork.
+    // The engine exposes `sourceTier` — binary_preview and xmp are always real; 'vector' from Tier 1 is real.
+    // The only fake is the Tier 3 badge, which epsEngine.ts returns with sourceTier 'vector' but writes
+    // "EPS 10 VECTOR" text onto a dark canvas. We detect this via the sourceTier returned.
+    const isRealContent =
+      epsResult.sourceTier === 'binary_preview' ||
+      epsResult.sourceTier === 'xmp' ||
+      (epsResult.sourceTier === 'vector' && epsResult.pathOpCount !== undefined && epsResult.pathOpCount >= 10);
+
     return {
       mediaType: 'vector',
       thumbnailBase64: epsResult.dataUrl.replace(/^data:image\/jpeg;base64,/, ''),
@@ -242,6 +255,7 @@ export async function processVectorFile(
       compressedSizeBytes: Math.round((epsResult.dataUrl.length * 3) / 4),
       width: epsResult.width,
       height: epsResult.height,
+      hasRealPreview: isRealContent,
     };
   } catch (err) {
     console.warn('EPS rasterization fallback:', err);
@@ -285,6 +299,7 @@ export async function processVectorFile(
     compressedSizeBytes: Math.round((base64.length * 3) / 4),
     width: maxDim,
     height: maxDim,
+    hasRealPreview: false, // this is the emergency fallback badge, no real artwork
   };
 }
 

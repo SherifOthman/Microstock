@@ -18,6 +18,8 @@ export interface QueueItem {
   mutedFile?: File;
   thumbnailBase64?: string;
   thumbnailDataUrl?: string;
+  /** false = EPS/vector with no real artwork preview (placeholder badge was generated) */
+  hasRealPreview?: boolean;
   status: 'pending' | 'resizing' | 'ready' | 'processing' | 'completed' | 'error';
   assignedKeyLabel?: string;
   assignedProvider?: ProviderType;
@@ -144,6 +146,7 @@ export class BatchQueueService {
           item.videoDurationSeconds = media.videoDurationSeconds;
           item.videoResolution = media.videoResolution;
           item.hasAudio = media.hasAudio;
+          item.hasRealPreview = media.hasRealPreview;
           item.status = 'ready';
 
           // Persist draft in Dexie IndexedDB so refresh never removes the asset
@@ -315,15 +318,24 @@ export class BatchQueueService {
       item.assignedModel = keyRecord.modelId;
       this.notify();
 
-      // 2. Build prompt & invoke vision API (passing cleaned filename as visual domain hint + mediaType + keywordPhrasing + titleLengthPreset)
+      // 2. Build prompt & invoke vision API (or text-only for EPS without preview)
       const adapter = getProviderAdapter(keyRecord.providerId);
       const prompt = buildVisionPrompt(item.filename, userPrompt, item.mediaType, keywordPhrasing, titleLengthPreset);
+
+      // For EPS/vector files where no real artwork preview was generated, don't send the
+      // placeholder badge image — send a 1×1 white pixel so the API call still works,
+      // while the enhanced prompt tells the AI to rely on the filename hint instead.
+      const isEpsNoPreview = item.mediaType === 'vector' && item.hasRealPreview === false;
+      // 1×1 white pixel JPEG (minimal image that won't confuse the AI with badge text)
+      const WHITE_PIXEL_JPEG = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFgABAQEAAAAAAAAAAAAAAAAABgUEA/8QAHhAAAgICAwEAAAAAAAAAAAAAAQIDBAUREiEx/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCwzNi5vFWoK11jLGV9jXi3pJYU2rYNQAAAA==';
 
       const rawAiText = await adapter.analyzeImage(
         keyRecord.key,
         keyRecord.modelId,
-        item.thumbnailBase64,
-        prompt,
+        isEpsNoPreview ? WHITE_PIXEL_JPEG : item.thumbnailBase64!,
+        isEpsNoPreview
+          ? prompt + '\nIMPORTANT: No visual preview is available for this EPS vector file. Generate all metadata based entirely on the filename hint above and your expertise in microstock vector illustration. Do NOT describe a white or blank image — describe the vector subject the filename suggests.'
+          : prompt,
         SYSTEM_VISION_PROMPT
       );
 
