@@ -211,9 +211,17 @@ export const StudioView: React.FC = () => {
   const [isKeyShake, setIsKeyShake] = useState(false);
   const [viewMode, setViewMode] = useState<'compact' | 'detailed'>(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('stock_card_view_mode');
-      if (saved === 'compact' || saved === 'detailed') return saved;
-      return window.innerWidth < 768 ? 'compact' : 'detailed';
+      try {
+        const saved = localStorage.getItem('stock_card_view_mode');
+        if (saved === 'compact' || saved === 'detailed') return saved;
+      } catch {
+        // ignore localStorage access issues
+      }
+      // If no explicit preference has been saved yet, detect mobile via viewport width or user-agent
+      const isMobileDevice =
+        window.innerWidth < 768 ||
+        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || '');
+      return isMobileDevice ? 'compact' : 'detailed';
     }
     return 'detailed';
   });
