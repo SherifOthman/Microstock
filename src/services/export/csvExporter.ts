@@ -105,7 +105,7 @@ export function generatePlatformCsv(
       break;
 
     case 'shutterstock': {
-      const res = transformForShutterstock(records);
+      const res = transformForShutterstock(records, options?.shutterstock);
       rows = res.rows;
       isBlocked = res.isBlocked;
       blockedReason = res.blockedReason;

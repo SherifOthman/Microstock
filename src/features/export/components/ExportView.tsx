@@ -50,6 +50,9 @@ export const ExportView: React.FC = () => {
       const dtWel = JSON.parse(localStorage.getItem('stock_dt_wel') ?? 'true');
       const dtPel = JSON.parse(localStorage.getItem('stock_dt_pel') ?? 'true');
       const dtSrel = JSON.parse(localStorage.getItem('stock_dt_srel') ?? 'false');
+      const shutterEditorial = JSON.parse(localStorage.getItem('stock_shutter_editorial') ?? 'false');
+      const shutterMature = JSON.parse(localStorage.getItem('stock_shutter_mature') ?? 'false');
+      const shutterIllustration = JSON.parse(localStorage.getItem('stock_shutter_illustration') ?? 'false');
       const vecLicense = (localStorage.getItem('stock_vec_license') as 'pro' | 'free') || 'pro';
       const freepikAi = JSON.parse(localStorage.getItem('stock_freepik_ai') ?? 'true');
       const freepikModel = localStorage.getItem('stock_freepik_model') || 'Google Nano Banana';
@@ -65,6 +68,11 @@ export const ExportView: React.FC = () => {
           wel: dtWel,
           pel: dtPel,
           srel: dtSrel,
+        },
+        shutterstock: {
+          editorial: shutterEditorial,
+          matureContent: shutterMature,
+          illustration: shutterIllustration,
         },
         vecteezy: {
           license: vecLicense,
@@ -227,7 +235,7 @@ export const ExportView: React.FC = () => {
                 <div className="mt-2 text-[11px] text-muted-foreground space-y-0.5 font-mono">
                   {p.id === 'adobe' && <div>• Official 5-Col • Comma • 1-21 IDs • Releases</div>}
                   {p.id === 'freepik' && <div>• Semicolon (;) • Prompt & Model</div>}
-                  {p.id === 'shutterstock' && <div>• 26 Categories • Desc (5-200 chars) • Unlocked</div>}
+                  {p.id === 'shutterstock' && <div>• Official 7-Col • Desc (5-200) • Categories</div>}
                   {p.id === 'vecteezy' && <div>• Title Case • Top 5 priority keywords</div>}
                   {p.id === 'dreamstime' && <div>• 15-Col • Desc &gt; Title • Category 3: 114</div>}
                   {p.id === '123rf' && <div>• Official 5-Col • oldfilename, 123rf_filename</div>}

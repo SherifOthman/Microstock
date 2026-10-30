@@ -133,8 +133,20 @@ async function runTestSuite() {
       assert(res.csvString.endsWith('\r\n'), 'Adobe Stock: Has trailing CRLF newline');
     } else if (pid === 'shutterstock') {
       const row = parsed.data[0] as any;
-      assert(row['Filename'] && row['Description'] && row['Keywords'] && row['Categories'], 'Shutterstock: Has required columns');
+      assert(
+        row['Filename'] &&
+          row['Description'] &&
+          row['Keywords'] &&
+          row['Categories'] &&
+          'Editorial' in row &&
+          'Mature content' in row &&
+          'illustration' in row,
+        'Shutterstock: Has official 7 columns (Filename, Description, Keywords, Categories, Editorial, Mature content, illustration)'
+      );
       assert(row['Description'].length <= 200, 'Shutterstock: Description respects max 200 chars');
+      assert(row['Editorial'] === 'no', 'Shutterstock: Default Editorial is "no"');
+      assert(row['Mature content'] === 'no', 'Shutterstock: Default Mature content is "no"');
+      assert(row['illustration'] === 'no', 'Shutterstock: Default illustration is "no"');
     } else if (pid === 'vecteezy') {
       const row = parsed.data[0] as any;
       assert(row['Filename'] && row['Title'] && row['Description'] && row['Keywords'] && row['License'], 'Vecteezy: Has required columns');
@@ -180,6 +192,16 @@ async function runTestSuite() {
     freepik: { modelName: 'Midjourney v6.1 Photoreal' }
   });
   assert(fpCustom.csvString.includes('Midjourney v6.1 Photoreal'), 'Freepik options: Custom AI Model name injected correctly');
+
+  // Option D: Shutterstock Compliance Options (Editorial, Mature content, illustration)
+  const shutterCustom = generatePlatformCsv('shutterstock', sampleRecords, 'test', {
+    shutterstock: { editorial: true, matureContent: true, illustration: true }
+  });
+  const parsedShutter = Papa.parse(shutterCustom.csvString, { header: true, skipEmptyLines: true });
+  const rowShutter = parsedShutter.data[0] as any;
+  assert(rowShutter['Editorial'] === 'yes', 'Shutterstock options: Editorial set to "yes" when checked');
+  assert(rowShutter['Mature content'] === 'yes', 'Shutterstock options: Mature content set to "yes" when checked');
+  assert(rowShutter['illustration'] === 'yes', 'Shutterstock options: illustration set to "yes" when checked');
 
   // -----------------------------------------------------------
   // TEST 5: Vecteezy Hydrator (Fuzzy Re-mapping with IDs)

@@ -114,15 +114,15 @@ export const STOCK_PLATFORMS_SPEC: Record<string, StockPlatformSpec> = {
     id: 'shutterstock',
     name: 'Shutterstock',
     delimiter: ',',
-    encoding: 'UTF-8 with BOM',
+    encoding: 'UTF-8',
     headers: [
       'Filename',
       'Description',
       'Keywords',
       'Categories',
-      'Illustration',
-      'Mature Content',
       'Editorial',
+      'Mature content',
+      'illustration',
     ],
     filenameRules: {
       requiresExtension: true,
@@ -130,9 +130,9 @@ export const STOCK_PLATFORMS_SPEC: Record<string, StockPlatformSpec> = {
       disallowedCharacters: 'commas, quotes, special characters',
       description: 'Must match uploaded file name exactly, case-sensitive.',
     },
-    sampleCsv: `"Filename","Description","Keywords","Categories","Illustration","Mature Content","Editorial"
-"acai_bowl_01.jpg","Delicious acai smoothie bowl served with fresh strawberries and chia seeds","acai, breakfast, superfood, strawberries, berries, healthy, organic, bowl","Food and Drink, Healthcare/Medical","No","No","No"
-"zucchini_pesto_02.jpg","Plate of spiralized zucchini noodles tossed with fresh basil pesto sauce","zucchini, noodles, pesto, food, vegetarian, vegan, healthy, diet","Food and Drink","No","No","No"`,
+    sampleCsv: `Filename,Description,Keywords,Categories,Editorial,Mature content,illustration
+footage_filename.mov,A short and simple description,"keyword 1,keyword","nature,transportation",no,yes,no
+footage_filename_1.mpg,Description,"footage,file",,no,,`,
     commonFailureReasons: [
       'Third-party AI content uploaded (Shutterstock strictly locks and bans external AI content).',
       'Using a "Title" column instead of "Description" (Shutterstock has no Title column).',
@@ -140,8 +140,9 @@ export const STOCK_PLATFORMS_SPEC: Record<string, StockPlatformSpec> = {
       'Category names not matching Shutterstock’s exact 26 predefined category strings.',
     ],
     tipsForUpload: [
-      'Upload image files to Shutterstock before uploading the CSV.',
-      'Use 1 or 2 official Shutterstock category names separated by commas.',
+      'Categories: One or two categories in English, separated by commas (e.g. "Nature, Transportation").',
+      'Editorial, Mature content, and illustration accept "yes" or "no" (lowercase, default: "no").',
+      'Keywords: Up to 50 keywords in English separated by commas.',
     ],
   },
 

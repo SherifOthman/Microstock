@@ -189,6 +189,12 @@ export interface DreamstimeTransformOptions {
   srel?: boolean;
 }
 
+export interface ShutterstockTransformOptions {
+  editorial?: boolean;
+  matureContent?: boolean;
+  illustration?: boolean;
+}
+
 export interface VecteezyTransformOptions {
   license?: 'pro' | 'free';
   webUploaderParity?: boolean;
@@ -201,6 +207,7 @@ export interface FreepikTransformOptions {
 
 export interface UniversalTransformOptions {
   dreamstime?: DreamstimeTransformOptions;
+  shutterstock?: ShutterstockTransformOptions;
   vecteezy?: VecteezyTransformOptions;
   freepik?: FreepikTransformOptions;
 }
@@ -242,10 +249,15 @@ export function transformForFreepik(
   });
 }
 
-// 3. Shutterstock Transformer (Unlocked for user flexibility)
+// 3. Shutterstock Transformer (Official 7-Column Schema: Filename,Description,Keywords,Categories,Editorial,Mature content,illustration)
 export function transformForShutterstock(
-  records: MasterMetadataRecord[]
+  records: MasterMetadataRecord[],
+  options?: ShutterstockTransformOptions
 ): { rows: PlatformExportRow[]; isBlocked: boolean; blockedReason?: string } {
+  const editorialVal = options?.editorial ? 'yes' : 'no';
+  const matureVal = options?.matureContent ? 'yes' : 'no';
+  const illustrationVal = options?.illustration ? 'yes' : 'no';
+
   const rows = records.map((rec) => {
     const categoriesStr = (rec.categories?.shutterstockCategories ?? []).filter(Boolean).join(', ');
     // Semantic truncate description at 200 chars ending with a period
@@ -256,9 +268,9 @@ export function transformForShutterstock(
       Description: cleanDesc,
       Keywords: (rec.rankedKeywords ?? []).slice(0, 50).join(', '),
       Categories: categoriesStr || 'Miscellaneous',
-      Illustration: 'No',
-      'Mature Content': 'No',
-      Editorial: 'No',
+      Editorial: editorialVal,
+      'Mature content': matureVal,
+      illustration: illustrationVal,
     };
   });
 

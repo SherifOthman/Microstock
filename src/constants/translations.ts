@@ -76,6 +76,15 @@ export const translations = {
     dtWarningTitle: 'Customize Dreamstime Licensing?',
     dtWarningDesc: 'We have pre-selected the optimal defaults used by 99% of contributors (W-EL & P-EL enabled for higher royalties; Free Images & SR-EL Exclusivity disabled). Modifying these settings may donate your images for free or transfer exclusive copyrights. Are you sure you want to customize them manually?',
     dtWarningConfirm: 'I Understand, Unlock',
+
+    // Shutterstock Options
+    matureContent: 'Mature Content',
+    illustration: 'Illustration',
+    shutterstockAdvanced: 'Shutterstock Compliance Options',
+    shutterWarningTitle: 'Customize Shutterstock Compliance Options?',
+    shutterWarningDesc: 'We have pre-selected the optimal defaults used by 99% of contributors (Editorial, Mature content, and Illustration set to "no"). Changing these may require property/model releases or restrict your content visibility to adult audiences. Are you sure you want to customize them?',
+    shutterWarningConfirm: 'I Understand, Unlock',
+    shutterOptionsDesc: 'Official 7-column schema. Defaults to Commercial Non-Mature Photo (no/no/no).',
     utilities: 'Utilities',
     csvSpecsSamples: 'CSV Specs & Samples',
     apiKeysWidget: 'API Keys',
@@ -218,6 +227,15 @@ export const translations = {
     dtWarningTitle: 'تخصيص تراخيص Dreamstime؟',
     dtWarningDesc: 'لقد قمنا بتحديد الإعدادات المثلى المعتمدة لدى 99% من المساهمين (تفعيل W-EL و P-EL لزيادة العائدات، وتعطيل الصور المجانية وحصرية SR-EL). قد يؤدي تغيير هذه الخيارات إلى التنازل عن صورك مجاناً أو نقل كامل حقوق الملكية الفكرية. هل أنت متأكد من المتابعة يدويًا؟',
     dtWarningConfirm: 'أفهم ذلك، فتح التعديل',
+
+    // Shutterstock Options
+    matureContent: 'محتوى للبالغين Mature content',
+    illustration: 'رسم توضيحي illustration',
+    shutterstockAdvanced: 'خيارات الامتثال لشترستوك',
+    shutterWarningTitle: 'تخصيص خيارات الامتثال لشترستوك؟',
+    shutterWarningDesc: 'لقد قمنا بتحديد الإعدادات المثلى المعتمدة لدى 99% من المساهمين (Editorial و Mature content و illustration معينة على "no"). قد يتطلب تغيير هذه الإعدادات نماذج تصاريح ملكية أو يحد من ظهور ملفاتك للجمهور العام. هل أنت متأكد من المتابعة يدويًا؟',
+    shutterWarningConfirm: 'أفهم ذلك، فتح التعديل',
+    shutterOptionsDesc: 'تنسيق شترستوك الرسمي ذو الـ 7 أعمدة (الافتراضي: صور تجارية عامة بدون محتوى بالغين).',
     utilities: 'أدوات مساعدة',
     csvSpecsSamples: 'مواصفات ونماذج ملفات CSV',
     apiKeysWidget: 'مفاتيح API',

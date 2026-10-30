@@ -166,6 +166,43 @@ export const StudioView: React.FC = () => {
   });
   const [isDtUnlockDialogOpen, setIsDtUnlockDialogOpen] = useState<boolean>(false);
 
+  // Shutterstock Settings (Official 7-col schema: Editorial, Mature content, illustration)
+  const [shutterEditorial, setShutterEditorial] = useState<boolean>(() => {
+    const saved = localStorage.getItem('stock_shutter_editorial');
+    return saved !== null ? JSON.parse(saved) : false;
+  });
+  const [shutterMature, setShutterMature] = useState<boolean>(() => {
+    const saved = localStorage.getItem('stock_shutter_mature');
+    return saved !== null ? JSON.parse(saved) : false;
+  });
+  const [shutterIllustration, setShutterIllustration] = useState<boolean>(() => {
+    const saved = localStorage.getItem('stock_shutter_illustration');
+    return saved !== null ? JSON.parse(saved) : false;
+  });
+  const [isShutterLocked, setIsShutterLocked] = useState<boolean>(() => {
+    const saved = localStorage.getItem('stock_shutter_locked');
+    return saved !== null ? JSON.parse(saved) : true;
+  });
+  const [shutterAdvancedOpen, setShutterAdvancedOpen] = useState<boolean>(false);
+  const [isShutterUnlockDialogOpen, setIsShutterUnlockDialogOpen] = useState<boolean>(false);
+
+  const handleResetShutterOptions = () => {
+    setShutterEditorial(false);
+    setShutterMature(false);
+    setShutterIllustration(false);
+    setIsShutterLocked(true);
+    localStorage.setItem('stock_shutter_editorial', 'false');
+    localStorage.setItem('stock_shutter_mature', 'false');
+    localStorage.setItem('stock_shutter_illustration', 'false');
+    localStorage.setItem('stock_shutter_locked', 'true');
+  };
+
+  const handleUnlockShutterOptions = () => {
+    setIsShutterLocked(false);
+    localStorage.setItem('stock_shutter_locked', 'false');
+    setIsShutterUnlockDialogOpen(false);
+  };
+
   const handleResetDtLicensing = () => {
     setDtWel(true);
     setDtPel(true);
@@ -305,6 +342,18 @@ export const StudioView: React.FC = () => {
   }, [dtSrel]);
 
   useEffect(() => {
+    localStorage.setItem('stock_shutter_editorial', JSON.stringify(shutterEditorial));
+  }, [shutterEditorial]);
+
+  useEffect(() => {
+    localStorage.setItem('stock_shutter_mature', JSON.stringify(shutterMature));
+  }, [shutterMature]);
+
+  useEffect(() => {
+    localStorage.setItem('stock_shutter_illustration', JSON.stringify(shutterIllustration));
+  }, [shutterIllustration]);
+
+  useEffect(() => {
     localStorage.setItem('stock_vec_license', vecLicense);
   }, [vecLicense]);
 
@@ -325,6 +374,11 @@ export const StudioView: React.FC = () => {
         wel: dtWel,
         pel: dtPel,
         srel: dtSrel,
+      },
+      shutterstock: {
+        editorial: shutterEditorial,
+        matureContent: shutterMature,
+        illustration: shutterIllustration,
       },
       vecteezy: {
         license: vecLicense,
@@ -871,6 +925,117 @@ export const StudioView: React.FC = () => {
                                 </Tooltip>
                               </div>
                               <Switch checked={dtSrel} onCheckedChange={setDtSrel} disabled={isDtLocked} />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Contextual Shutterstock Options */}
+                  {p.id === 'shutterstock' && isSelected && (
+                    <div className="p-2.5 ml-4 rounded-md border border-border bg-secondary/20 space-y-2 text-xs">
+                      {/* Header info */}
+                      <div className="text-[10px] text-muted-foreground space-y-0.5">
+                        <p className="text-foreground/90 font-medium">• {t.shutterOptionsDesc}</p>
+                        <p>• 7 Columns: Filename, Description, Keywords, Categories, Editorial, Mature content, illustration</p>
+                      </div>
+
+                      {/* Collapsible Advanced Compliance Options (Protected with Safety Lock) */}
+                      <div className="pt-1.5 border-t border-border/50">
+                        <button
+                          type="button"
+                          onClick={() => setShutterAdvancedOpen(!shutterAdvancedOpen)}
+                          className="flex items-center justify-between w-full text-[11px] text-muted-foreground hover:text-foreground cursor-pointer py-1"
+                        >
+                          <div className="flex items-center gap-1">
+                            <span className="font-semibold text-foreground/80">{t.shutterstockAdvanced}</span>
+                            <Tooltip content="Defaults (no / no / no) match 99% of commercial submissions. Unlock to flag Editorial, Mature content, or Illustration.">
+                              <Info className="w-3 h-3 text-muted-foreground hover:text-foreground" />
+                            </Tooltip>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground font-mono">
+                            {shutterAdvancedOpen ? '▲' : '▼ (no / no / no)'}
+                          </span>
+                        </button>
+
+                        {shutterAdvancedOpen && (
+                          <div className="space-y-2 pt-1.5 pl-1 animate-in fade-in-50 duration-150">
+                            {/* Safety Lock & Reset Controls */}
+                            <div className="flex items-center justify-between gap-1 pb-1.5 border-b border-border/40">
+                              {isShutterLocked ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setIsShutterUnlockDialogOpen(true)}
+                                  className="h-6 px-2 text-[10px] gap-1 text-amber-500 border-amber-500/30 hover:bg-amber-500/10 cursor-pointer"
+                                >
+                                  <Lock className="w-2.5 h-2.5" />
+                                  <span>{t.unlockToEdit}</span>
+                                </Button>
+                              ) : (
+                                <Badge variant="outline" className="h-5 px-1.5 text-[9px] text-emerald-500 border-emerald-500/30 bg-emerald-500/10 font-mono">
+                                  Unlocked
+                                </Badge>
+                              )}
+
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={handleResetShutterOptions}
+                                className="h-6 px-2 text-[10px] gap-1 text-muted-foreground hover:text-foreground cursor-pointer"
+                                title="Reset to defaults: Editorial, Mature & Illustration set to 'no'"
+                              >
+                                <RotateCcw className="w-2.5 h-2.5" />
+                                <span>{t.resetToDefaults}</span>
+                              </Button>
+                            </div>
+
+                            {/* 1. Editorial ('yes'/'no') */}
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1">
+                                <span className="text-[10px] text-muted-foreground">{t.editorial}</span>
+                                <Tooltip content="Flag as Editorial content (news, documentary, events). Default: no.">
+                                  <Info className="w-3 h-3 text-muted-foreground hover:text-foreground cursor-pointer" />
+                                </Tooltip>
+                              </div>
+                              <Switch
+                                checked={shutterEditorial}
+                                onCheckedChange={setShutterEditorial}
+                                disabled={isShutterLocked}
+                              />
+                            </div>
+
+                            {/* 2. Mature Content ('yes'/'no') */}
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1">
+                                <span className="text-[10px] text-muted-foreground">{t.matureContent}</span>
+                                <Tooltip content="Flag if asset contains nudity or adult themes. Warning: restricts asset to adult viewers. Default: no.">
+                                  <Info className="w-3 h-3 text-amber-500 cursor-pointer" />
+                                </Tooltip>
+                              </div>
+                              <Switch
+                                checked={shutterMature}
+                                onCheckedChange={setShutterMature}
+                                disabled={isShutterLocked}
+                              />
+                            </div>
+
+                            {/* 3. Illustration ('yes'/'no') */}
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1">
+                                <span className="text-[10px] text-muted-foreground">{t.illustration}</span>
+                                <Tooltip content="Flag as vector drawing, 3D render or digital illustration. Default: no (photo).">
+                                  <Info className="w-3 h-3 text-muted-foreground hover:text-foreground cursor-pointer" />
+                                </Tooltip>
+                              </div>
+                              <Switch
+                                checked={shutterIllustration}
+                                onCheckedChange={setShutterIllustration}
+                                disabled={isShutterLocked}
+                              />
                             </div>
                           </div>
                         )}
@@ -1432,6 +1597,17 @@ export const StudioView: React.FC = () => {
         confirmText={t.dtWarningConfirm}
         cancelText={t.cancel}
         onConfirm={handleUnlockDtLicensing}
+      />
+
+      {/* Shutterstock Safety Unlock Warning Dialog */}
+      <ConfirmDialog
+        open={isShutterUnlockDialogOpen}
+        onOpenChange={setIsShutterUnlockDialogOpen}
+        title={t.shutterWarningTitle}
+        description={t.shutterWarningDesc}
+        confirmText={t.shutterWarningConfirm}
+        cancelText={t.cancel}
+        onConfirm={handleUnlockShutterOptions}
       />
 
       {/* Delete Single Asset Confirmation */}
