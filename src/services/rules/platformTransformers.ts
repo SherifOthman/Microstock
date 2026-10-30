@@ -175,6 +175,7 @@ export function transformForAdobeStock(records: MasterMetadataRecord[]): Platfor
       Title: cleanTitle,
       Keywords: cleanKw.join(', '),
       Category: rec.categories?.adobeCategoryId || 8,
+      Releases: '',
     };
   });
 }

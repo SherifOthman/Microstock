@@ -116,16 +116,21 @@ async function runTestSuite() {
     assert(res.csvString.length > 0, `${pid.toUpperCase()}: Output is non-empty`);
     assert(!res.csvString.startsWith('\uFEFF'), `${pid.toUpperCase()}: 100% Free of UTF-8 BOM byte mark`);
 
-    // Verify CSV parsing
-    const parsed = Papa.parse(res.csvString, { header: true });
+    // Verify CSV parsing (skipEmptyLines: true handles valid POSIX/CRLF trailing newlines at EOF)
+    const parsed = Papa.parse(res.csvString, { header: true, skipEmptyLines: true });
     assert(parsed.errors.length === 0, `${pid.toUpperCase()}: Parses with 0 RFC 4180 syntax errors`);
     assert(parsed.data.length === 2, `${pid.toUpperCase()}: Contains exactly 2 rows`);
 
     // Platform specific validations
     if (pid === 'adobe') {
       const row = parsed.data[0] as any;
-      assert(row['Filename'] && row['Title'] && row['Keywords'] && row['Category'], 'Adobe Stock: Has required columns');
+      assert(
+        row['Filename'] && row['Title'] && row['Keywords'] && row['Category'] && 'Releases' in row,
+        'Adobe Stock: Has exact 5 columns (Filename, Title, Keywords, Category, Releases)'
+      );
       assert(row['Category'] === '8', 'Adobe Stock: Category is numeric integer (8)');
+      assert(res.csvString.includes('\r\n'), 'Adobe Stock: Uses CRLF line endings');
+      assert(res.csvString.endsWith('\r\n'), 'Adobe Stock: Has trailing CRLF newline');
     } else if (pid === 'shutterstock') {
       const row = parsed.data[0] as any;
       assert(row['Filename'] && row['Description'] && row['Keywords'] && row['Categories'], 'Shutterstock: Has required columns');

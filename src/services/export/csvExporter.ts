@@ -137,11 +137,20 @@ export function generatePlatformCsv(
     };
   }
 
-  // Generate strict RFC 4180 CSV without BOM with Unix LF line endings to guarantee 100% compatibility with strict microstock web parsers (e.g. Ruby on Rails on Vecteezy)
-  const cleanCsv = Papa.unparse(rows, {
+  // Line endings: Adobe Stock's parser explicitly requires CRLF (\r\n) with a trailing newline
+  // Other platforms like Vecteezy / Rails prefer Unix LF (\n)
+  const isCrlf = platformId === 'adobe';
+  const newlineChar = isCrlf ? '\r\n' : '\n';
+
+  let cleanCsv = Papa.unparse(rows, {
     delimiter: config.delimiter,
-    newline: '\n',
+    newline: newlineChar,
   });
+
+  // Guarantee trailing newline at the end of the file for strict parsers like Adobe Stock
+  if (!cleanCsv.endsWith(newlineChar)) {
+    cleanCsv += newlineChar;
+  }
 
   return {
     platformId,

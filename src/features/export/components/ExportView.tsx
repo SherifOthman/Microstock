@@ -225,7 +225,7 @@ export const ExportView: React.FC = () => {
                 </div>
 
                 <div className="mt-2 text-[11px] text-muted-foreground space-y-0.5 font-mono">
-                  {p.id === 'adobe' && <div>• Comma • 1-21 IDs • AI terms stripped</div>}
+                  {p.id === 'adobe' && <div>• Official 5-Col • Comma • 1-21 IDs • Releases</div>}
                   {p.id === 'freepik' && <div>• Semicolon (;) • Prompt & Model</div>}
                   {p.id === 'shutterstock' && <div>• 26 Categories • Desc (5-200 chars) • Unlocked</div>}
                   {p.id === 'vecteezy' && <div>• Title Case • Top 5 priority keywords</div>}

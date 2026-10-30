@@ -55,26 +55,28 @@ export const STOCK_PLATFORMS_SPEC: Record<string, StockPlatformSpec> = {
     id: 'adobe',
     name: 'Adobe Stock',
     delimiter: ',',
-    encoding: 'UTF-8 with BOM',
+    encoding: 'UTF-8',
     headers: ['Filename', 'Title', 'Keywords', 'Category', 'Releases'],
     filenameRules: {
       requiresExtension: true,
-      maxLength: 30, // Official Adobe Stock CSV limit
-      disallowedCharacters: 'spaces, commas, diacritics, filenames over 30 chars',
+      maxLength: 100,
+      disallowedCharacters: 'spaces, commas, diacritics',
       description:
-        'Adobe Stock strictly enforces a 30-character maximum for the Filename column (including the .jpg extension)!',
+        'Adobe Stock expects the exact filename including extension (e.g. image.jpg, video.mov) matching the uploaded asset.',
     },
     sampleCsv: `"Filename","Title","Keywords","Category","Releases"
-"AcaiBowl01.jpg","Acai bowl with fresh sliced berries and coconut flakes","acai, breakfast, organic, superfood, berries, bowl, healthy, strawberry, coconut, vegan",8,""
-"Zucchini02.jpg","Zucchini noodles tossed with fresh basil pesto sauce","zucchini, noodles, pesto, healthy, pasta alternative, vegan, vegetarian, dinner",8,""`,
+"AcaiBowl01.jpg","Acai bowl with fresh sliced berries and coconut flakes","acai, breakfast, organic, superfood, berries, bowl, healthy, strawberry, coconut, vegan",7,""
+"Zucchini02.jpg","Zucchini noodles tossed with fresh basil pesto sauce","zucchini, noodles, pesto, healthy, pasta alternative, vegan, vegetarian, dinner",7,""`,
     commonFailureReasons: [
-      'Filename longer than 30 characters (including .jpg) — causes instant row rejection.',
+      'Missing the 5th "Releases" column or missing trailing comma — Adobe Stock requires all 5 columns.',
+      'UTF-8 BOM prepended to CSV — corrupts "Filename" header match in Adobe Stock.',
       'Including AI-related terms (ai, generative, midjourney, prompt) in Title or Keywords.',
-      'More than 49 keywords (Adobe accepts up to 49-50 maximum).',
+      'More than 49 keywords (Adobe accepts up to 49 maximum).',
       'Filename case mismatch with uploaded file (e.g. photo.JPG vs photo.jpg).',
     ],
     tipsForUpload: [
-      'Always keep image filenames short (e.g. AcaiBowl01.jpg) before uploading to Adobe Stock.',
+      'Adobe Stock officially accepts standard UTF-8 without BOM with exact 5 columns.',
+      'The 5th column "Releases" can be left blank (ending with trailing comma).',
       'Order keywords by relevance; Adobe prioritizes the first 10 keywords heavily.',
       'Ensure AI tags are completely stripped before exporting.',
     ],
