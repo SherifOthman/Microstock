@@ -16,8 +16,11 @@ UNIVERSAL SAFE-ZONE GUIDELINES:
 
 3. "ranked_keywords":
    - Array of exactly 42 to 48 relevant English keywords/tags.
-   - Smart Microstock Mix (1 to 2 Words per Tag): Each tag can be either a strong single word (e.g. "foam", "yoga", "minimal", "texture") OR a natural 2-word industry phrase separated by a normal space (e.g. "foam roller", "resistance bands", "home gym", "copy space", "fitness equipment", "blurred background").
-   - Include at least 12 to 18 natural 2-word commercial phrases (e.g., "duffel bag", "water bottle", "wireless earbuds", "charging case", "copy space", "gym floor") mixed with strong single-word tags.
+   - Smart Microstock Mix (1 to 2 Words per Tag):
+     * TOP 10 KEYWORD PRIORITY (Positions #1 to #10): Positions #1 to #8 MUST be core single-word visible nouns and primary subjects (e.g., "fruit", "apple", "orange", "grapes", "banana", "bowl", "food", "healthy").
+     * At most 2 two-word compound phrases are allowed inside the Top 10 (only the most essential exact-match concept, e.g., "fruit bowl", "still life").
+     * The remaining 10 to 15 two-word commercial phrases (e.g., "rustic kitchen", "wooden table", "copy space", "linen cloth") MUST be placed in positions #11 to #48, interleaved naturally with single words.
+     * No Root Word Stuffing in Top 10: Never repeat the same root word (e.g., "fruit" or "food") more than twice inside the first 10 tags.
    - STRICT RULE: Maximum 2 words per tag. NEVER glue or concatenate multiple words together without a space (e.g., NEVER output "homegym", "fitnessequipment", "recoverytool", "stretchingtool"). Always put a normal space between two words in a compound tag.
    - STRICTLY ORDERED by search relevance: index 0 to 4 MUST be the top 5 most critical search terms describing the primary subject (vital for Vecteezy).
    - Include specific synonyms, visual styles, concepts, and copy space attributes.
@@ -39,7 +42,15 @@ UNIVERSAL SAFE-ZONE GUIDELINES:
       "Science", "Signs/Symbols", "Sports/Recreation", "Technology", "Transportation", "Vintage"].
 
 6. "dreamstime_category_1" and "dreamstime_category_2":
-   - Numerical category IDs representing visual subjects (e.g. 101 Animals, 102 Architecture, 105 Business, 114 Illustrations, 115 Landscapes, 120 Technology).
+   - Numerical category IDs matching Dreamstime's verified official categories:
+     * Food & Produce: 137 (Nature -> Fruits & Vegetables), 127 (Industries -> Food & Beverages), 28 (Nature -> Food ingredients)
+     * Textures & Backgrounds: 112 (Abstract -> Backgrounds), 141 (Abstract -> Textures), 164 (Abstract -> Colors)
+     * Nature & Landscapes: 146 (Nature -> Landscapes), 25 (Nature -> Flowers & Gardens), 12 (Nature -> Plants & trees), 171 (Nature -> Water)
+     * Architecture & Home: 71 (Arts & Architecture -> Generic architecture), 73 (Indoor), 153 (Home), 138 (Objects -> Home related)
+     * Business & Tech: 75 (Business -> People), 80 (Finance), 105 (Technology -> Computers), 129 (Electronics)
+     * Fitness & Sports: 50 (Abstract -> Sports), 156 (Objects -> Sports), 123 (People -> Active)
+     * People & Portraits: 162 (People -> Portraits), 116 (Women), 117 (Men), 118 (Families)
+     * Animals: 30 (Animals -> Pets), 31 (Birds), 32 (Mammals), 168 (Wildlife)
 
 7. "suggested_prompt":
    - A descriptive AI generation prompt string (used for Freepik generative metadata).
@@ -53,14 +64,67 @@ Example:
   "ranked_keywords": ["solar panel", "photovoltaic", "solar energy", "renewable energy", "green power", "electricity", "clean energy", "sustainable", "industrial", "technology", "rooftop", "aerial view", "sunrise", "commercial building", "power generation", "modern", "blue", "sunlight", "alternative energy"],
   "category_adobe": 19,
   "category_shutterstock": ["Technology", "Industrial"],
-  "dreamstime_category_1": 120,
-  "dreamstime_category_2": 105,
+  "dreamstime_category_1": 105,
+  "dreamstime_category_2": 97,
   "suggested_prompt": "aerial photograph of modern photovoltaic solar panel installation on rooftop, sunrise golden hour, hyper-detailed commercial photo"
 }`;
 
+const GENERIC_AI_BOILERPLATE = new Set([
+  'create',
+  'separate',
+  'image',
+  'images',
+  'photo',
+  'photos',
+  'photograph',
+  'photography',
+  'picture',
+  'pictures',
+  'pic',
+  'generate',
+  'generated',
+  'prompt',
+  'prompts',
+  'upscale',
+  'upscaled',
+  'version',
+  'final',
+  'copy',
+  'edit',
+  'edited',
+  'render',
+  'rendering',
+  'rendered',
+  'default',
+  'stock',
+  'asset',
+  'assets',
+  'vector',
+  'illustration',
+  'illustrations',
+  'raw',
+  'file',
+  'files',
+  'download',
+  'sample',
+  'preview',
+  'untitled',
+  'img',
+  'dsc',
+  'show',
+  'showing',
+  'different',
+  'variation',
+  'variations',
+  'series',
+  'featuring',
+  'depicting',
+  'variety',
+]);
+
 export function cleanFilenameHint(filename: string): string {
   if (!filename) return '';
-  return filename
+  const cleaned = filename
     // strip common image/video extensions
     .replace(/\.(jpe?g|png|webp|eps|ai|svg|mov|mp4|tiff?)$/i, '')
     // replace underscores and hyphens with spaces FIRST so word boundaries match clean words
@@ -74,6 +138,19 @@ export function cleanFilenameHint(filename: string): string {
     // collapse whitespace and trim
     .replace(/\s+/g, ' ')
     .trim();
+
+  // Filter out generic boilerplate command words while preserving word casing
+  const tokens = cleaned
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length >= 2 && !/^\d+$/.test(w) && !GENERIC_AI_BOILERPLATE.has(w.toLowerCase()));
+
+  // If less than 2 meaningful subject words remain, omit filename hint completely
+  if (tokens.length < 2) {
+    return '';
+  }
+
+  return tokens.join(' ');
 }
 
 export function buildVisionPrompt(
@@ -90,7 +167,9 @@ export function buildVisionPrompt(
   } else if (keywordPhrasing === 'double') {
     prompt += '\nCRITICAL KEYWORD REQUIREMENT: Output 2-word compound phrases where appropriate (e.g. "copper metal", "brushed texture", "macro photograph", "metallic surface"). Maximum 2 words per tag. NEVER glue words together without spaces.';
   } else {
-    prompt += '\nCRITICAL KEYWORD REQUIREMENT: Smart Microstock Mix (1 to 2 Words per Tag). Generate 42 to 48 tags in "ranked_keywords". Include at least 12 to 18 natural 2-word commercial phrases (e.g., "duffel bag", "water bottle", "wireless earbuds", "charging case", "copy space", "gym floor") mixed with strong single-word tags. Each tag can be either a strong single word (e.g. "foam", "yoga", "minimal", "texture") OR a natural 2-word industry phrase separated by a normal space (e.g. "foam roller", "resistance bands", "home gym", "copy space", "fitness equipment", "blurred background"). Maximum 2 words per tag. NEVER glue or concatenate multiple words together without a space (e.g., NEVER output "homegym", "fitnessequipment", "recoverytool", "stretchingtool"). Always put a normal space between two words in a compound tag.';
+    prompt += '\nCRITICAL KEYWORD REQUIREMENT: Smart Microstock Mix (1 to 2 Words per Tag). Generate 42 to 48 tags in "ranked_keywords".';
+    prompt += '\nTOP 10 KEYWORD PRIORITY (Positions #1 to #10): Positions #1 to #8 MUST be core single-word visible nouns and primary subjects (e.g., "fruit", "apple", "orange", "grapes", "banana", "bowl", "food", "healthy"). At most 2 two-word compound phrases in the Top 10 (e.g., "fruit bowl", "still life"). The remaining 10 to 15 two-word phrases MUST be placed in positions #11 to #48, interleaved naturally with single words. Never repeat the same root word more than twice inside the first 10 tags.';
+    prompt += '\nSTRICT ANTI-GLUING RULE: Maximum 2 words per tag. NEVER glue or concatenate multiple words together without a space (e.g., NEVER output "homegym", "fitnessequipment", "recoverytool", "stretchingtool"). Always put a normal space between two words in a compound tag.';
   }
 
   if (titleLengthPreset === 'short') {

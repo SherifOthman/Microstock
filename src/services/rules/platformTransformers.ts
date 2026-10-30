@@ -1,4 +1,5 @@
-import type { MasterMetadataRecord } from '../../types/index.ts';
+import type { MasterMetadataRecord } from '../../types';
+import { DREAMSTIME_CATEGORIES, mapToDreamstimeCategories } from '../../constants/categories';
 
 export interface PlatformExportRow {
   [columnName: string]: string | number;
@@ -326,7 +327,6 @@ export function transformForDreamstime(
   records: MasterMetadataRecord[],
   options?: DreamstimeTransformOptions
 ): PlatformExportRow[] {
-  const isAi = options?.isAiGenerated !== undefined ? options.isAiGenerated : true;
   const isFree = options?.free ? 1 : 0;
   const isEditorial = options?.editorial ? 1 : 0;
   const wel = options?.wel !== undefined ? (options.wel ? 1 : 0) : 1;
@@ -342,9 +342,11 @@ export function transformForDreamstime(
       description = `${description.replace(/\.$/, '')}, AI-generated image.`;
     }
 
+    const cleanTitle = smartTruncate(rec.baseTitle ?? '', 250, false);
+
     // Rule 1: Description MUST be strictly longer than Image Name
-    if (description.length <= (rec.baseTitle ?? '').length) {
-      description = `${description} Detailed commercial stock visual asset with natural perspective.`;
+    if (description.length <= cleanTitle.length) {
+      description = `${description.replace(/\.$/, '')}. High quality detailed commercial stock photography visual asset with natural perspective.`;
     }
 
     // Ensure Description ends with a period
@@ -352,16 +354,36 @@ export function transformForDreamstime(
       description += '.';
     }
 
-    const cleanTitle = smartTruncate(rec.baseTitle ?? '', 250, false);
-    const cleanDesc = smartTruncate(description, 756, true);
+    let cleanDesc = smartTruncate(description, 756, true);
+    if (cleanDesc.length <= cleanTitle.length) {
+      cleanDesc = `${cleanDesc} High quality detailed commercial stock asset.`;
+    }
+
+    // Official Dreamstime categories with fallback mapper
+    let cat1 = rec.categories?.dreamstimeCategory1 || 0;
+    let cat2 = rec.categories?.dreamstimeCategory2 || 0;
+    // Dreamstime official AI category ID is 212 ('Illustrations & Clipart -> AI generated')
+    const cat3 = recordIsAi ? 212 : (rec.categories?.dreamstimeCategory3 || 0);
+
+    if (!cat1 || !DREAMSTIME_CATEGORIES[cat1]) {
+      const mapped = mapToDreamstimeCategories(
+        rec.categories?.adobeCategoryId,
+        rec.categories?.shutterstockCategories,
+        recordIsAi
+      );
+      cat1 = mapped.cat1;
+      if (!cat2 || !DREAMSTIME_CATEGORIES[cat2]) {
+        cat2 = mapped.cat2;
+      }
+    }
 
     return {
       Filename: rec.filename ?? '',
       'Image Name': cleanTitle,
       Description: cleanDesc,
-      'Category 1': rec.categories?.dreamstimeCategory1 || 115,
-      'Category 2': rec.categories?.dreamstimeCategory2 || 105,
-      'Category 3': recordIsAi ? 114 : rec.categories?.dreamstimeCategory3 || 100, // 114 = AI-generated
+      'Category 1': cat1,
+      'Category 2': cat2,
+      'Category 3': cat3,
       keywords: (rec.rankedKeywords ?? []).join(', '),
       Free: isFree,
       'W-EL': wel, // Web Extended License

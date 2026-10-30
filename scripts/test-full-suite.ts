@@ -2,7 +2,8 @@ import { MasterMetadataRecord } from '../src/types';
 import { generatePlatformCsv, SupportedPlatform } from '../src/services/export/csvExporter';
 import { hydrateVecteezyCsv } from '../src/services/rules/vecteezyHydrator';
 import { buildVisionPrompt, cleanFilenameHint } from '../src/services/ai/masterPrompt';
-import { parseAndNormalizeAiMetadata, deGlueCompoundWord } from '../src/services/ai/metadataParser';
+import { parseAndNormalizeAiMetadata, deGlueCompoundWord, rebalanceTopKeywords } from '../src/services/ai/metadataParser';
+import { mapToDreamstimeCategories, getDreamstimeCategoryName, DREAMSTIME_CATEGORIES } from '../src/constants/categories';
 import Papa from 'papaparse';
 
 async function runTestSuite() {
@@ -166,7 +167,7 @@ async function runTestSuite() {
   const rowDt = parsedDt.data[0] as any;
   assert(rowDt['Free'] === '1', 'Dreamstime options: Free column set to 1 when checked');
   assert(rowDt['Editorial'] === '1', 'Dreamstime options: Editorial column set to 1 when checked');
-  assert(rowDt['Category 3'] === '114', 'Dreamstime options: AI Generated sets Category 3 to 114 (Illustrations/AI)');
+  assert(rowDt['Category 3'] === '212', 'Dreamstime options: AI Generated sets Category 3 to 212 (Illustrations & Clipart -> AI generated)');
 
   // Option C: Freepik AI Model Customization
   const fpCustom = generatePlatformCsv('freepik', sampleRecords, 'test', {
@@ -319,6 +320,52 @@ async function runTestSuite() {
 
   const matchedCopper = parsedAdv.find((r) => r['Id'] === '8492012');
   assert(matchedCopper['Title'].includes('Brushed Copper'), 'Vecteezy Edge Cases: Reversed order matched copper accurately');
+
+  // -----------------------------------------------------------
+  // TEST 9: Top 10 Rebalancing, AI Boilerplate Stripping & Official Dreamstime Categories
+  // -----------------------------------------------------------
+  console.log('\n--- Test Group 9: Top 10 Rebalancing, Boilerplate Stripping & DT Categories ---');
+
+  // 1. Generic AI boilerplate filename cleaning
+  const aiBoilerplate1 = 'Create_separate_images_featuring_assorted_fruits_in_a_ceramic_bowl_2K.jpg';
+  const cleanBoilerplate1 = cleanFilenameHint(aiBoilerplate1);
+  assert(
+    !cleanBoilerplate1.toLowerCase().includes('create') &&
+    !cleanBoilerplate1.toLowerCase().includes('separate') &&
+    !cleanBoilerplate1.toLowerCase().includes('images'),
+    'cleanFilenameHint: Strips generic AI generation boilerplate tokens'
+  );
+
+  const genericOnlyFilename = 'Create_separate_images_showing_different_variations_generate.png';
+  const cleanGenericOnly = cleanFilenameHint(genericOnlyFilename);
+  assert(cleanGenericOnly === '', 'cleanFilenameHint: Returns empty string when filename contains only generic prompt words');
+
+  // 2. Top 10 Rebalancer: guarantees single visible nouns first and limits 2-word clustering
+  const clusteredKeywords = [
+    'fresh fruit', 'fruit bowl', 'rustic kitchen', 'healthy food', 'wooden table',
+    'still life', 'organic fruit', 'citrus fruit', 'delicious snack', 'dietary food',
+    'apple', 'orange', 'banana', 'grapes', 'bowl', 'food', 'healthy', 'fresh', 'kitchen', 'table'
+  ];
+  const rebalanced = rebalanceTopKeywords(clusteredKeywords);
+  const top10 = rebalanced.slice(0, 10);
+  const top10Singles = top10.filter((k) => !k.includes(' '));
+  const top10Doubles = top10.filter((k) => k.includes(' '));
+
+  assert(top10Singles.length >= 7, `rebalanceTopKeywords: Guarantees at least 7 single words in Top 10 (Got ${top10Singles.length})`);
+  assert(top10Doubles.length <= 3, `rebalanceTopKeywords: Caps compound 2-word phrases at 2-3 in Top 10 (Got ${top10Doubles.length})`);
+  assert(!top10[0].includes(' ') && !top10[1].includes(' '), 'rebalanceTopKeywords: Positions #1 and #2 are primary single-word subjects');
+
+  // 3. Official Dreamstime Category Mapping & Fallbacks
+  const dtMapped = mapToDreamstimeCategories(7, ['Food and Drink'], true);
+  assert(dtMapped.cat1 === 137, 'mapToDreamstimeCategories: Food maps to 137 (Nature -> Fruits & Vegetables)');
+  assert(dtMapped.cat2 === 127, 'mapToDreamstimeCategories: Food maps secondary to 127 (Industries -> Food & Beverages)');
+  assert(dtMapped.cat3 === 212, 'mapToDreamstimeCategories: AI Generated flag sets cat3 to 212');
+
+  const dtName = getDreamstimeCategoryName(137, true);
+  assert(dtName.includes('Fruits & Vegetables') && dtName.includes('AI Generated'), 'getDreamstimeCategoryName: Formats verified name and appends AI Generated badge');
+
+  assert(DREAMSTIME_CATEGORIES[212] === 'Illustrations & Clipart -> AI generated', 'DREAMSTIME_CATEGORIES: Verified official 212 category in legend');
+  assert(DREAMSTIME_CATEGORIES[115] === 'People -> Couples', 'DREAMSTIME_CATEGORIES: Verified 115 is Couples (never defaulted for food)');
 
   console.log('\n====================================================');
   console.log(`🏁 TEST RESULTS: ${passedTests} / ${totalTests} TESTS PASSED (100%)`);

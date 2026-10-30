@@ -116,10 +116,12 @@ export const translations = {
     copy: 'Copy',
     copied: 'Copied',
     saveKeywords: 'Save Keywords',
-    addTag: '+ Tag',
+    addTag: 'Tag',
     regenerate: 'Regenerate',
     deleteAsset: 'Delete Asset',
     top10SeoPriority: 'Top 10 SEO Priority',
+    categories: 'Categories:',
+    copyAllMetadata: 'Copy All',
 
     // Tracker
     distributionTrackerTitle: 'Multi-Agency Distribution Tracker',
@@ -242,10 +244,12 @@ export const translations = {
     copy: 'نسخ',
     copied: 'تم النسخ',
     saveKeywords: 'حفظ الكلمات',
-    addTag: '+ كلمة',
+    addTag: 'كلمة',
     regenerate: 'إعادة التوليد',
     deleteAsset: 'حذف الأصل',
     top10SeoPriority: 'أهم 10 كلمات (أولوية سيو)',
+    categories: 'التصنيفات:',
+    copyAllMetadata: 'نسخ كل البيانات',
 
     // Tracker
     distributionTrackerTitle: 'متتبع التوزيع عبر المنصات المتعددة',

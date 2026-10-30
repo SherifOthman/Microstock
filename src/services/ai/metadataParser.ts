@@ -1,4 +1,5 @@
 import { MasterMetadataRecord } from '../../types';
+import { DREAMSTIME_CATEGORIES, mapToDreamstimeCategories } from '../../constants/categories';
 
 export const SHUTTERSTOCK_OFFICIAL_CATEGORIES = [
   'Abstract',
@@ -250,7 +251,12 @@ export function parseAndNormalizeAiMetadata(
     }
   }
 
-  const uniqueKeywords = finalKeywords.slice(0, 50);
+  // Apply Top 10 Keyword Priority rebalancing (ensuring at least 7 single words, max 2-3 compound phrases in top 10)
+  const rebalancedKeywords = keywordPhrasing === 'single'
+    ? finalKeywords
+    : rebalanceTopKeywords(finalKeywords);
+
+  const uniqueKeywords = rebalancedKeywords.slice(0, 50);
 
   // If AI generation failed to produce meaningful metadata, throw to trigger failover retry
   if (!parsed.base_title && uniqueKeywords.length < 5) {
@@ -281,10 +287,28 @@ export function parseAndNormalizeAiMetadata(
     if (cat) shutterCats = [cat];
   }
 
-  // 7. Dreamstime Categories
-  const dtCat1 = Number(parsed.dreamstime_category_1) || 115; // default Landscape / generic
-  const dtCat2 = Number(parsed.dreamstime_category_2) || 105;
-  const dtCat3 = isAiGenerated ? 114 : 100; // 114 is AI-Generated / Illustrations
+  // 7. Dreamstime Categories (Deterministic mapping & official validation)
+  let dtCat1 = Number(parsed.dreamstime_category_1);
+  let dtCat2 = Number(parsed.dreamstime_category_2);
+
+  const fallbackDt = mapToDreamstimeCategories(adobeCat, shutterCats, isAiGenerated);
+
+  // Validate that the IDs exist in official Dreamstime categories table
+  if (isNaN(dtCat1) || !DREAMSTIME_CATEGORIES[dtCat1] || dtCat1 === 114) {
+    dtCat1 = fallbackDt.cat1;
+    dtCat2 = fallbackDt.cat2;
+  } else if (isNaN(dtCat2) || !DREAMSTIME_CATEGORIES[dtCat2] || dtCat2 === 114) {
+    dtCat2 = fallbackDt.cat2;
+  }
+
+  // Strict domain sanity: food/produce images must NEVER map to People (115/120) or Technology Retro (107)
+  const isFoodImage = adobeCat === 7 || shutterCats.some((c) => (c ?? '').toLowerCase().includes('food'));
+  if (isFoodImage && (dtCat1 === 107 || dtCat1 === 115 || dtCat1 === 120 || dtCat1 === 75 || dtCat1 === 78)) {
+    dtCat1 = fallbackDt.cat1;
+    dtCat2 = fallbackDt.cat2;
+  }
+
+  const dtCat3 = isAiGenerated ? 212 : 0; // 212 = official Dreamstime "Illustrations & Clipart -> AI generated"
 
   return {
     id: crypto.randomUUID(),
@@ -311,6 +335,108 @@ export function parseAndNormalizeAiMetadata(
     status: 'completed',
     createdAt: Date.now(),
   };
+}
+
+/**
+ * Enforces Top 10 Keyword Priority:
+ * - Positions #1 to #8 are core single-word visible nouns and primary subjects.
+ * - At most 2 to 3 multi-word compound phrases in the Top 10 (interleaved naturally).
+ * - No root word stuffing: never repeat the same root word (e.g. 'fruit' or 'food') more than twice in the Top 10.
+ * - Positions #11 to #48 naturally house the remaining 10 to 15 two-word phrases and single words.
+ */
+export function rebalanceTopKeywords(keywords: string[]): string[] {
+  if (keywords.length <= 10) return keywords;
+
+  const singleWords: string[] = [];
+  const multiWords: string[] = [];
+
+  for (const kw of keywords) {
+    if (kw.includes(' ')) {
+      multiWords.push(kw);
+    } else {
+      singleWords.push(kw);
+    }
+  }
+
+  // If there are less than 4 single words, keep original
+  if (singleWords.length < 4) return keywords;
+
+  const getRoot = (word: string): string => {
+    const firstWord = word.split(' ')[0].toLowerCase();
+    if (firstWord.length > 4 && firstWord.endsWith('ies')) return firstWord.slice(0, -3) + 'y';
+    if (firstWord.length > 4 && firstWord.endsWith('es')) return firstWord.slice(0, -2);
+    if (firstWord.length > 3 && firstWord.endsWith('s') && !firstWord.endsWith('ss')) return firstWord.slice(0, -1);
+    return firstWord;
+  };
+
+  const topRootCounts = new Map<string, number>();
+  const selectedSingle: string[] = [];
+  const deferredSingle: string[] = [];
+
+  for (const sw of singleWords) {
+    const root = getRoot(sw);
+    const count = topRootCounts.get(root) || 0;
+    if (selectedSingle.length < 8 && count < 2) {
+      selectedSingle.push(sw);
+      topRootCounts.set(root, count + 1);
+    } else {
+      deferredSingle.push(sw);
+    }
+  }
+
+  const selectedMulti: string[] = [];
+  const deferredMulti: string[] = [];
+
+  // Allow at most 2 multi-word phrases inside the top 10 (or 3 if single words < 8)
+  const maxMultiInTop10 = Math.max(2, 10 - selectedSingle.length);
+
+  for (const mw of multiWords) {
+    const wordsInMw = mw.split(' ');
+    const root1 = getRoot(wordsInMw[0]);
+    const root2 = wordsInMw[1] ? getRoot(wordsInMw[1]) : '';
+    const count1 = topRootCounts.get(root1) || 0;
+    const count2 = root2 ? (topRootCounts.get(root2) || 0) : 0;
+
+    if (selectedMulti.length < maxMultiInTop10 && count1 < 2 && count2 < 2) {
+      selectedMulti.push(mw);
+      topRootCounts.set(root1, count1 + 1);
+      if (root2) topRootCounts.set(root2, count2 + 1);
+    } else {
+      deferredMulti.push(mw);
+    }
+  }
+
+  // Fill up to 10 if needed
+  while (selectedSingle.length + selectedMulti.length < 10 && deferredSingle.length > 0) {
+    selectedSingle.push(deferredSingle.shift()!);
+  }
+  while (selectedSingle.length + selectedMulti.length < 10 && deferredMulti.length > 0) {
+    selectedMulti.push(deferredMulti.shift()!);
+  }
+
+  // Interleave: Put first 5-6 core single words, then 1 compound phrase, then remaining single words, then remaining compound
+  const top10: string[] = [];
+  let sIdx = 0;
+  let mIdx = 0;
+
+  while (sIdx < Math.min(5, selectedSingle.length)) {
+    top10.push(selectedSingle[sIdx++]);
+  }
+  if (mIdx < selectedMulti.length) {
+    top10.push(selectedMulti[mIdx++]);
+  }
+  while (sIdx < selectedSingle.length) {
+    top10.push(selectedSingle[sIdx++]);
+  }
+  while (mIdx < selectedMulti.length) {
+    top10.push(selectedMulti[mIdx++]);
+  }
+
+  // Remaining keywords in their original relative discovery order
+  const top10Set = new Set(top10);
+  const remaining = keywords.filter((k) => !top10Set.has(k));
+
+  return [...top10, ...remaining];
 }
 
 function findClosestCategory(input: string): string | null {

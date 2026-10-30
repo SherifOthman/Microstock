@@ -3,7 +3,7 @@ import { MasterMetadataRecord } from '../../../types';
 import { db } from '../../../db';
 import { QueueItem } from '../../../services/queue/BatchQueueService';
 import { MODEL_DISPLAY_NAMES } from '../../../constants/providers';
-import { ADOBE_CATEGORIES, DREAMSTIME_CATEGORIES } from '../../../constants/categories';
+import { ADOBE_CATEGORIES, DREAMSTIME_CATEGORIES, getDreamstimeCategoryName } from '../../../constants/categories';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { Input } from '../../../components/ui/input';
@@ -652,7 +652,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                     className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-mono border border-dashed border-border text-muted-foreground hover:text-foreground hover:border-foreground transition cursor-pointer"
                   >
                     <Plus className="w-3 h-3" />
-                    <span>{t.addTag}</span>
+                    <span>{(t.addTag || 'Tag').replace(/^\+\s*/, '')}</span>
                   </button>
                 )}
               </div>
@@ -669,6 +669,11 @@ export const AssetCard: React.FC<AssetCardProps> = ({
         {/* Category Mapping Preview Footer */}
         {rec && (
           <div dir="ltr" className="flex flex-wrap items-center gap-2 pt-2 border-t border-border/60 text-xs text-left">
+            <div className="flex items-center gap-1.5 text-muted-foreground font-medium text-[11px] shrink-0">
+              <Layers className="w-3.5 h-3.5 text-primary shrink-0" />
+              <span>{t.categories || 'Categories:'}</span>
+            </div>
+
             {rec.categories?.adobeCategoryId && (
               <Badge variant="outline" className="text-[11px] gap-1 font-mono">
                 <span className="text-muted-foreground">Adobe:</span>
@@ -691,18 +696,21 @@ export const AssetCard: React.FC<AssetCardProps> = ({
               <Badge variant="outline" className="text-[11px] gap-1 font-mono">
                 <span className="text-muted-foreground">Dreamstime:</span>
                 <span className="font-semibold text-foreground">
-                  {DREAMSTIME_CATEGORIES[rec.categories.dreamstimeCategory1] || `#${rec.categories.dreamstimeCategory1}`}
+                  {getDreamstimeCategoryName(rec.categories.dreamstimeCategory1, rec.isAiGenerated)}
                 </span>
               </Badge>
             )}
 
-            <button
+            <Button
+              variant="outline"
+              size="sm"
               type="button"
               onClick={() => onCopyAll(rec)}
-              className="text-[11px] text-muted-foreground hover:text-foreground hover:underline cursor-pointer ml-auto"
+              className="h-6 px-2 text-[11px] gap-1 text-muted-foreground hover:text-foreground cursor-pointer ml-auto border-border"
             >
-              Copy All
-            </button>
+              <Copy className="w-3 h-3" />
+              <span>{t.copyAllMetadata || 'Copy All'}</span>
+            </Button>
           </div>
         )}
       </div>
