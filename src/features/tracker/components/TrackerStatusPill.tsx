@@ -57,9 +57,9 @@ export const STATUS_CONFIG: Record<
   not_uploaded: {
     label: 'Not Uploaded',
     shortLabel: 'Not Uploaded',
-    bg: 'bg-secondary/60 hover:bg-secondary',
-    text: 'text-muted-foreground',
-    border: 'border-border',
+    bg: 'bg-transparent hover:bg-slate-100 dark:hover:bg-slate-800/50',
+    text: 'text-slate-400 dark:text-slate-500 opacity-60 hover:opacity-100',
+    border: 'border-slate-200/60 dark:border-white/[0.05]',
     icon: X,
   },
 };

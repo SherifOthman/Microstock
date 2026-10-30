@@ -303,7 +303,11 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
               size="sm"
               onClick={handleConvertAll}
               disabled={isConvertingBatch}
-              className="gap-1.5"
+              className={`gap-1.5 transition-all ${
+                completedCount < items.length
+                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md font-semibold cursor-pointer'
+                  : 'variant-outline text-muted-foreground'
+              }`}
             >
               {isConvertingBatch ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
               {language === 'ar' ? 'بدء تحويل الكل' : 'Convert All to JPG'}
@@ -312,10 +316,13 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
             {completedCount > 0 && (
               <>
                 <Button
-                  variant="outline"
                   size="sm"
                   onClick={handleDownloadAllZip}
-                  className="gap-1.5"
+                  className={`gap-1.5 transition-all ${
+                    completedCount === items.length
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md font-semibold cursor-pointer'
+                      : 'border-slate-200 dark:border-white/[0.08] bg-card hover:bg-accent text-foreground'
+                  }`}
                 >
                   <Download className="w-3.5 h-3.5" />
                   ZIP ({completedCount})

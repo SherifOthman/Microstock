@@ -23,6 +23,7 @@ import {
   Layers,
   Loader2,
   Maximize2,
+  Play,
   Plus,
   RefreshCw,
   Tag,
@@ -85,6 +86,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
   const [hoverVideoUrl, setHoverVideoUrl] = useState<string | null>(null);
   const [isTagsExpanded, setIsTagsExpanded] = useState(false);
   const [isDescExpanded, setIsDescExpanded] = useState(false);
+  const [isManualEdit, setIsManualEdit] = useState(false);
 
   // Synchronize local states when the database record updates
   useEffect(() => {
@@ -218,6 +220,81 @@ export const AssetCard: React.FC<AssetCardProps> = ({
       : null;
 
   const isCompact = viewMode === 'compact';
+
+  // State-Driven UX Rule 3: Collapsed Pending Row for un-generated queue assets
+  if (isQueued && !isProcessing && !isCompleted && !isManualEdit) {
+    return (
+      <div className="p-3 bg-card rounded-xl border border-slate-200 dark:border-white/[0.07] shadow-xs flex items-center justify-between gap-3 hover:border-slate-300 dark:hover:border-white/15 transition-colors w-full min-w-0">
+        {/* Left: Thumbnail & basic file meta */}
+        <div className="flex items-center gap-3 min-w-0">
+          <div
+            onClick={() => onOpenLightbox && onOpenLightbox(asset.id)}
+            className="w-11 h-11 rounded-lg overflow-hidden border border-slate-200/70 dark:border-white/[0.06] bg-slate-50 dark:bg-[#0B0F19] shrink-0 flex items-center justify-center cursor-pointer"
+            title="Click to view full preview"
+          >
+            {asset.thumbnailUrl ? (
+              <img src={asset.thumbnailUrl} alt={asset.filename} className="w-full h-full object-cover" />
+            ) : (
+              <ImageIcon className="w-5 h-5 text-muted-foreground/40" />
+            )}
+          </div>
+          <div className="min-w-0 space-y-0.5">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="text-xs sm:text-sm font-semibold text-foreground truncate max-w-[200px] sm:max-w-xs md:max-w-md block" title={asset.filename}>
+                {asset.filename}
+              </span>
+              {hasNonAsciiInFilename && (
+                <Badge variant="outline" className="h-4 px-1 text-[9px] gap-0.5 font-semibold text-amber-500 border-amber-500/30 bg-amber-500/10 shrink-0">
+                  <AlertTriangle className="w-2.5 h-2.5" />
+                  <span>Non-ASCII</span>
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
+              <span>{formatBytes(originalSize)}</span>
+              <span>•</span>
+              <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 font-sans font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                {t.queuedStatus || 'في الانتظار'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Right: Inline Actions */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <Button
+            size="sm"
+            onClick={() => onRegenerate(asset.id)}
+            className="h-7.5 px-3 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-xs cursor-pointer gap-1.5"
+          >
+            <Play className="w-3 h-3 fill-current" />
+            <span className="hidden sm:inline">{language === 'ar' ? 'توليد الآن' : 'Generate'}</span>
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setIsManualEdit(true)}
+            className="h-7.5 px-2.5 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+          >
+            <Edit3 className="w-3 h-3" />
+            <span className="hidden sm:inline">{language === 'ar' ? 'تعديل يدوي' : 'Manual Edit'}</span>
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => onDelete(asset.id, asset.filename)}
+            className="h-7.5 w-7.5 text-muted-foreground hover:text-destructive cursor-pointer"
+            title={t.deleteAsset}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -528,7 +605,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             </div>
           )}
 
-          {/* Filename & Dual Size Display: Original vs Compressed AI Payload */}
+          {/* Filename & Compact Status */}
           <div className="space-y-1.5">
             <div className="flex items-center gap-1.5 min-w-0">
               <p className="text-xs font-semibold text-foreground truncate max-w-full block" title={asset.filename}>
@@ -546,166 +623,96 @@ export const AssetCard: React.FC<AssetCardProps> = ({
               )}
             </div>
 
-            <div className="rounded-lg bg-secondary/40 border border-border/70 p-2 space-y-1.5 text-[10px] font-mono">
-              <div className="flex items-center justify-between text-muted-foreground">
-                <span>{t.originalSize}</span>
-                <span className="font-semibold text-foreground">{formatBytes(originalSize)}</span>
-              </div>
-
-              <div className="flex items-center justify-between text-muted-foreground">
-                <span>{t.aiPayload}</span>
-                <div dir="ltr" className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
-                  <span className="font-semibold text-sky-400">{formatBytes(compressedSize)}</span>
-                  {savingsPercent !== null && (
-                    <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-500 font-semibold border border-emerald-500/20">
-                      -{savingsPercent}%
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Status Badge with sleek shadcn outline design */}
-          {isCompleted && (
-            <Badge
-              variant="outline"
-              className="w-full py-1.5 px-3 rounded-lg border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold text-xs flex items-center justify-center gap-1.5"
-            >
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span>{t.completedStatus}</span>
-            </Badge>
-          )}
-
-          {isProcessing && (
-            <Badge
-              variant="outline"
-              className="w-full py-1.5 px-3 rounded-lg border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 font-semibold text-xs flex items-center justify-center gap-1.5"
-            >
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              <span>{t.processingStatus}</span>
-            </Badge>
-          )}
-
-          {isQueued && (
-            <Badge
-              variant="outline"
-              className="w-full py-1.5 px-3 rounded-lg border-border/80 bg-secondary/60 text-muted-foreground font-medium text-xs flex items-center justify-center gap-1.5"
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60" />
-              <span>{t.queuedStatus || 'Waiting'}</span>
-            </Badge>
-          )}
-
-          {isError && (
-            <Badge
-              variant="outline"
-              className="w-full py-1.5 px-3 rounded-lg border-destructive/40 bg-destructive/10 text-destructive font-semibold text-xs flex items-center justify-center gap-1.5"
-            >
-              <AlertTriangle className="w-3.5 h-3.5" />
-              <span>{t.failedStatus}</span>
-            </Badge>
-          )}
-
-          {/* Live Model & Attempt Tracker */}
-          <div className="rounded-lg border border-border bg-secondary/30 p-2.5 text-[11px] space-y-1.5">
-            {isProcessing && (
-              <div className="space-y-1">
-                <div className="flex items-center gap-1.5 text-sky-500 font-semibold text-[11px]">
-                  <Zap className="w-3 h-3 animate-pulse" />
-                  <span>
-                    {asset.queueItem?.retryCount && asset.queueItem.retryCount > 0
-                      ? t.retryingViaFallback || 'Retrying via fallback...'
-                      : (t.analyzingWith || 'Analyzing with {provider}...').replace(
-                          '{provider}',
-                          getCleanProviderName(asset.queueItem?.assignedProvider)
-                        )}
-                  </span>
-                </div>
-                <div className="text-[10px] text-muted-foreground font-mono">
-                  {t.provider || 'Provider:'}{' '}
-                  <span className="text-foreground font-semibold">
-                    {getCleanProviderName(asset.queueItem?.assignedProvider)}
-                  </span>
-                </div>
-              </div>
+            {/* Compact Status Pill */}
+            {isCompleted && (
+              <Badge
+                variant="outline"
+                className="w-full py-1 px-2.5 rounded-lg border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold text-xs flex items-center justify-center gap-1.5"
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                <span>{t.completedStatus}</span>
+              </Badge>
             )}
 
-            {isCompleted && rec && (
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span>{t.provider || 'Provider:'}</span>
-                  <span
-                    className="font-semibold text-foreground truncate max-w-[130px]"
-                    title={rec.aiGenerationInfo?.provider}
-                  >
-                    {getCleanProviderName(rec.aiGenerationInfo?.provider)}
-                  </span>
-                </div>
-                {rec.aiGenerationInfo?.latencyMs && (
-                  <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                    <span>{t.latency}</span>
-                    <span className="font-mono text-emerald-500 font-medium">
-                      {(rec.aiGenerationInfo.latencyMs / 1000).toFixed(1)}s
-                    </span>
-                  </div>
-                )}
-                {/* Clean Failover List on one compact line */}
-                {rec.aiGenerationInfo?.attemptHistory &&
-                  rec.aiGenerationInfo.attemptHistory.length > 1 && (
-                    <div className="pt-1 border-t border-border/50 text-[10px] space-y-0.5">
-                      <span className="text-amber-500 font-medium">Failover:</span>
-                      <div className="flex items-center gap-1 font-mono text-[10px] text-muted-foreground flex-wrap">
-                        {rec.aiGenerationInfo.attemptHistory.map((att, idx) => (
-                          <React.Fragment key={idx}>
-                            {idx > 0 && <span className="text-muted-foreground/60">→</span>}
-                            <span
-                              className={
-                                att.status === 'success' ? 'text-emerald-500 font-medium' : 'text-destructive'
-                              }
-                            >
-                              {att.status === 'success' ? '✓' : '✗'} {getCleanProviderName(att.provider)}
-                            </span>
-                          </React.Fragment>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-              </div>
+            {isProcessing && (
+              <Badge
+                variant="outline"
+                className="w-full py-1 px-2.5 rounded-lg border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 font-semibold text-xs flex items-center justify-center gap-1.5"
+              >
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span>{t.processingStatus}</span>
+              </Badge>
             )}
 
             {isError && (
-              <div className="text-[10px] text-destructive leading-tight">
-                {asset.error || 'Metadata generation failed. Check your API keys and models.'}
-              </div>
+              <Badge
+                variant="outline"
+                className="w-full py-1 px-2.5 rounded-lg border-destructive/40 bg-destructive/10 text-destructive font-semibold text-xs flex items-center justify-center gap-1.5"
+              >
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span>{t.failedStatus}</span>
+              </Badge>
             )}
+
+            {/* Inline Telemetry Line */}
+            <div className="rounded-lg bg-slate-50 dark:bg-[#0B0F19] border border-slate-200/70 dark:border-white/[0.05] p-2 space-y-1 text-[10px] font-mono">
+              <div className="flex items-center justify-between text-muted-foreground">
+                <span>{formatBytes(originalSize)} → {formatBytes(compressedSize)}</span>
+                {savingsPercent !== null && (
+                  <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold border border-emerald-500/20">
+                    -{savingsPercent}%
+                  </span>
+                )}
+              </div>
+              {isCompleted && rec && (
+                <div className="flex items-center justify-between text-muted-foreground pt-1 border-t border-slate-200/50 dark:border-white/[0.04]">
+                  <span className="truncate max-w-[120px] text-foreground font-semibold">
+                    {getCleanProviderName(rec.aiGenerationInfo?.provider)}
+                  </span>
+                  {rec.aiGenerationInfo?.latencyMs && (
+                    <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                      {(rec.aiGenerationInfo.latencyMs / 1000).toFixed(1)}s
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Regenerate Button */}
-          {isCompleted && (
+          {/* Compact Actions Row */}
+          <div className="flex items-center gap-1.5 pt-0.5">
+            {isCompleted && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onRegenerate(asset.id)}
+                className="flex-1 h-7.5 text-xs gap-1.5 cursor-pointer hover:bg-secondary border-slate-200 dark:border-white/[0.08]"
+              >
+                <RefreshCw className="w-3 h-3 text-muted-foreground" />
+                <span>{t.regenerate}</span>
+              </Button>
+            )}
+            {isError && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => onRegenerate(asset.id)}
+                className="flex-1 h-7.5 text-xs gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className="w-3 h-3" />
+                <span>{t.retry || (language === 'ar' ? 'إعادة المحاولة' : 'Retry')}</span>
+              </Button>
+            )}
             <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onRegenerate(asset.id)}
-              className="w-full h-8 text-xs gap-1.5 cursor-pointer hover:bg-secondary border-border"
+              variant="ghost"
+              size="icon"
+              onClick={() => onDelete(asset.id, asset.filename)}
+              className="h-7.5 w-7.5 text-muted-foreground hover:text-destructive cursor-pointer shrink-0"
+              title={t.deleteAsset}
             >
-              <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />
-              <span>{t.regenerate}</span>
+              <Trash2 className="w-3.5 h-3.5" />
             </Button>
-          )}
-
-          {/* Retry Button on Error */}
-          {isError && (
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => onRegenerate(asset.id)}
-              className="w-full h-8 text-xs gap-1.5 cursor-pointer"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>{t.retry || (language === 'ar' ? 'إعادة المحاولة' : 'Retry')}</span>
-            </Button>
-          )}
+          </div>
         </div>
 
       {/* ======================================================== */}
@@ -725,7 +732,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
               type="button"
               onClick={() => onCopyText(localTitle, `${asset.id}_title`)}
               disabled={!localTitle}
-              className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md border border-border bg-secondary/50 text-foreground hover:bg-secondary transition cursor-pointer disabled:opacity-40"
+              className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer disabled:opacity-40"
             >
               {copiedKey === `${asset.id}_title` ? (
                 <>
@@ -747,7 +754,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             onBlur={handleBlurTitle}
             placeholder={isProcessing ? 'Generating title...' : 'Stock Asset Title...'}
             disabled={!rec}
-            className="text-xs bg-card border-border font-medium text-left h-8"
+            className="text-xs bg-slate-50 dark:bg-[#0B0F19] border-slate-200/70 dark:border-white/[0.05] font-medium text-left h-8 focus:ring-1 focus:ring-indigo-500"
           />
         </div>
 
@@ -775,7 +782,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 type="button"
                 onClick={() => onCopyText(localDesc, `${asset.id}_desc`)}
                 disabled={!localDesc}
-                className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md border border-border bg-secondary/50 text-foreground hover:bg-secondary transition cursor-pointer disabled:opacity-40"
+                className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer disabled:opacity-40"
               >
                 {copiedKey === `${asset.id}_desc` ? (
                   <>
@@ -799,7 +806,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             onBlur={handleBlurDesc}
             placeholder={isProcessing ? 'Generating description...' : 'Detailed stock description...'}
             disabled={!rec}
-            className={`text-xs bg-card border-border resize-none text-left ${
+            className={`text-xs bg-slate-50 dark:bg-[#0B0F19] border-slate-200/70 dark:border-white/[0.05] resize-none text-left focus:ring-1 focus:ring-indigo-500 ${
               isCompact && !isDescExpanded ? 'line-clamp-2 max-h-16' : ''
             }`}
           />
@@ -809,7 +816,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
             <div className="flex items-center gap-1.5 font-semibold text-foreground">
-              <Tag className="w-3.5 h-3.5 text-amber-500" />
+              <Tag className="w-3.5 h-3.5 text-indigo-500" />
               <span>{t.keywords}</span>
               {rec && (
                 <span className="text-[11px] font-mono font-normal text-muted-foreground">
@@ -832,7 +839,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                       setIsEditingKws(true);
                     }
                   }}
-                  className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md border border-border bg-secondary/50 text-foreground hover:bg-secondary transition cursor-pointer"
+                  className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
                 >
                   <Edit3 className="w-3 h-3 text-muted-foreground" />
                   <span>{isEditingKws ? t.cancel : t.edit}</span>
@@ -842,7 +849,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 type="button"
                 onClick={() => rec && onCopyText(rec.rankedKeywords.join(', '), `${asset.id}_kws`)}
                 disabled={!rec}
-                className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md border border-border bg-secondary/50 text-foreground hover:bg-secondary transition cursor-pointer disabled:opacity-40"
+                className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer disabled:opacity-40"
               >
                 {copiedKey === `${asset.id}_kws` ? (
                   <>
@@ -867,10 +874,10 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                   value={rawKwsInput}
                   onChange={(e) => setRawKwsInput(e.target.value)}
                   placeholder="Type or paste keywords separated by commas..."
-                  className="text-xs min-h-[70px] bg-secondary/20 border-border font-mono text-left"
+                  className="text-xs min-h-[70px] bg-slate-50 dark:bg-[#0B0F19] border-slate-200/70 dark:border-white/[0.05] font-mono text-left"
                 />
                 <div className="flex justify-end gap-2">
-                  <Button size="sm" onClick={handleSaveRawKeywords} className="h-7 text-xs">
+                  <Button size="sm" onClick={handleSaveRawKeywords} className="h-7 text-xs bg-indigo-600 hover:bg-indigo-500 text-white">
                     {t.saveKeywords}
                   </Button>
                 </div>
@@ -878,7 +885,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             ) : (
               <div
                 dir="ltr"
-                className={`p-2.5 sm:p-3 rounded-xl border border-border bg-secondary/15 flex flex-wrap gap-1.5 text-left touch-pan-y ${
+                className={`p-2.5 sm:p-3 rounded-xl border border-slate-200/70 dark:border-white/[0.05] bg-slate-50/70 dark:bg-[#0B0F19] flex flex-wrap gap-1.5 text-left touch-pan-y ${
                   isCompact ? 'overflow-visible' : 'max-h-56 overflow-y-auto'
                 }`}
               >
@@ -936,10 +943,10 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                               canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
                             } ${
                               isTop10
-                                ? 'border-primary/60 bg-primary/10 text-foreground font-semibold shadow-2xs hover:bg-primary/20'
-                                : 'border-border/60 bg-secondary/60 text-muted-foreground hover:text-foreground'
+                                ? 'border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 font-semibold shadow-2xs hover:bg-indigo-500/20'
+                                : 'border-slate-200/60 dark:border-white/[0.05] bg-slate-100 dark:bg-[#151C2C] text-slate-700 dark:text-slate-300 hover:text-foreground'
                             } ${isDragging ? 'opacity-30 scale-95' : ''} ${
-                              isOver ? 'ring-2 ring-primary ring-offset-1 ring-offset-background' : ''
+                              isOver ? 'ring-2 ring-indigo-500 ring-offset-1 ring-offset-background' : ''
                             }`}
                             title={isTop10 ? `#${i + 1} Top SEO Keyword` : `Keyword tag`}
                           >
@@ -948,7 +955,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                               <GripVertical className="w-2.5 h-2.5 opacity-40 hover:opacity-100 shrink-0" />
                             )}
                             {isTop10 && (
-                              <span className="text-[10px] font-mono text-primary font-bold">
+                              <span className="text-[10px] font-mono text-indigo-600 dark:text-indigo-400 font-bold">
                                 #{i + 1}
                               </span>
                             )}

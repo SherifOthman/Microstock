@@ -23,47 +23,49 @@
 }
 
 :root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
-  --card: #ffffff;
+  /* Slate + Indigo Studio Palette (Light Mode) */
+  --background: #f1f5f9; /* Slate 100 canvas */
+  --foreground: #0f172a; /* Slate 900 */
+  --card: #ffffff; /* Pure white card surface */
   --card-foreground: #0f172a;
   --popover: #ffffff;
   --popover-foreground: #0f172a;
-  --primary: #0f172a;
+  --primary: #4f46e5; /* Indigo 600 */
   --primary-foreground: #ffffff;
-  --secondary: #f1f5f9;
+  --secondary: #f8fafc; /* Slate 50 recessed inner well */
   --secondary-foreground: #0f172a;
   --muted: #f1f5f9;
-  --muted-foreground: #64748b;
-  --accent: #f1f5f9;
-  --accent-foreground: #0f172a;
-  --destructive: #ef4444;
+  --muted-foreground: #64748b; /* Slate 500 */
+  --accent: #eef2ff; /* Indigo 50 */
+  --accent-foreground: #4338ca;
+  --destructive: #f43f5e; /* Rose 500 */
   --destructive-foreground: #ffffff;
-  --border: #e2e8f0;
+  --border: #e2e8f0; /* Slate 200 */
   --input: #e2e8f0;
-  --ring: #0f172a;
+  --ring: #4f46e5;
 }
 
 .dark {
-  --background: #09090b;
-  --foreground: #fafafa;
-  --card: #09090b;
-  --card-foreground: #fafafa;
-  --popover: #09090b;
-  --popover-foreground: #fafafa;
-  --primary: #fafafa;
-  --primary-foreground: #09090b;
-  --secondary: #27272a;
-  --secondary-foreground: #fafafa;
-  --muted: #18181b;
-  --muted-foreground: #a1a1aa;
-  --accent: #27272a;
-  --accent-foreground: #fafafa;
-  --destructive: #ef4444;
-  --destructive-foreground: #fafafa;
-  --border: #27272a;
-  --input: #27272a;
-  --ring: #d4d4d8;
+  /* 4-Tier Elevation Palette (Dark Mode) */
+  --background: #090d16; /* Level 0: Deepest rich slate-navy canvas */
+  --foreground: #f8fafc; /* Slate 50 */
+  --card: #151c2c; /* Level 2: Elevated slate card surface */
+  --card-foreground: #f8fafc;
+  --popover: #151c2c;
+  --popover-foreground: #f8fafc;
+  --primary: #6366f1; /* Indigo 500 */
+  --primary-foreground: #ffffff;
+  --secondary: #0b0f19; /* Level 3: Recessed inner well */
+  --secondary-foreground: #f8fafc;
+  --muted: #0f1420; /* Level 1: Subtly elevated panel */
+  --muted-foreground: #94a3b8; /* Slate 400 */
+  --accent: #1e2638;
+  --accent-foreground: #f8fafc;
+  --destructive: #f43f5e; /* Rose 500 */
+  --destructive-foreground: #ffffff;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.08);
+  --ring: #6366f1;
 }
 
 @layer base {

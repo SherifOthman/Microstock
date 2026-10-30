@@ -388,11 +388,8 @@ function renderPostScriptVectorPaths(
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i].trim();
     if (!rawLine) continue;
-    // Skip comments, but do not break on showpage inside comments or procsets
+    // Skip comments
     if (rawLine.startsWith('%')) {
-      if (rawLine.startsWith('%%Trailer') || rawLine.startsWith('%%EOF')) {
-        break;
-      }
       continue;
     }
 
@@ -562,7 +559,7 @@ function renderPostScriptVectorPaths(
         continue;
       }
 
-      if (op === 'stroke' || op === 's' || op === 'S') {
+      if (op === 'stroke' || op === 's' || op === 'S' || op === 'o' || op === 'O') {
         ctx.stroke();
         inPath = false;
         stack.length = 0;
@@ -585,10 +582,15 @@ function renderPostScriptVectorPaths(
         continue;
       }
 
-      if (op === 'newpath' || op === 'n') {
+      if (op === 'newpath' || op === 'n' || op === 'N') {
         ctx.beginPath();
         inPath = true;
         stack.length = 0;
+        continue;
+      }
+
+      if (op === '*u' || op === '*U' || op === 'u' || op === 'U') {
+        // Illustrator compound path or group delimiter
         continue;
       }
 
@@ -602,7 +604,7 @@ function renderPostScriptVectorPaths(
         continue;
       }
 
-      if (stack.length > 10) {
+      if (stack.length > 100) {
         stack.length = 0;
       }
     }
@@ -636,9 +638,23 @@ export async function rasterizeEpsFile(
 ): Promise<EpsRenderResult> {
   const buffer = await file.arrayBuffer();
 
-  // 1. Text decoding of the first 512KB to inspect PostScript headers and BoundingBox
+  // Detect DOS EPS Binary Header (0xC5D0D3C6) to locate exact PostScript stream offset
+  let psStartOffset = 0;
+  let psLength = buffer.byteLength;
+  if (buffer.byteLength >= 30) {
+    const magicView = new DataView(buffer);
+    if (magicView.getUint32(0, true) === 0xc5d0d3c6) {
+      psStartOffset = magicView.getUint32(4, true);
+      const reportedLen = magicView.getUint32(8, true);
+      if (reportedLen > 0 && psStartOffset + reportedLen <= buffer.byteLength) {
+        psLength = reportedLen;
+      }
+    }
+  }
+
+  // 1. Text decoding of the first 512KB from the PostScript start to inspect headers and BoundingBox
   const decoder = new TextDecoder('latin1');
-  const headerSlice = buffer.slice(0, Math.min(buffer.byteLength, 512 * 1024));
+  const headerSlice = buffer.slice(psStartOffset, Math.min(buffer.byteLength, psStartOffset + 512 * 1024));
   const headerText = decoder.decode(headerSlice);
 
   const bb = parseEpsBoundingBox(headerText) || {
@@ -718,8 +734,11 @@ export async function rasterizeEpsFile(
   }
 
   // 1B. Embedded XMP Base64 Thumbnail
-  const fullText = decoder.decode(buffer);
-  const xmpB64 = extractXmpThumbnail(fullText);
+  const fullText = psStartOffset > 0 
+    ? decoder.decode(buffer.slice(psStartOffset, psStartOffset + psLength))
+    : decoder.decode(buffer);
+
+  const xmpB64 = extractXmpThumbnail(fullText) || extractXmpThumbnail(decoder.decode(buffer.slice(0, Math.min(buffer.byteLength, 2 * 1024 * 1024))));
   if (xmpB64) {
     try {
       const img = await loadImageElement(xmpB64);
@@ -788,18 +807,31 @@ export async function rasterizeEpsFile(
   }
 
   // ==========================================
-  // TIER 3: Clean Fallback Vector Badge
+  // TIER 3: Clean Fallback Vector Badge (Pure White Canvas, Commercial Header)
   // ==========================================
-  ctx.fillStyle = '#18181b';
+  ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-  ctx.fillStyle = '#6366f1';
-  ctx.font = `bold ${Math.round(canvasWidth / 15)}px sans-serif`;
+  
+  // Clean decorative border
+  ctx.strokeStyle = '#E2E8F0';
+  ctx.lineWidth = Math.max(2, Math.round(canvasWidth / 200));
+  ctx.strokeRect(canvasWidth * 0.05, canvasHeight * 0.05, canvasWidth * 0.9, canvasHeight * 0.9);
+
+  ctx.fillStyle = '#4F46E5';
+  ctx.font = `bold ${Math.round(canvasWidth / 18)}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('EPS 10 VECTOR', canvasWidth / 2, canvasHeight / 2 - 20);
-  ctx.fillStyle = '#a1a1aa';
-  ctx.font = `${Math.round(canvasWidth / 30)}px sans-serif`;
-  ctx.fillText('Adobe Illustrator Vector Asset', canvasWidth / 2, canvasHeight / 2 + 35);
+  ctx.fillText('VECTOR ILLUSTRATION', canvasWidth / 2, canvasHeight / 2 - 25);
+
+  const rawFilename = (file as File).name || 'vector.eps';
+  const cleanSubject = rawFilename.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').toUpperCase();
+  ctx.fillStyle = '#0F172A';
+  ctx.font = `bold ${Math.round(canvasWidth / 22)}px sans-serif`;
+  ctx.fillText(cleanSubject.slice(0, 28), canvasWidth / 2, canvasHeight / 2 + 25);
+
+  ctx.fillStyle = '#64748B';
+  ctx.font = `${Math.round(canvasWidth / 32)}px sans-serif`;
+  ctx.fillText('Adobe Illustrator EPS 10', canvasWidth / 2, canvasHeight / 2 + 70);
 
   const dataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
   const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/jpeg', jpegQuality));

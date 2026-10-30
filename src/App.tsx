@@ -137,8 +137,8 @@ export function App() {
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col antialiased">
-      {/* Sleek Minimal Responsive Header */}
-      <header className="border-b border-border bg-card/90 backdrop-blur-md sticky top-0 z-40 w-full overflow-hidden">
+      {/* Sleek Minimal Responsive Header (Level 1 Surface) */}
+      <header className="border-b border-slate-200/80 dark:border-white/[0.06] bg-slate-50/90 dark:bg-[#0F1420]/95 backdrop-blur-md sticky top-0 z-40 w-full overflow-hidden">
         <div className="max-w-[1700px] w-full mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-3">
           {/* Left: Brand Logo & Title (Clickable) + Return to Hub Grid Button */}
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">

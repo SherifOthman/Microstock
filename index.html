@@ -3,6 +3,51 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="google" content="notranslate" />
+    <meta name="googlebot" content="notranslate" />
+    <script>
+      // Immediate guardian polyfill to prevent NotFoundError crashes in React when Google/Edge Translate mutates DOM nodes
+      (function() {
+        if (typeof Node !== 'undefined' && Node.prototype) {
+          var origRemoveChild = Node.prototype.removeChild;
+          Node.prototype.removeChild = function(child) {
+            try {
+              if (!child) return child;
+              if (child.parentNode !== this) {
+                if (child.parentNode) {
+                  try { return child.parentNode.removeChild(child); } catch (e) { return child; }
+                }
+                return child;
+              }
+              return origRemoveChild.call(this, child);
+            } catch (err) {
+              return child;
+            }
+          };
+
+          var origInsertBefore = Node.prototype.insertBefore;
+          Node.prototype.insertBefore = function(newNode, refNode) {
+            try {
+              if (!newNode) return newNode;
+              if (refNode && refNode.parentNode !== this) {
+                if (refNode.parentNode && this.contains(refNode.parentNode)) {
+                  var cur = refNode.parentNode;
+                  while (cur.parentNode && cur.parentNode !== this) {
+                    cur = cur.parentNode;
+                  }
+                  if (cur.parentNode === this) {
+                    return origInsertBefore.call(this, newNode, cur);
+                  }
+                }
+                return origInsertBefore.call(this, newNode, null);
+              }
+              return origInsertBefore.call(this, newNode, refNode);
+            } catch (err) {
+              try { return origInsertBefore.call(this, newNode, null); } catch (e2) { return newNode; }
+            }
+          };
+        }
+      })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=2" />
     <link rel="alternate icon" type="image/png" href="/apple-touch-icon.png?v=2" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2" />
@@ -13,7 +58,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet" />
   </head>
-  <body>
+  <body class="notranslate" translate="no">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

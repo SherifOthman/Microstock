@@ -307,23 +307,30 @@ export async function processVectorFile(
     throw new Error('Canvas 2D unavailable');
   }
 
-  // Stylish dark gradient background
-  const grad = ctx.createLinearGradient(0, 0, maxDim, maxDim);
-  grad.addColorStop(0, '#18181b');
-  grad.addColorStop(1, '#09090b');
-  ctx.fillStyle = grad;
+  // Clean pure white background (#FFFFFF) to avoid confusing vision models
+  ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(0, 0, maxDim, maxDim);
 
+  // Subtle clean border
+  ctx.strokeStyle = '#E2E8F0';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(20, 20, maxDim - 40, maxDim - 40);
+
   // Vector Badge Center
-  ctx.fillStyle = '#6366f1';
-  ctx.font = 'bold 36px monospace';
+  ctx.fillStyle = '#4F46E5';
+  ctx.font = 'bold 32px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('EPS VECTOR', maxDim / 2, maxDim / 2 - 20);
+  ctx.fillText('VECTOR ARTWORK', maxDim / 2, maxDim / 2 - 25);
 
-  ctx.fillStyle = '#a1a1aa';
-  ctx.font = '16px sans-serif';
-  ctx.fillText(file.name.slice(0, 30), maxDim / 2, maxDim / 2 + 25);
+  const cleanSubject = file.name ? file.name.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').toUpperCase() : 'ILLUSTRATION';
+  ctx.fillStyle = '#0F172A';
+  ctx.font = 'bold 22px sans-serif';
+  ctx.fillText(cleanSubject.slice(0, 26), maxDim / 2, maxDim / 2 + 20);
+
+  ctx.fillStyle = '#64748B';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('Adobe Illustrator EPS 10', maxDim / 2, maxDim / 2 + 55);
 
   const dataUrl = canvas.toDataURL('image/jpeg', quality);
   const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');

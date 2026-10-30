@@ -207,7 +207,8 @@ Generate ALL metadata, title, description, and 45-49 keywords specifically for a
 - Base Title: Commercial descriptive title for a "${identifiedSubject}" vector illustration (e.g. "${identifiedSubject} Vector Icon Isolated on White Background").
 - Detailed Description: Full sentence describing a professional vector graphic of "${identifiedSubject}".
 - Ranked Keywords: 45 to 49 commercial tags focusing on "${identifiedSubject}" (synonyms, uses, category terms, equipment, design, icon, symbol, clipart, vector, graphic, flat, isolated).
-- NEVER generate generic abstract background patterns, geometric shapes, or describe the placeholder badge! Focus 100% on "${identifiedSubject}".`;
+- NEVER generate generic abstract background patterns, geometric shapes, or describe the placeholder badge! Focus 100% on "${identifiedSubject}".
+- FORBIDDEN KEYWORDS (unless in filename): Do NOT output "abstract", "geometric", "shapes", "minimalist", "pattern", "modern art", "creative shape", "technology", "futuristic", or "texture". Every single keyword must relate directly to "${identifiedSubject}".`;
     } else {
       prompt += `\nCRITICAL MEDIA TYPE: VECTOR EPS ILLUSTRATION. This is a scalable vector graphic illustration${identifiedSubject ? ` depicting: "${identifiedSubject}"` : ''}. Analyze the actual ARTWORK CONTENT and visual elements shown (characters, objects, scenes, colors, style, composition). Describe what the illustration depicts, not just that it is a vector. Include vector-specific terms (vector, illustration, graphic, design, template, editable, scalable, flat, clip art, icon) alongside the SPECIFIC SUBJECT MATTER "${identifiedSubject}". NEVER include camera/photo terms (photo, photograph, shot, depth of field, bokeh, lens, shutter).`;
     }

@@ -98,6 +98,23 @@ export const StudioView: React.FC = () => {
   // Mobile Sidebar Collapsible Toggle
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
+  // Real-time progress bar auto-collapse state
+  const [showProgressBar, setShowProgressBar] = useState(false);
+
+  useEffect(() => {
+    if (queueState.status === 'running' || queueState.status === 'paused') {
+      setShowProgressBar(true);
+    } else if (queueState.status === 'completed') {
+      setShowProgressBar(true);
+      const timer = setTimeout(() => {
+        setShowProgressBar(false);
+      }, 2000);
+      return () => clearTimeout(timer);
+    } else if (queueState.totalCount === 0) {
+      setShowProgressBar(false);
+    }
+  }, [queueState.status, queueState.totalCount]);
+
   // Workflow Configurations (Persisted in localStorage)
   const [isAiGenerated, setIsAiGenerated] = useState<boolean>(() => {
     const saved = localStorage.getItem('stock_is_ai_generated');
@@ -1317,9 +1334,8 @@ export const StudioView: React.FC = () => {
               <Button
                 type="button"
                 size="sm"
-                variant="outline"
                 onClick={() => setIsKeyRingOpen(true)}
-                className="h-7.5 px-3 text-xs font-semibold border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 shrink-0 self-start sm:self-center gap-1.5 cursor-pointer shadow-2xs"
+                className="h-8 px-3.5 text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-sm rounded-lg shrink-0 self-start sm:self-center gap-1.5 cursor-pointer"
               >
                 <KeyRound className="w-3.5 h-3.5" />
                 <span>{t.manageKeysButton || t.manageKeys || 'Manage Keys'}</span>
@@ -1353,11 +1369,15 @@ export const StudioView: React.FC = () => {
           <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto min-w-0">
             <div className="grid grid-cols-2 sm:flex items-center gap-2 w-full sm:w-auto">
               <Button
-                variant="outline"
+                variant={unifiedAssets.length === 0 ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isRunning}
-                className="gap-1.5 text-xs w-full sm:w-auto justify-center"
+                className={`gap-1.5 text-xs w-full sm:w-auto justify-center transition-all ${
+                  unifiedAssets.length === 0
+                    ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md font-semibold cursor-pointer ring-2 ring-indigo-500/20'
+                    : 'border-slate-200 dark:border-white/[0.08] bg-card hover:bg-accent text-foreground'
+                }`}
               >
                 <Plus className="w-3.5 h-3.5" />
                 {t.addImages}
@@ -1367,7 +1387,7 @@ export const StudioView: React.FC = () => {
                 size="sm"
                 onClick={() => folderInputRef.current?.click()}
                 disabled={isRunning}
-                className="gap-1.5 text-xs w-full sm:w-auto justify-center"
+                className="gap-1.5 text-xs w-full sm:w-auto justify-center border-slate-200 dark:border-white/[0.08] bg-card hover:bg-accent text-foreground"
               >
                 <FolderUp className="w-3.5 h-3.5" />
                 {t.selectFolder}
@@ -1405,11 +1425,8 @@ export const StudioView: React.FC = () => {
                     >
                       <Button
                         size="sm"
-                        onClick={handleStartQueue}
-                        disabled={pendingCount === 0 || healthyKeys.length === 0}
-                        className={`gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center transition-all ${
-                          isKeyShake ? 'animate-shake ring-2 ring-destructive' : ''
-                        }`}
+                        disabled
+                        className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center opacity-40 cursor-not-allowed bg-secondary text-muted-foreground border border-border"
                       >
                         <Play className="w-3.5 h-3.5 fill-current" />
                         <span className="truncate">
@@ -1425,7 +1442,7 @@ export const StudioView: React.FC = () => {
                   <Button
                     size="sm"
                     onClick={handleStartQueue}
-                    className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center"
+                    className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center bg-indigo-600 hover:bg-indigo-500 text-white shadow-md ring-2 ring-indigo-500/20 cursor-pointer animate-pulse"
                   >
                     <Play className="w-3.5 h-3.5 fill-current" />
                     <span className="truncate">
@@ -1468,10 +1485,14 @@ export const StudioView: React.FC = () => {
               {/* Export All CSVs (.ZIP) */}
               <Button
                 size="sm"
-                variant="default"
+                variant={completedCount > 0 && pendingCount === 0 ? 'default' : 'outline'}
                 onClick={() => setIsExportOpen(true)}
                 disabled={completedCount === 0}
-                className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center"
+                className={`gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center transition-all ${
+                  completedCount > 0 && pendingCount === 0
+                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md cursor-pointer ring-2 ring-emerald-500/20'
+                    : 'opacity-40 cursor-not-allowed border-slate-200 dark:border-white/[0.08]'
+                }`}
               >
                 <Download className="w-3.5 h-3.5" />
                 <span className="truncate">{(t.exportCsvs || 'Export CSVs ({count})').replace('{count}', String(completedCount))}</span>
@@ -1493,7 +1514,7 @@ export const StudioView: React.FC = () => {
         </div>
 
         {/* Real-time Progress Bar */}
-        {queueState.totalCount > 0 && (
+        {queueState.totalCount > 0 && showProgressBar && (
           <div className="p-3 bg-card rounded-xl border border-border space-y-2 text-xs">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
