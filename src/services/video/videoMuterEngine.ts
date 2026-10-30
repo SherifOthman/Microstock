@@ -69,6 +69,7 @@ function parseBoxes(data: Uint8Array, start: number, end: number): Box[] {
 
 /**
  * Fast binary inspection of MP4/MOV container to detect presence of audio and video tracks
+ * Uses direct MP4 atom parsing for accurate audio track detection
  */
 export async function inspectVideoAudioTrack(file: File): Promise<{
   hasAudio: boolean;
@@ -76,6 +77,8 @@ export async function inspectVideoAudioTrack(file: File): Promise<{
   videoTrackCount: number;
   durationSeconds?: number;
 }> {
+  console.log(`[Video Inspector] Analyzing: ${file.name}`);
+  
   try {
     // Read the first 16MB which typically contains the moov atom (faststart) or full file if < 16MB
     const readSize = Math.min(file.size, 16 * 1024 * 1024);
@@ -87,6 +90,7 @@ export async function inspectVideoAudioTrack(file: File): Promise<{
 
     // If moov is at the end of file (common in some camera recordings), read the last 16MB
     if (!moov && file.size > 16 * 1024 * 1024) {
+      console.log(`[Video Inspector] ${file.name}: moov not in first 16MB, checking end of file...`);
       const tailStart = Math.max(0, file.size - 16 * 1024 * 1024);
       const tailBuf = await file.slice(tailStart, file.size).arrayBuffer();
       const tailData = new Uint8Array(tailBuf);
@@ -133,17 +137,21 @@ export async function inspectVideoAudioTrack(file: File): Promise<{
         }
       }
 
-      return {
+      const result = {
         hasAudio: audioTracks > 0,
         audioTrackCount: audioTracks,
         videoTrackCount: videoTracks,
       };
+      
+      console.log(`[Video Inspector] ${file.name}: Binary parse result:`, result);
+      return result;
     }
   } catch (err) {
-    console.warn('Binary MP4 inspection fallback:', err);
+    console.warn(`[Video Inspector] ${file.name}: Binary MP4 inspection failed, trying HTML5 fallback:`, err);
   }
 
   // Fallback: Use HTML5 video element audio check
+  console.log(`[Video Inspector] ${file.name}: Using HTML5 fallback detection...`);
   return new Promise((resolve) => {
     const video = document.createElement('video');
     video.preload = 'metadata';
@@ -160,18 +168,23 @@ export async function inspectVideoAudioTrack(file: File): Promise<{
           ? (video as any).mozHasAudio
           : (video as any).webkitAudioDecodedByteCount > 0;
 
-      resolve({
+      const result = {
         hasAudio: Boolean(hasAudio),
         audioTrackCount: hasAudio ? 1 : 0,
         videoTrackCount: 1,
         durationSeconds: Math.round(video.duration || 0),
-      });
+      };
+      
+      console.log(`[Video Inspector] ${file.name}: HTML5 fallback result:`, result);
+      resolve(result);
     };
 
     video.onerror = () => {
       URL.revokeObjectURL(url);
       // Assume no audio if unreadable
-      resolve({ hasAudio: false, audioTrackCount: 0, videoTrackCount: 1 });
+      const result = { hasAudio: false, audioTrackCount: 0, videoTrackCount: 1 };
+      console.log(`[Video Inspector] ${file.name}: HTML5 fallback FAILED, assuming no audio:`, result);
+      resolve(result);
     };
   });
 }
@@ -228,6 +241,7 @@ export async function stripAudioTrackLossless(file: File): Promise<Blob> {
 
 /**
  * Saves muted videos directly to a folder via File System Access API
+ * INCLUDES ALL VIDEOS: already-silent ones use original file, muted ones use processed blob
  */
 export async function saveMutedVideosToDirectory(
   items: VideoInspectionResult[],
@@ -239,22 +253,19 @@ export async function saveMutedVideosToDirectory(
       throw new Error('File System Access API not supported in this browser. Please use ZIP download.');
     }
 
-    // Only include items that were successfully muted or already silent
-    const validItems = items.filter(item => 
-      item.status === 'muted' || 
-      item.status === 'already_silent' ||
-      item.mutedBlob
-    );
-
-    if (validItems.length === 0) {
-      throw new Error('No videos to save. Please mute videos first.');
+    // Include ALL videos that were uploaded (don't filter out any)
+    // - already_silent: use original file (no audio to remove)
+    // - muted: use mutedBlob (audio was stripped)
+    // - ready/error: use original file (user wants them anyway for stock upload)
+    if (items.length === 0) {
+      throw new Error('No videos to save. Please add videos first.');
     }
 
     const dirHandle = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
     const targetDir = folderName ? await dirHandle.getDirectoryHandle(folderName, { create: true }) : dirHandle;
 
     let saved = 0;
-    for (const item of validItems) {
+    for (const item of items) {
       const blob = item.mutedBlob || item.file;
       const filename = item.outputName.trim();
       const fileHandle = await targetDir.getFileHandle(filename, { create: true });
@@ -263,7 +274,7 @@ export async function saveMutedVideosToDirectory(
       await writable.close();
 
       saved++;
-      onProgress?.(saved, validItems.length);
+      onProgress?.(saved, items.length);
     }
 
     return { success: true, savedCount: saved };
@@ -277,6 +288,7 @@ export async function saveMutedVideosToDirectory(
 
 /**
  * Downloads muted videos as a single .ZIP archive
+ * INCLUDES ALL VIDEOS: already-silent ones use original file, muted ones use processed blob
  */
 export async function downloadMutedVideosAsZip(
   items: VideoInspectionResult[],
@@ -285,20 +297,17 @@ export async function downloadMutedVideosAsZip(
 ): Promise<void> {
   const zip = new JSZip();
 
-  // Only include items that were successfully muted or already silent
-  const validItems = items.filter(item => 
-    item.status === 'muted' || 
-    item.status === 'already_silent' ||
-    item.mutedBlob  // Has been processed
-  );
-
-  for (const item of validItems) {
+  // Include ALL videos that were uploaded (don't filter out any)
+  // - already_silent: use original file (no audio to remove)
+  // - muted: use mutedBlob (audio was stripped)
+  // - ready/error: use original file (user wants them in the ZIP anyway for stock upload)
+  for (const item of items) {
     const blob = item.mutedBlob || item.file;
     zip.file(item.outputName, blob);
   }
 
-  if (validItems.length === 0) {
-    throw new Error('No videos to export. Please mute videos first.');
+  if (items.length === 0) {
+    throw new Error('No videos to export. Please add videos first.');
   }
 
   const zipBlob = await zip.generateAsync(
