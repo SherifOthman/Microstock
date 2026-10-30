@@ -240,7 +240,7 @@ export const translations = {
 
     // Asset Card
     originalSize: 'الحجم الأصلي:',
-    aiPayload: 'بعد الضغط:',
+    aiPayload: 'حجم الصورة المضغوط:',
     provider: 'المزود:',
     photo: 'صورة',
     vector: 'متجه EPS',

@@ -627,8 +627,9 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 })}
 
                 {isAddingTag ? (
-                  <div className="inline-flex items-center gap-1">
+                  <div className="inline-flex items-center gap-1" dir="ltr">
                     <Input
+                      dir="ltr"
                       autoFocus
                       value={newTagInput}
                       onChange={(e) => setNewTagInput(e.target.value)}
@@ -642,7 +643,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                       }}
                       onBlur={handleAddTagSubmit}
                       placeholder="tag..."
-                      className="h-6 w-24 text-[11px] px-2 py-0"
+                      className="h-6 w-24 text-[11px] px-2 py-0 text-left font-mono"
                     />
                   </div>
                 ) : (

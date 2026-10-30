@@ -1342,7 +1342,7 @@ export const StudioView: React.FC = () => {
                 {previewCopied ? 'Copied to Clipboard' : 'Copy CSV'}
               </Button>
             </div>
-            <pre className="p-3 bg-secondary/50 rounded-lg text-[11px] font-mono text-foreground overflow-x-auto max-h-80 whitespace-pre">
+            <pre dir="ltr" className="p-3 bg-secondary/50 rounded-lg text-[11px] font-mono text-foreground overflow-x-auto max-h-80 whitespace-pre text-left">
               {previewCsvContent}
             </pre>
           </div>
