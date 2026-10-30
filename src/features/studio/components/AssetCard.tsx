@@ -12,6 +12,8 @@ import {
   AlertTriangle,
   Camera,
   Check,
+  ChevronDown,
+  ChevronUp,
   Copy,
   Edit3,
   Film,
@@ -20,6 +22,7 @@ import {
   Image as ImageIcon,
   Layers,
   Loader2,
+  Maximize2,
   Plus,
   RefreshCw,
   Tag,
@@ -28,6 +31,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { useLanguage } from '../../../context/LanguageContext';
+import { Dialog, DialogContent, DialogTitle } from '../../../components/ui/dialog';
 
 export interface UnifiedAssetRow {
   id: string;
@@ -42,6 +46,7 @@ export interface UnifiedAssetRow {
 export interface AssetCardProps {
   asset: UnifiedAssetRow;
   rec?: MasterMetadataRecord;
+  viewMode?: 'compact' | 'detailed';
   copiedKey: string | null;
   onCopyText: (text: string, id: string) => void;
   onCopyAll: (rec: MasterMetadataRecord) => void;
@@ -52,6 +57,7 @@ export interface AssetCardProps {
 export const AssetCard: React.FC<AssetCardProps> = ({
   asset,
   rec,
+  viewMode = 'detailed',
   copiedKey,
   onCopyText,
   onCopyAll,
@@ -67,6 +73,9 @@ export const AssetCard: React.FC<AssetCardProps> = ({
   const [newTagInput, setNewTagInput] = useState('');
   const [draggedKwIndex, setDraggedKwIndex] = useState<number | null>(null);
   const [dragOverKwIndex, setDragOverKwIndex] = useState<number | null>(null);
+  const [isImageModalOpen, setIsImageModalOpen] = useState(false);
+  const [isTagsExpanded, setIsTagsExpanded] = useState(false);
+  const [isDescExpanded, setIsDescExpanded] = useState(false);
 
   // Synchronize local states when the database record updates
   useEffect(() => {
@@ -198,223 +207,360 @@ export const AssetCard: React.FC<AssetCardProps> = ({
       ? Math.round(((originalSize - compressedSize) / originalSize) * 100)
       : null;
 
+  const isCompact = viewMode === 'compact';
+
   return (
-    <div className="rounded-2xl border border-border bg-card p-3 sm:p-5 shadow-xs transition hover:border-border/80 flex flex-col lg:flex-row gap-5 items-start min-w-0 w-full overflow-hidden">
-      {/* ======================================================== */}
-      {/* LEFT COLUMN: Thumbnail, Meta, Status, Live Model Tracker */}
-      {/* ======================================================== */}
-      <div className="w-full lg:w-56 shrink-0 flex flex-col gap-2.5 min-w-0">
-        {/* Thumbnail with sleek subtle delete button pinned top-right */}
-        <div className="relative rounded-xl overflow-hidden border border-border bg-muted/30 aspect-4/3 flex items-center justify-center group">
-          {asset.thumbnailUrl ? (
-            <img
-              src={asset.thumbnailUrl}
-              alt={asset.filename}
-              className="w-full h-full object-cover"
-            />
-          ) : (
-            <ImageIcon className="w-10 h-10 text-muted-foreground/40" />
-          )}
-
-          {/* Media Type & Video Duration Badge */}
-          {(rec?.mediaType === 'video' || asset.queueItem?.mediaType === 'video') ? (
-            <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/85 backdrop-blur-xs text-[10px] font-mono text-white flex items-center gap-1 border border-white/15 shadow-sm">
-              <Film className="w-3 h-3 text-sky-400" />
-              <span>
-                {rec?.videoMeta?.durationSeconds || asset.queueItem?.videoDurationSeconds
-                  ? `${rec?.videoMeta?.durationSeconds || asset.queueItem?.videoDurationSeconds}s`
-                  : t.video}
-              </span>
-              {(rec?.videoMeta?.resolution || asset.queueItem?.videoResolution) && (
-                <span className="text-sky-300 font-bold">
-                  {rec?.videoMeta?.resolution || asset.queueItem?.videoResolution}
-                </span>
+    <>
+      <div
+        className={`rounded-2xl border border-border bg-card shadow-xs transition hover:border-border/80 flex flex-col min-w-0 w-full overflow-hidden ${
+          isCompact
+            ? 'p-3 sm:p-4 gap-3'
+            : 'p-3 sm:p-5 gap-4 lg:gap-5 lg:flex-row items-start'
+        }`}
+      >
+        {/* ======================================================== */}
+        {/* COMPACT MODE HEADER: Clean Single Horizontal Row         */}
+        {/* ======================================================== */}
+        {isCompact && (
+          <div className="flex items-center justify-between gap-3 w-full min-w-0 pb-2.5 border-b border-border/60">
+            {/* Small Rounded Thumbnail (Click to open full preview dialog) */}
+            <button
+              type="button"
+              onClick={() => setIsImageModalOpen(true)}
+              className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-xl overflow-hidden border border-border bg-muted/30 shrink-0 group cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-ring"
+              title="Click to view full image"
+            >
+              {asset.thumbnailUrl ? (
+                <img
+                  src={asset.thumbnailUrl}
+                  alt={asset.filename}
+                  className="w-full h-full object-cover transition duration-150 group-hover:scale-105"
+                />
+              ) : (
+                <ImageIcon className="w-6 h-6 text-muted-foreground/40 m-auto" />
               )}
-            </div>
-          ) : (rec?.mediaType === 'vector' || asset.queueItem?.mediaType === 'vector') ? (
-            <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/85 backdrop-blur-xs text-[10px] font-mono text-indigo-300 flex items-center gap-1 border border-indigo-500/30 shadow-sm">
-              <Layers className="w-3 h-3 text-indigo-400" />
-              <span>{t.vector}</span>
-            </div>
-          ) : (
-            <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/85 backdrop-blur-xs text-[10px] font-mono text-emerald-300 flex items-center gap-1 border border-emerald-500/30 shadow-sm">
-              <Camera className="w-3 h-3 text-emerald-400" />
-              <span>{t.photo}</span>
-            </div>
-          )}
+              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
+                <Maximize2 className="w-3.5 h-3.5 text-white" />
+              </div>
+            </button>
 
-          {/* Subtle delete icon button */}
-          <button
-            type="button"
-            onClick={() => onDelete(asset.id, asset.filename)}
-            className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-background/80 hover:bg-destructive hover:text-destructive-foreground text-foreground border border-border/80 flex items-center justify-center shadow-xs transition cursor-pointer"
-            title={t.deleteAsset}
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        </div>
+            {/* Info Column (Filename, Status Badge, Provider + Latency) */}
+            <div className="flex-1 min-w-0 space-y-1">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span
+                  className="text-xs sm:text-sm font-semibold text-foreground truncate max-w-full block"
+                  title={asset.filename}
+                >
+                  {asset.filename}
+                </span>
+              </div>
 
-        {/* Filename & Dual Size Display: Original vs Compressed AI Payload */}
-        <div className="space-y-1.5">
-          <p className="text-xs font-semibold text-foreground truncate max-w-full block" title={asset.filename}>
-            {asset.filename}
-          </p>
+              <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                {/* Compact Status Indicator */}
+                {isCompleted && (
+                  <Badge
+                    variant="outline"
+                    className="py-0 px-2 h-5 text-[10px] font-semibold border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 gap-1 shrink-0"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    <span>{t.completedStatus}</span>
+                  </Badge>
+                )}
+                {isProcessing && (
+                  <Badge
+                    variant="outline"
+                    className="py-0 px-2 h-5 text-[10px] font-semibold border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 gap-1 shrink-0"
+                  >
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>{t.processingStatus}</span>
+                  </Badge>
+                )}
+                {isQueued && (
+                  <Badge
+                    variant="outline"
+                    className="py-0 px-2 h-5 text-[10px] font-medium border-border/80 bg-secondary/60 text-muted-foreground gap-1 shrink-0"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60" />
+                    <span>{t.queuedStatus || 'Waiting'}</span>
+                  </Badge>
+                )}
+                {isError && (
+                  <Badge
+                    variant="outline"
+                    className="py-0 px-2 h-5 text-[10px] font-semibold border-destructive/40 bg-destructive/10 text-destructive gap-1 shrink-0"
+                  >
+                    <AlertTriangle className="w-3 h-3" />
+                    <span>{t.failedStatus}</span>
+                  </Badge>
+                )}
 
-          <div className="rounded-lg bg-secondary/40 border border-border/70 p-2 space-y-1.5 text-[10px] font-mono">
-            <div className="flex items-center justify-between text-muted-foreground">
-              <span>{t.originalSize}</span>
-              <span className="font-semibold text-foreground">{formatBytes(originalSize)}</span>
-            </div>
-
-            <div className="flex items-center justify-between text-muted-foreground">
-              <span>{t.aiPayload}</span>
-              <div dir="ltr" className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
-                <span className="font-semibold text-sky-400">{formatBytes(compressedSize)}</span>
-                {savingsPercent !== null && (
-                  <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-500 font-semibold border border-emerald-500/20">
-                    -{savingsPercent}%
+                {/* Single muted string: Provider • Latency */}
+                {isCompleted && rec && (
+                  <span className="text-[11px] text-muted-foreground font-mono truncate">
+                    {getCleanProviderName(rec.aiGenerationInfo?.provider)}
+                    {rec.aiGenerationInfo?.latencyMs ? ` • ${(rec.aiGenerationInfo.latencyMs / 1000).toFixed(1)}s` : ''}
                   </span>
                 )}
+                {isProcessing && (
+                  <span className="text-[11px] text-sky-500 font-mono truncate">
+                    {asset.queueItem?.retryCount && asset.queueItem.retryCount > 0
+                      ? t.retryingViaFallback || 'Retrying via fallback...'
+                      : (t.analyzingWith || 'Analyzing with {provider}...').replace(
+                          '{provider}',
+                          getCleanProviderName(asset.queueItem?.assignedProvider)
+                        )}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Quick Action Icons: Regenerate & Delete */}
+            <div className="flex items-center gap-1 shrink-0">
+              {isCompleted && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => onRegenerate(asset.id)}
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground cursor-pointer"
+                  title={t.regenerate}
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => onDelete(asset.id, asset.filename)}
+                className="h-8 w-8 text-muted-foreground hover:text-destructive cursor-pointer"
+                title={t.deleteAsset}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* DETAILED MODE / DESKTOP SIDEBAR: Full Thumbnail & Meta   */}
+        {/* ======================================================== */}
+        <div
+          className={`w-full lg:w-56 shrink-0 flex-col gap-2.5 min-w-0 ${
+            isCompact ? 'hidden' : 'flex'
+          }`}
+        >
+          {/* Thumbnail with sleek subtle delete button pinned top-right */}
+          <div className="relative rounded-xl overflow-hidden border border-border bg-muted/30 aspect-4/3 flex items-center justify-center group">
+            {asset.thumbnailUrl ? (
+              <img
+                src={asset.thumbnailUrl}
+                alt={asset.filename}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <ImageIcon className="w-10 h-10 text-muted-foreground/40" />
+            )}
+
+            {/* Media Type & Video Duration Badge */}
+            {rec?.mediaType === 'video' || asset.queueItem?.mediaType === 'video' ? (
+              <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/85 backdrop-blur-xs text-[10px] font-mono text-white flex items-center gap-1 border border-white/15 shadow-sm">
+                <Film className="w-3 h-3 text-sky-400" />
+                <span>
+                  {rec?.videoMeta?.durationSeconds || asset.queueItem?.videoDurationSeconds
+                    ? `${rec?.videoMeta?.durationSeconds || asset.queueItem?.videoDurationSeconds}s`
+                    : t.video}
+                </span>
+                {(rec?.videoMeta?.resolution || asset.queueItem?.videoResolution) && (
+                  <span className="text-sky-300 font-bold">
+                    {rec?.videoMeta?.resolution || asset.queueItem?.videoResolution}
+                  </span>
+                )}
+              </div>
+            ) : rec?.mediaType === 'vector' || asset.queueItem?.mediaType === 'vector' ? (
+              <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/85 backdrop-blur-xs text-[10px] font-mono text-indigo-300 flex items-center gap-1 border border-indigo-500/30 shadow-sm">
+                <Layers className="w-3 h-3 text-indigo-400" />
+                <span>{t.vector}</span>
+              </div>
+            ) : (
+              <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/85 backdrop-blur-xs text-[10px] font-mono text-emerald-300 flex items-center gap-1 border border-emerald-500/30 shadow-sm">
+                <Camera className="w-3 h-3 text-emerald-400" />
+                <span>{t.photo}</span>
+              </div>
+            )}
+
+            {/* Subtle delete icon button */}
+            <button
+              type="button"
+              onClick={() => onDelete(asset.id, asset.filename)}
+              className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-background/80 hover:bg-destructive hover:text-destructive-foreground text-foreground border border-border/80 flex items-center justify-center shadow-xs transition cursor-pointer"
+              title={t.deleteAsset}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* Filename & Dual Size Display: Original vs Compressed AI Payload */}
+          <div className="space-y-1.5">
+            <p className="text-xs font-semibold text-foreground truncate max-w-full block" title={asset.filename}>
+              {asset.filename}
+            </p>
+
+            <div className="rounded-lg bg-secondary/40 border border-border/70 p-2 space-y-1.5 text-[10px] font-mono">
+              <div className="flex items-center justify-between text-muted-foreground">
+                <span>{t.originalSize}</span>
+                <span className="font-semibold text-foreground">{formatBytes(originalSize)}</span>
+              </div>
+
+              <div className="flex items-center justify-between text-muted-foreground">
+                <span>{t.aiPayload}</span>
+                <div dir="ltr" className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
+                  <span className="font-semibold text-sky-400">{formatBytes(compressedSize)}</span>
+                  {savingsPercent !== null && (
+                    <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-500 font-semibold border border-emerald-500/20">
+                      -{savingsPercent}%
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Status Badge with sleek shadcn outline design */}
-        {isCompleted && (
-          <Badge
-            variant="outline"
-            className="w-full py-1.5 px-3 rounded-lg border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold text-xs flex items-center justify-center gap-1.5"
-          >
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            <span>{t.completedStatus}</span>
-          </Badge>
-        )}
-
-        {isProcessing && (
-          <Badge
-            variant="outline"
-            className="w-full py-1.5 px-3 rounded-lg border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 font-semibold text-xs flex items-center justify-center gap-1.5"
-          >
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            <span>{t.processingStatus}</span>
-          </Badge>
-        )}
-
-        {isQueued && (
-          <Badge
-            variant="outline"
-            className="w-full py-1.5 px-3 rounded-lg border-border/80 bg-secondary/60 text-muted-foreground font-medium text-xs flex items-center justify-center gap-1.5"
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60" />
-            <span>{t.queuedStatus || 'Waiting'}</span>
-          </Badge>
-        )}
-
-        {isError && (
-          <Badge
-            variant="outline"
-            className="w-full py-1.5 px-3 rounded-lg border-destructive/40 bg-destructive/10 text-destructive font-semibold text-xs flex items-center justify-center gap-1.5"
-          >
-            <AlertTriangle className="w-3.5 h-3.5" />
-            <span>{t.failedStatus}</span>
-          </Badge>
-        )}
-
-        {/* Live Model & Attempt Tracker */}
-        <div className="rounded-lg border border-border bg-secondary/30 p-2.5 text-[11px] space-y-1.5">
-          {isProcessing && (
-            <div className="space-y-1">
-              <div className="flex items-center gap-1.5 text-sky-500 font-semibold text-[11px]">
-                <Zap className="w-3 h-3 animate-pulse" />
-                <span>
-                  {asset.queueItem?.retryCount && asset.queueItem.retryCount > 0
-                    ? t.retryingViaFallback || 'Retrying via fallback...'
-                    : (t.analyzingWith || 'Analyzing with {provider}...').replace(
-                        '{provider}',
-                        getCleanProviderName(asset.queueItem?.assignedProvider)
-                      )}
-                </span>
-              </div>
-              <div className="text-[10px] text-muted-foreground font-mono">
-                {t.provider || 'Provider:'}{' '}
-                <span className="text-foreground font-semibold">
-                  {getCleanProviderName(asset.queueItem?.assignedProvider)}
-                </span>
-              </div>
-            </div>
+          {/* Status Badge with sleek shadcn outline design */}
+          {isCompleted && (
+            <Badge
+              variant="outline"
+              className="w-full py-1.5 px-3 rounded-lg border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold text-xs flex items-center justify-center gap-1.5"
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              <span>{t.completedStatus}</span>
+            </Badge>
           )}
 
-          {isCompleted && rec && (
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                <span>{t.provider || 'Provider:'}</span>
-                <span
-                  className="font-semibold text-foreground truncate max-w-[130px]"
-                  title={rec.aiGenerationInfo?.provider}
-                >
-                  {getCleanProviderName(rec.aiGenerationInfo?.provider)}
-                </span>
-              </div>
-              {rec.aiGenerationInfo?.latencyMs && (
-                <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span>{t.latency}</span>
-                  <span className="font-mono text-emerald-500 font-medium">
-                    {(rec.aiGenerationInfo.latencyMs / 1000).toFixed(1)}s
-                  </span>
-                </div>
-              )}
-              {/* Clean Failover List on one compact line */}
-              {rec.aiGenerationInfo?.attemptHistory &&
-                rec.aiGenerationInfo.attemptHistory.length > 1 && (
-                  <div className="pt-1 border-t border-border/50 text-[10px] space-y-0.5">
-                    <span className="text-amber-500 font-medium">Failover:</span>
-                    <div className="flex items-center gap-1 font-mono text-[10px] text-muted-foreground flex-wrap">
-                      {rec.aiGenerationInfo.attemptHistory.map((att, idx) => (
-                        <React.Fragment key={idx}>
-                          {idx > 0 && <span className="text-muted-foreground/60">→</span>}
-                          <span
-                            className={
-                              att.status === 'success' ? 'text-emerald-500 font-medium' : 'text-destructive'
-                            }
-                          >
-                            {att.status === 'success' ? '✓' : '✗'} {getCleanProviderName(att.provider)}
-                          </span>
-                        </React.Fragment>
-                      ))}
-                    </div>
-                  </div>
-                )}
-            </div>
+          {isProcessing && (
+            <Badge
+              variant="outline"
+              className="w-full py-1.5 px-3 rounded-lg border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 font-semibold text-xs flex items-center justify-center gap-1.5"
+            >
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              <span>{t.processingStatus}</span>
+            </Badge>
+          )}
+
+          {isQueued && (
+            <Badge
+              variant="outline"
+              className="w-full py-1.5 px-3 rounded-lg border-border/80 bg-secondary/60 text-muted-foreground font-medium text-xs flex items-center justify-center gap-1.5"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60" />
+              <span>{t.queuedStatus || 'Waiting'}</span>
+            </Badge>
           )}
 
           {isError && (
-            <div className="text-[10px] text-destructive leading-tight">
-              {asset.error || 'Metadata generation failed. Check your API keys and models.'}
-            </div>
+            <Badge
+              variant="outline"
+              className="w-full py-1.5 px-3 rounded-lg border-destructive/40 bg-destructive/10 text-destructive font-semibold text-xs flex items-center justify-center gap-1.5"
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>{t.failedStatus}</span>
+            </Badge>
+          )}
+
+          {/* Live Model & Attempt Tracker */}
+          <div className="rounded-lg border border-border bg-secondary/30 p-2.5 text-[11px] space-y-1.5">
+            {isProcessing && (
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 text-sky-500 font-semibold text-[11px]">
+                  <Zap className="w-3 h-3 animate-pulse" />
+                  <span>
+                    {asset.queueItem?.retryCount && asset.queueItem.retryCount > 0
+                      ? t.retryingViaFallback || 'Retrying via fallback...'
+                      : (t.analyzingWith || 'Analyzing with {provider}...').replace(
+                          '{provider}',
+                          getCleanProviderName(asset.queueItem?.assignedProvider)
+                        )}
+                  </span>
+                </div>
+                <div className="text-[10px] text-muted-foreground font-mono">
+                  {t.provider || 'Provider:'}{' '}
+                  <span className="text-foreground font-semibold">
+                    {getCleanProviderName(asset.queueItem?.assignedProvider)}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {isCompleted && rec && (
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                  <span>{t.provider || 'Provider:'}</span>
+                  <span
+                    className="font-semibold text-foreground truncate max-w-[130px]"
+                    title={rec.aiGenerationInfo?.provider}
+                  >
+                    {getCleanProviderName(rec.aiGenerationInfo?.provider)}
+                  </span>
+                </div>
+                {rec.aiGenerationInfo?.latencyMs && (
+                  <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                    <span>{t.latency}</span>
+                    <span className="font-mono text-emerald-500 font-medium">
+                      {(rec.aiGenerationInfo.latencyMs / 1000).toFixed(1)}s
+                    </span>
+                  </div>
+                )}
+                {/* Clean Failover List on one compact line */}
+                {rec.aiGenerationInfo?.attemptHistory &&
+                  rec.aiGenerationInfo.attemptHistory.length > 1 && (
+                    <div className="pt-1 border-t border-border/50 text-[10px] space-y-0.5">
+                      <span className="text-amber-500 font-medium">Failover:</span>
+                      <div className="flex items-center gap-1 font-mono text-[10px] text-muted-foreground flex-wrap">
+                        {rec.aiGenerationInfo.attemptHistory.map((att, idx) => (
+                          <React.Fragment key={idx}>
+                            {idx > 0 && <span className="text-muted-foreground/60">→</span>}
+                            <span
+                              className={
+                                att.status === 'success' ? 'text-emerald-500 font-medium' : 'text-destructive'
+                              }
+                            >
+                              {att.status === 'success' ? '✓' : '✗'} {getCleanProviderName(att.provider)}
+                            </span>
+                          </React.Fragment>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+              </div>
+            )}
+
+            {isError && (
+              <div className="text-[10px] text-destructive leading-tight">
+                {asset.error || 'Metadata generation failed. Check your API keys and models.'}
+              </div>
+            )}
+          </div>
+
+          {/* Regenerate Button */}
+          {isCompleted && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onRegenerate(asset.id)}
+              className="w-full h-8 text-xs gap-1.5 cursor-pointer hover:bg-secondary border-border"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />
+              <span>{t.regenerate}</span>
+            </Button>
           )}
         </div>
-
-        {/* Regenerate Button */}
-        {isCompleted && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onRegenerate(asset.id)}
-            className="w-full h-8 text-xs gap-1.5 cursor-pointer hover:bg-secondary border-border"
-          >
-            <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />
-            <span>{t.regenerate}</span>
-          </Button>
-        )}
-      </div>
 
       {/* ======================================================== */}
       {/* RIGHT COLUMN: Interactive Form Fields & Keywords List    */}
       {/* ======================================================== */}
-      <div className="flex-1 w-full min-w-0 space-y-3.5 overflow-hidden">
+      <div className={`flex-1 w-full min-w-0 overflow-hidden ${isCompact ? 'space-y-2.5' : 'space-y-3.5'}`}>
         {/* Title Field with Copy & Character Counter */}
-        <div className="space-y-1.5">
+        <div className="space-y-1">
           <div className="flex items-center justify-between text-xs">
             <label className="font-semibold text-foreground flex items-center gap-1.5">
               <span>{t.title}</span>
@@ -448,12 +594,12 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             onBlur={handleBlurTitle}
             placeholder={isProcessing ? 'Generating title...' : 'Stock Asset Title...'}
             disabled={!rec}
-            className="text-xs bg-card border-border font-medium text-left"
+            className="text-xs bg-card border-border font-medium text-left h-8"
           />
         </div>
 
-        {/* Description Field with Copy & Character Counter */}
-        <div className="space-y-1.5">
+        {/* Description Field with Copy, Character Counter & Expand Toggle on Compact */}
+        <div className="space-y-1">
           <div className="flex items-center justify-between text-xs">
             <label className="font-semibold text-foreground flex items-center gap-1.5">
               <span>{t.description}</span>
@@ -461,39 +607,53 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 ({(localDesc || '').length} chars)
               </span>
             </label>
-            <button
-              type="button"
-              onClick={() => onCopyText(localDesc, `${asset.id}_desc`)}
-              disabled={!localDesc}
-              className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md border border-border bg-secondary/50 text-foreground hover:bg-secondary transition cursor-pointer disabled:opacity-40"
-            >
-              {copiedKey === `${asset.id}_desc` ? (
-                <>
-                  <Check className="w-3 h-3 text-emerald-500" />
-                  <span className="text-emerald-500">{t.copied}</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3 h-3 text-muted-foreground" />
-                  <span>{t.copy}</span>
-                </>
+            <div className="flex items-center gap-1.5">
+              {isCompact && (localDesc || '').length > 90 && (
+                <button
+                  type="button"
+                  onClick={() => setIsDescExpanded(!isDescExpanded)}
+                  className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground cursor-pointer"
+                >
+                  {isDescExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  <span>{isDescExpanded ? (t.showLessTags || 'Less') : 'More'}</span>
+                </button>
               )}
-            </button>
+              <button
+                type="button"
+                onClick={() => onCopyText(localDesc, `${asset.id}_desc`)}
+                disabled={!localDesc}
+                className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md border border-border bg-secondary/50 text-foreground hover:bg-secondary transition cursor-pointer disabled:opacity-40"
+              >
+                {copiedKey === `${asset.id}_desc` ? (
+                  <>
+                    <Check className="w-3 h-3 text-emerald-500" />
+                    <span className="text-emerald-500">{t.copied}</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3 h-3 text-muted-foreground" />
+                    <span>{t.copy}</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
           <Textarea
             dir="ltr"
-            rows={2}
+            rows={isCompact && !isDescExpanded ? 2 : 3}
             value={localDesc}
             onChange={(e) => setLocalDesc(e.target.value)}
             onBlur={handleBlurDesc}
             placeholder={isProcessing ? 'Generating description...' : 'Detailed stock description...'}
             disabled={!rec}
-            className="text-xs bg-card border-border resize-none text-left"
+            className={`text-xs bg-card border-border resize-none text-left ${
+              isCompact && !isDescExpanded ? 'line-clamp-2 max-h-16' : ''
+            }`}
           />
         </div>
 
-        {/* Keywords Management with Top 10 SEO Priority Highlight */}
-        <div className="space-y-2">
+        {/* Keywords Management with Mobile Non-Scrollable Collapse & Safe Touch Navigation */}
+        <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
             <div className="flex items-center gap-1.5 font-semibold text-foreground">
               <Tag className="w-3.5 h-3.5 text-amber-500" />
@@ -565,108 +725,158 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             ) : (
               <div
                 dir="ltr"
-                className="p-3 rounded-xl border border-border bg-secondary/15 flex flex-wrap gap-1.5 max-h-56 overflow-y-auto text-left"
+                className={`p-2.5 sm:p-3 rounded-xl border border-border bg-secondary/15 flex flex-wrap gap-1.5 text-left touch-pan-y ${
+                  isCompact ? 'overflow-visible' : 'max-h-56 overflow-y-auto'
+                }`}
               >
-                {rec.rankedKeywords.map((kw, i) => {
-                  const isTop10 = i < 10;
-                  const isDragging = draggedKwIndex === i;
-                  const isOver = dragOverKwIndex === i;
+                {(() => {
+                  const allKws = rec.rankedKeywords;
+                  const displayKws =
+                    isCompact && !isTagsExpanded && !isEditingKws
+                      ? allKws.slice(0, 10)
+                      : allKws;
+                  const remainingCount = allKws.length - 10;
 
                   return (
-                    <Badge
-                      key={`${kw}-${i}`}
-                      variant={isTop10 ? 'default' : 'secondary'}
-                      draggable={true}
-                      onDragStart={(e) => {
-                        setDraggedKwIndex(i);
-                        e.dataTransfer.setData('text/plain', String(i));
-                        e.dataTransfer.effectAllowed = 'move';
-                      }}
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        e.dataTransfer.dropEffect = 'move';
-                        if (dragOverKwIndex !== i) {
-                          setDragOverKwIndex(i);
-                        }
-                      }}
-                      onDragLeave={() => {
-                        if (dragOverKwIndex === i) {
-                          setDragOverKwIndex(null);
-                        }
-                      }}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        handleDropKeyword(i);
-                      }}
-                      onDragEnd={() => {
-                        setDraggedKwIndex(null);
-                        setDragOverKwIndex(null);
-                      }}
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium transition cursor-grab active:cursor-grabbing select-none ${
-                        isTop10
-                          ? 'border-primary/60 bg-primary/10 text-foreground font-semibold shadow-2xs hover:bg-primary/20'
-                          : 'border-border/60 bg-secondary/60 text-muted-foreground hover:text-foreground'
-                      } ${isDragging ? 'opacity-30 scale-95' : ''} ${
-                        isOver ? 'ring-2 ring-primary ring-offset-1 ring-offset-background' : ''
-                      }`}
-                      title={isTop10 ? `#${i + 1} Top SEO Keyword (Drag to reorder)` : `Drag to reorder tag`}
-                    >
-                      <GripVertical className="w-2.5 h-2.5 opacity-40 hover:opacity-100 shrink-0" />
-                      {isTop10 && (
-                        <span className="text-[10px] font-mono text-primary font-bold">
-                          #{i + 1}
-                        </span>
-                      )}
-                      <span>{kw}</span>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleRemoveKeyword(kw);
-                        }}
-                        className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-muted-foreground hover:text-destructive transition cursor-pointer ml-0.5"
-                        title={`Remove "${kw}"`}
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </Badge>
-                  );
-                })}
+                    <>
+                      {displayKws.map((kw, i) => {
+                        const isTop10 = i < 10;
+                        const isDragging = draggedKwIndex === i;
+                        const isOver = dragOverKwIndex === i;
+                        // On compact/mobile, only enable draggable if user toggled Edit mode to avoid scroll trap!
+                        const canDrag = !isCompact || isEditingKws;
 
-                {isAddingTag ? (
-                  <div className="inline-flex items-center gap-1" dir="ltr">
-                    <Input
-                      dir="ltr"
-                      autoFocus
-                      value={newTagInput}
-                      onChange={(e) => setNewTagInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleAddTagSubmit();
-                        } else if (e.key === 'Escape') {
-                          setIsAddingTag(false);
-                        }
-                      }}
-                      onBlur={handleAddTagSubmit}
-                      placeholder="tag..."
-                      className="h-6 w-24 text-[11px] px-2 py-0 text-left font-mono"
-                    />
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingTag(true)}
-                    className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-mono border border-dashed border-border text-muted-foreground hover:text-foreground hover:border-foreground transition cursor-pointer"
-                  >
-                    <Plus className="w-3 h-3" />
-                    <span>{(t.addTag || 'Tag').replace(/^\+\s*/, '')}</span>
-                  </button>
-                )}
+                        return (
+                          <Badge
+                            key={`${kw}-${i}`}
+                            variant={isTop10 ? 'default' : 'secondary'}
+                            draggable={canDrag}
+                            onDragStart={(e) => {
+                              if (!canDrag) return;
+                              setDraggedKwIndex(i);
+                              e.dataTransfer.setData('text/plain', String(i));
+                              e.dataTransfer.effectAllowed = 'move';
+                            }}
+                            onDragOver={(e) => {
+                              if (!canDrag) return;
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = 'move';
+                              if (dragOverKwIndex !== i) {
+                                setDragOverKwIndex(i);
+                              }
+                            }}
+                            onDragLeave={() => {
+                              if (dragOverKwIndex === i) {
+                                setDragOverKwIndex(null);
+                              }
+                            }}
+                            onDrop={(e) => {
+                              if (!canDrag) return;
+                              e.preventDefault();
+                              handleDropKeyword(i);
+                            }}
+                            onDragEnd={() => {
+                              setDraggedKwIndex(null);
+                              setDragOverKwIndex(null);
+                            }}
+                            className={`inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-0.5 rounded-full text-xs font-medium transition select-none ${
+                              canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+                            } ${
+                              isTop10
+                                ? 'border-primary/60 bg-primary/10 text-foreground font-semibold shadow-2xs hover:bg-primary/20'
+                                : 'border-border/60 bg-secondary/60 text-muted-foreground hover:text-foreground'
+                            } ${isDragging ? 'opacity-30 scale-95' : ''} ${
+                              isOver ? 'ring-2 ring-primary ring-offset-1 ring-offset-background' : ''
+                            }`}
+                            title={isTop10 ? `#${i + 1} Top SEO Keyword` : `Keyword tag`}
+                          >
+                            {/* Grip handle only visible when dragging is enabled */}
+                            {canDrag && (
+                              <GripVertical className="w-2.5 h-2.5 opacity-40 hover:opacity-100 shrink-0" />
+                            )}
+                            {isTop10 && (
+                              <span className="text-[10px] font-mono text-primary font-bold">
+                                #{i + 1}
+                              </span>
+                            )}
+                            <span>{kw}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRemoveKeyword(kw);
+                              }}
+                              className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-muted-foreground hover:text-destructive transition cursor-pointer ml-0.5"
+                              title={`Remove "${kw}"`}
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </Badge>
+                        );
+                      })}
+
+                      {/* Expand / Collapse Toggle Button in Compact / Mobile Mode */}
+                      {isCompact && remainingCount > 0 && !isEditingKws && (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setIsTagsExpanded(!isTagsExpanded)}
+                          className="h-6 px-2 text-xs font-medium rounded-full cursor-pointer hover:bg-secondary/80 gap-1"
+                        >
+                          {isTagsExpanded ? (
+                            <>
+                              <ChevronUp className="w-3 h-3" />
+                              <span>{t.showLessTags || 'Show less'}</span>
+                            </>
+                          ) : (
+                            <>
+                              <ChevronDown className="w-3 h-3" />
+                              <span>
+                                {(t.showMoreTags || '+{count} more').replace('{count}', String(remainingCount))}
+                              </span>
+                            </>
+                          )}
+                        </Button>
+                      )}
+
+                      {isAddingTag ? (
+                        <div className="inline-flex items-center gap-1" dir="ltr">
+                          <Input
+                            dir="ltr"
+                            autoFocus
+                            value={newTagInput}
+                            onChange={(e) => setNewTagInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleAddTagSubmit();
+                              } else if (e.key === 'Escape') {
+                                setIsAddingTag(false);
+                              }
+                            }}
+                            onBlur={handleAddTagSubmit}
+                            placeholder="tag..."
+                            className="h-6 w-24 text-[11px] px-2 py-0 text-left font-mono"
+                          />
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setIsAddingTag(true)}
+                          className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-mono border border-dashed border-border text-muted-foreground hover:text-foreground hover:border-foreground transition cursor-pointer"
+                        >
+                          <Plus className="w-3 h-3" />
+                          <span>{(t.addTag || 'Tag').replace(/^\+\s*/, '')}</span>
+                        </button>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             )
           ) : (
-            <div className="p-4 rounded-xl border border-dashed border-border bg-secondary/10 text-center text-xs text-muted-foreground">
+            <div className="p-3 sm:p-4 rounded-xl border border-dashed border-border bg-secondary/10 text-center text-xs text-muted-foreground">
               {isProcessing
                 ? 'AI is analyzing composition and ranking keywords...'
                 : 'Keywords will appear here once metadata is generated.'}
@@ -723,5 +933,26 @@ export const AssetCard: React.FC<AssetCardProps> = ({
         )}
       </div>
     </div>
+
+    {/* Full-size Image Preview Dialog */}
+    <Dialog open={isImageModalOpen} onClose={() => setIsImageModalOpen(false)} className="max-w-3xl p-0 overflow-hidden">
+      <div className="p-2 sm:p-4 bg-card flex flex-col items-center">
+        <div className="w-full flex items-center justify-between pb-2 border-b border-border/60">
+          <span className="text-xs font-semibold truncate text-foreground">{asset.filename}</span>
+        </div>
+        <div className="mt-3 max-h-[75vh] flex items-center justify-center overflow-hidden rounded-xl bg-black/40">
+          {asset.thumbnailUrl ? (
+            <img
+              src={asset.thumbnailUrl}
+              alt={asset.filename}
+              className="max-h-[75vh] w-auto max-w-full object-contain rounded-lg"
+            />
+          ) : (
+            <ImageIcon className="w-16 h-16 text-muted-foreground/40" />
+          )}
+        </div>
+      </div>
+    </Dialog>
+  </>
   );
 };

@@ -54,6 +54,8 @@ import {
   Image as ImageIcon,
   Info,
   KeyRound,
+  LayoutGrid,
+  LayoutList,
   Loader2,
   Lock,
   Pause,
@@ -204,9 +206,26 @@ export const StudioView: React.FC = () => {
   const [clearAllConfirmOpen, setClearAllConfirmOpen] = useState<boolean>(false);
   const [noticeDialog, setNoticeDialog] = useState<{ title: string; message: string } | null>(null);
 
-  // Search Filter
+  // Search Filter & View Mode ('compact' vs 'detailed')
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isKeyShake, setIsKeyShake] = useState(false);
+  const [viewMode, setViewMode] = useState<'compact' | 'detailed'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('stock_card_view_mode');
+      if (saved === 'compact' || saved === 'detailed') return saved;
+      return window.innerWidth < 768 ? 'compact' : 'detailed';
+    }
+    return 'detailed';
+  });
+
+  const handleViewModeChange = (mode: 'compact' | 'detailed') => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem('stock_card_view_mode', mode);
+    } catch {
+      // ignore
+    }
+  };
 
   // File Inputs
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1208,18 +1227,52 @@ export const StudioView: React.FC = () => {
                 </div>
               </div>
 
-              <span className="text-muted-foreground text-xs font-mono shrink-0">
-                {(t.assetsShown || '{count} assets shown').replace('{count}', String(filteredAssets.length))}
-              </span>
+              <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0 w-full sm:w-auto">
+                <span className="text-muted-foreground text-xs font-mono shrink-0">
+                  {(t.assetsShown || '{count} assets shown').replace('{count}', String(filteredAssets.length))}
+                </span>
+
+                {/* View Mode Switcher: Compact vs Detailed */}
+                <div className="flex items-center p-0.5 rounded-lg border border-border bg-secondary/40 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleViewModeChange('compact')}
+                    className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition cursor-pointer ${
+                      viewMode === 'compact'
+                        ? 'bg-card text-foreground shadow-2xs font-semibold'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                    title={t.compactView || 'Compact'}
+                  >
+                    <LayoutList className="w-3.5 h-3.5" />
+                    <span className="text-[11px] hidden sm:inline">{t.compactView || 'Compact'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleViewModeChange('detailed')}
+                    className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition cursor-pointer ${
+                      viewMode === 'detailed'
+                        ? 'bg-card text-foreground shadow-2xs font-semibold'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                    title={t.detailedView || 'Detailed'}
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                    <span className="text-[11px] hidden sm:inline">{t.detailedView || 'Detailed'}</span>
+                  </button>
+                </div>
+              </div>
             </div>
 
-            {/* Spacious Asset Cards List matching user's reference design */}
-            <div className="space-y-4">
+            {/* Asset Cards List */}
+            <div className={viewMode === 'compact' ? 'space-y-2.5' : 'space-y-4'}>
               {filteredAssets.map((asset) => (
                 <AssetCard
                   key={asset.id}
                   asset={asset}
                   rec={asset.masterRecord}
+                  viewMode={viewMode}
                   copiedKey={copiedKey}
                   onCopyText={handleCopyText}
                   onCopyAll={handleCopyAllRecord}
