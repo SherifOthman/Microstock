@@ -121,7 +121,7 @@ export function generatePlatformCsv(
       break;
 
     case '123rf':
-      rows = transformFor123rf(records);
+      rows = transformFor123rf(records, options?.['123rf']);
       break;
   }
 

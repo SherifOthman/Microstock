@@ -195,27 +195,29 @@ footage_filename_1.mpg,Description,"footage,file",,no,,`,
     id: '123rf',
     name: '123RF',
     delimiter: ',',
-    encoding: 'UTF-8 with BOM',
+    encoding: 'UTF-8',
     headers: ['oldfilename', '123rf_filename', 'description', 'keywords', 'country'],
     filenameRules: {
       requiresExtension: true,
       maxLength: 80,
       disallowedCharacters: 'spaces, commas, quotes',
       description:
-        'Must match your exact uploaded file name. "123rf_filename" and "country" can be left blank.',
+        'Must match your exact uploaded file name. "123rf_filename" can be left blank.',
     },
     sampleCsv: `"oldfilename","123rf_filename","description","keywords","country"
-"Acaibowlwithtoppings2K.jpg","","Vibrant purple acai smoothie bowl garnished with fresh blueberries and granola on wooden table.","acai, blueberry, granola, chia, bowl, breakfast, smoothie, berry, fruit, healthy, food, nutrition, superfood, vegan",""
-"Zucchininoodlestossedwithpesto.jpg","","Fresh zucchini spiralized noodles tossed with green basil pesto sauce and cherry tomatoes.","zucchini, noodles, pesto, vegan, healthy, pasta alternative, vegetarian, green, diet, dinner",""`,
+"testimage.jpg","testing150200001","this is a sample image description","some,test,keywords,you,can,try,again","EG"
+"footage_filename.mov","","Delicious Mediterranean food dish with herbs and spices","mediterranean,food,healthy,cuisine","EG"`,
     commonFailureReasons: [
       'Missing the "oldfilename" column or misspelling it.',
       'Omitting the file extension in "oldfilename".',
-      'Fewer than 7 or more than 50 keywords.',
+      'Fewer than 7 or more than 50 keywords (123RF requires minimum 7 keywords).',
+      'Country code not adhering to 2-character ISO format (e.g. "EG" for Egypt, "US" for United States).',
       'Uploading CSV before media files are uploaded via FTP/web.',
     ],
     tipsForUpload: [
       'Always upload media files first via FTP or web before submitting the CSV.',
-      'Keep 123rf_filename and country empty unless you specifically need country tagging.',
+      'Country code is a 2-character code (Default: "EG" for Egypt).',
+      'Keywords must have at least 7 relevant tags.',
     ],
   },
 };

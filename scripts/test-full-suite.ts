@@ -163,7 +163,8 @@ async function runTestSuite() {
       assert(res.csvString.includes(';'), 'Freepik: Uses standard semicolon delimiter (;)');
     } else if (pid === '123rf') {
       const row = parsed.data[0] as any;
-      assert(row['oldfilename'] && row['description'] && row['keywords'], '123RF: Has official 123rf columns (oldfilename, description, keywords)');
+      assert(row['oldfilename'] && row['description'] && row['keywords'] && 'country' in row, '123RF: Has official 123rf columns (oldfilename, description, keywords, country)');
+      assert(row['country'] === 'EG', '123RF: Default country code is "EG" (Egypt)');
     }
   }
 
@@ -202,6 +203,14 @@ async function runTestSuite() {
   assert(rowShutter['Editorial'] === 'yes', 'Shutterstock options: Editorial set to "yes" when checked');
   assert(rowShutter['Mature content'] === 'yes', 'Shutterstock options: Mature content set to "yes" when checked');
   assert(rowShutter['illustration'] === 'yes', 'Shutterstock options: illustration set to "yes" when checked');
+
+  // Option E: 123RF Custom Country Option
+  const rfCustom = generatePlatformCsv('123rf', sampleRecords, 'test', {
+    '123rf': { countryCode: 'US' }
+  });
+  const parsedRf = Papa.parse(rfCustom.csvString, { header: true, skipEmptyLines: true });
+  const rowRf = parsedRf.data[0] as any;
+  assert(rowRf['country'] === 'US', '123RF options: Custom country code "US" injected correctly');
 
   // -----------------------------------------------------------
   // TEST 5: Vecteezy Hydrator (Fuzzy Re-mapping with IDs)

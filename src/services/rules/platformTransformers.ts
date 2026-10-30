@@ -205,11 +205,17 @@ export interface FreepikTransformOptions {
   isAiGenerated?: boolean;
 }
 
+export interface OneTwoThreeRfTransformOptions {
+  countryCode?: string; // 2-character ISO country code, default 'EG' (Egypt)
+  includeNewFilename?: boolean;
+}
+
 export interface UniversalTransformOptions {
   dreamstime?: DreamstimeTransformOptions;
   shutterstock?: ShutterstockTransformOptions;
   vecteezy?: VecteezyTransformOptions;
   freepik?: FreepikTransformOptions;
+  '123rf'?: OneTwoThreeRfTransformOptions;
 }
 
 // 2. Freepik Transformer (Semicolon Delimited)
@@ -410,8 +416,14 @@ export function transformForDreamstime(
   });
 }
 
-// 6. 123RF Transformer
-export function transformFor123rf(records: MasterMetadataRecord[]): PlatformExportRow[] {
+// 6. 123RF Transformer (Official 5-Column Schema: "oldfilename","123rf_filename","description","keywords","country")
+export function transformFor123rf(
+  records: MasterMetadataRecord[],
+  options?: OneTwoThreeRfTransformOptions
+): PlatformExportRow[] {
+  // Default country code: 'EG' (Egypt) as requested; can be empty or custom
+  const country = options?.countryCode !== undefined ? options.countryCode.trim().toUpperCase() : 'EG';
+
   return records.map((rec) => {
     // 123RF official column schema: "oldfilename","123rf_filename","description","keywords","country"
     const cleanDesc = smartTruncate(rec.detailedDescription ?? '', 300, true);
@@ -422,7 +434,7 @@ export function transformFor123rf(records: MasterMetadataRecord[]): PlatformExpo
       '123rf_filename': '',
       description: cleanDesc,
       keywords: keywords,
-      country: '',
+      country: country,
     };
   });
 }

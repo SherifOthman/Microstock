@@ -227,6 +227,11 @@ export const StudioView: React.FC = () => {
     return (localStorage.getItem('stock_vec_license') as 'pro' | 'free') || 'pro';
   });
 
+  // 123RF Settings (Default: 'EG' for Egypt)
+  const [rfCountry, setRfCountry] = useState<string>(() => {
+    return localStorage.getItem('stock_123rf_country') || 'EG';
+  });
+
   // Dialog Controls
   const [isKeyRingOpen, setIsKeyRingOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
@@ -354,6 +359,10 @@ export const StudioView: React.FC = () => {
   }, [shutterIllustration]);
 
   useEffect(() => {
+    localStorage.setItem('stock_123rf_country', rfCountry);
+  }, [rfCountry]);
+
+  useEffect(() => {
     localStorage.setItem('stock_vec_license', vecLicense);
   }, [vecLicense]);
 
@@ -386,6 +395,9 @@ export const StudioView: React.FC = () => {
       freepik: {
         modelName: finalFreepikModel,
         isAiGenerated: freepikAiGenerated,
+      },
+      '123rf': {
+        countryCode: rfCountry,
       },
     };
   };
@@ -1039,6 +1051,33 @@ export const StudioView: React.FC = () => {
                             </div>
                           </div>
                         )}
+                      </div>
+                    </div>
+                  )}
+                  {/* Contextual 123RF Options */}
+                  {p.id === '123rf' && isSelected && (
+                    <div className="p-2.5 ml-4 rounded-md border border-border bg-secondary/20 space-y-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1">
+                          <span className="text-[11px] text-muted-foreground font-medium">{t.rfCountry}:</span>
+                          <Tooltip content={t.rfCountryDesc}>
+                            <Info className="w-3 h-3 text-muted-foreground hover:text-foreground cursor-pointer" />
+                          </Tooltip>
+                        </div>
+                        <div className="w-24">
+                          <Input
+                            value={rfCountry}
+                            onChange={(e) => setRfCountry(e.target.value.toUpperCase().slice(0, 2))}
+                            placeholder="EG"
+                            maxLength={2}
+                            dir="ltr"
+                            className="h-7 text-xs font-mono uppercase bg-card text-center font-bold"
+                          />
+                        </div>
+                      </div>
+                      <div className="pt-1 border-t border-border/50 text-[10px] text-muted-foreground space-y-0.5">
+                        <p className="text-foreground/90 font-medium">• 123RF Official 5-Col (oldfilename, description, keywords, country)</p>
+                        <p>• Default location set to <span className="font-semibold text-foreground">EG (Egypt)</span></p>
                       </div>
                     </div>
                   )}

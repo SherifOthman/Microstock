@@ -552,9 +552,14 @@ export const ReviewView: React.FC = () => {
                       <div className="space-y-1.5 bg-background/50 p-2.5 rounded-lg border border-border">
                         <div className="flex items-center justify-between text-[11px]">
                           <span className="text-muted-foreground">123RF Description:</span>
-                          <Badge variant="outline" className="text-[10px] font-mono">
-                            oldfilename: {String(rfData.oldfilename || '')}
-                          </Badge>
+                          <div className="flex items-center gap-1.5">
+                            <Badge variant="outline" className="text-[10px] font-mono">
+                              Country: {String(rfData.country || 'EG')}
+                            </Badge>
+                            <Badge variant="outline" className="text-[10px] font-mono">
+                              oldfilename: {String(rfData.oldfilename || '')}
+                            </Badge>
+                          </div>
                         </div>
                         <p className="font-medium text-foreground">{String(rfData.description || '')}</p>
                         <p className="text-[11px] font-mono text-muted-foreground line-clamp-1">

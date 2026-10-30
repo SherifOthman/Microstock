@@ -53,6 +53,7 @@ export const ExportView: React.FC = () => {
       const shutterEditorial = JSON.parse(localStorage.getItem('stock_shutter_editorial') ?? 'false');
       const shutterMature = JSON.parse(localStorage.getItem('stock_shutter_mature') ?? 'false');
       const shutterIllustration = JSON.parse(localStorage.getItem('stock_shutter_illustration') ?? 'false');
+      const rfCountry = localStorage.getItem('stock_123rf_country') || 'EG';
       const vecLicense = (localStorage.getItem('stock_vec_license') as 'pro' | 'free') || 'pro';
       const freepikAi = JSON.parse(localStorage.getItem('stock_freepik_ai') ?? 'true');
       const freepikModel = localStorage.getItem('stock_freepik_model') || 'Google Nano Banana';
@@ -80,6 +81,9 @@ export const ExportView: React.FC = () => {
         freepik: {
           modelName: finalFreepikModel,
           isAiGenerated: freepikAi,
+        },
+        '123rf': {
+          countryCode: rfCountry,
         },
       };
     } catch {
@@ -238,7 +242,7 @@ export const ExportView: React.FC = () => {
                   {p.id === 'shutterstock' && <div>• Official 7-Col • Desc (5-200) • Categories</div>}
                   {p.id === 'vecteezy' && <div>• Title Case • Top 5 priority keywords</div>}
                   {p.id === 'dreamstime' && <div>• 15-Col • Desc &gt; Title • Category 3: 114</div>}
-                  {p.id === '123rf' && <div>• Official 5-Col • oldfilename, 123rf_filename</div>}
+                  {p.id === '123rf' && <div>• Official 5-Col • Country: EG (Egypt)</div>}
                 </div>
               </div>
 
