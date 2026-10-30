@@ -261,7 +261,7 @@ export class KeyRingScheduler {
           key.requestsInWindow = (key.requestsInWindow || []).filter((t) => t > windowThreshold);
 
           // CRITICAL FIX #2: Daily quota pre-check with warning
-          const dailyLimit = key.dailyRequestLimit || 10000;
+          const dailyLimit = key.rpdLimit || 10000;
           const dailyUsed = key.dailyRequestCount || 0;
           const dailyRemaining = dailyLimit - dailyUsed;
           

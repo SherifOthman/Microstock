@@ -5,6 +5,7 @@ import { BatchProgressBar } from './BatchProgressBar';
 import { BatchQueueGrid } from './BatchQueueGrid';
 import { batchQueueService, QueueState } from '../../../services/queue/BatchQueueService';
 import { Button } from '../../../components/ui/button';
+import { Badge } from '../../../components/ui/badge';
 import { ArrowRight, CheckCircle2 } from 'lucide-react';
 
 interface Props {

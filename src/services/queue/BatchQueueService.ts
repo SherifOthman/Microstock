@@ -56,6 +56,8 @@ export class BatchQueueService {
   private timerInterval?: any;
   private elapsedSeconds = 0;
   private maxRetries = 3;
+  private completedSinceLastRetry = 0; // Track successes for opportunistic retry
+  private readonly OPPORTUNISTIC_RETRY_THRESHOLD = 5; // Give failed items another chance every 5 successes
 
   private constructor() {}
 
@@ -376,6 +378,7 @@ export class BatchQueueService {
       item.metadataRecord = masterRecord;
       item.status = 'completed';
       item.error = undefined;
+      this.completedSinceLastRetry++; // Track successful completions for opportunistic retry
       this.notify(); // UI update: item completed
 
       // Persist master record to IndexedDB
@@ -383,6 +386,13 @@ export class BatchQueueService {
 
       // Release key lease as success
       await release(true, undefined, latencyMs);
+
+      // OPPORTUNISTIC RETRY: Give failed items another chance after several successes
+      // This helps recover from temporary API issues without user intervention
+      if (this.completedSinceLastRetry >= this.OPPORTUNISTIC_RETRY_THRESHOLD) {
+        this.completedSinceLastRetry = 0;
+        this.opportunisticRetryFailed();
+      }
     } catch (err: any) {
       item.retryCount++;
       const isRetryable = item.retryCount < this.maxRetries;
@@ -449,6 +459,7 @@ export class BatchQueueService {
     keywordPhrasing: KeywordPhrasing = 'mixed',
     titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal'
   ): void {
+    this.completedSinceLastRetry = 0; // Reset opportunistic retry counter on manual retry
     for (const item of this.items.values()) {
       if (item.status === 'error') {
         item.status = 'ready';
@@ -457,6 +468,28 @@ export class BatchQueueService {
       }
     }
     this.start(isAiGenerated, userPrompt, defaultModelName, keywordPhrasing, titleLengthPreset);
+  }
+
+  /**
+   * Opportunistic background retry: Give ONE failed item another chance
+   * without resetting retry count. This helps recover from temporary issues
+   * (network glitches, brief API downtime) without user intervention.
+   * Called automatically after every N successful completions.
+   */
+  private opportunisticRetryFailed(): void {
+    // Find the first failed item that still has retry attempts left
+    const failedItem = Array.from(this.items.values()).find(
+      (i) => i.status === 'error' && i.retryCount < this.maxRetries
+    );
+    
+    if (failedItem) {
+      // Give it another chance by marking it ready (keeps retry count)
+      failedItem.status = 'ready';
+      failedItem.error = undefined;
+      // Don't reset retryCount - this is an opportunistic attempt
+      console.log(`[BatchQueue] Opportunistic retry for ${failedItem.filename} (attempt ${failedItem.retryCount + 1}/${this.maxRetries})`);
+      this.notify();
+    }
   }
 
   public removeItem(id: string): void {
