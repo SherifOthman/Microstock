@@ -21,10 +21,10 @@ function createWindow() {
     },
   });
 
-  const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+  const isDev = process.env.NODE_ENV === 'development';
   const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
 
-  if (isDev) {
+  if (isDev && !app.isPackaged) {
     mainWindow.loadURL(devUrl);
     // Open DevTools in dev mode if requested
     if (process.env.OPEN_DEVTOOLS) {
