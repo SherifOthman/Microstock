@@ -4,10 +4,10 @@ import {
   CleanerOptions,
   DEFAULT_CLEANER_OPTIONS,
   autoDetectLastNumber,
-  downloadRenamedFilesAsZip,
   processFilesForRenaming,
   saveRenamedFilesToDirectory,
 } from '../../services/cleaner/fileCleanerEngine';
+import { isNativeDirectorySupported } from '../../services/desktop/desktopFs';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import { Input } from '../../components/ui/input';
@@ -51,7 +51,7 @@ export const FileCleanerView: React.FC = () => {
   const [progressMsg, setProgressMsg] = useState<string | null>(null);
   const [statusNotification, setStatusNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  const isFSSupported = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+  const isFSSupported = isNativeDirectorySupported();
 
   const handleAddFiles = (newFiles: File[]) => {
     if (newFiles.length === 0) return;
@@ -153,28 +153,6 @@ export const FileCleanerView: React.FC = () => {
       });
     } else if (res.error && !res.error.includes('cancelled')) {
       setStatusNotification({ type: 'error', message: res.error });
-    }
-  };
-
-  const handleDownloadZip = async () => {
-    if (cleanedItems.length === 0) return;
-    setIsProcessing(true);
-    setProgressMsg('Creating ZIP archive...');
-    setStatusNotification(null);
-
-    try {
-      await downloadRenamedFilesAsZip(cleanedItems, 'Cleaned_Microstock_Files.zip', (percent) => {
-        setProgressMsg(`Compressing ZIP: ${percent}%`);
-      });
-      setStatusNotification({
-        type: 'success',
-        message: `ZIP archive with ${cleanedItems.length} cleaned files downloaded successfully!`,
-      });
-    } catch (err: any) {
-      setStatusNotification({ type: 'error', message: err.message || 'Failed to create ZIP.' });
-    } finally {
-      setIsProcessing(false);
-      setProgressMsg(null);
     }
   };
 
@@ -444,35 +422,18 @@ export const FileCleanerView: React.FC = () => {
 
             {/* Save Buttons */}
             <div className="flex items-center gap-2 flex-wrap justify-between sm:justify-end">
-              {isFSSupported && (
-                <Button
-                  size="sm"
-                  onClick={handleSaveToDirectory}
-                  disabled={isProcessing || cleanedItems.length === 0}
-                  className="gap-1.5 text-xs font-semibold"
-                >
-                  {isProcessing ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Save className="w-3.5 h-3.5" />
-                  )}
-                  <span>{language === 'ar' ? 'حفظ في مجلد مباشر' : 'Save to Subfolder'}</span>
-                </Button>
-              )}
-
               <Button
                 size="sm"
-                variant={isFSSupported ? 'outline' : 'default'}
-                onClick={handleDownloadZip}
+                onClick={handleSaveToDirectory}
                 disabled={isProcessing || cleanedItems.length === 0}
-                className="gap-1.5 text-xs font-semibold"
+                className="gap-1.5 text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
               >
                 {isProcessing ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
-                  <Download className="w-3.5 h-3.5" />
+                  <Save className="w-3.5 h-3.5" />
                 )}
-                <span>{language === 'ar' ? 'تحميل كـ ZIP' : 'Download All as .ZIP'}</span>
+                <span>{language === 'ar' ? 'حفظ جميع الملفات في المجلد' : 'Save All Cleaned Files to Folder'}</span>
               </Button>
             </div>
           </div>

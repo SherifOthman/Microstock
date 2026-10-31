@@ -1,7 +1,6 @@
 import React, { useRef, useState } from 'react';
 import {
   VideoInspectionResult,
-  downloadMutedVideosAsZip,
   inspectVideoAudioTrack,
   saveMutedVideosToDirectory,
   stripAudioTrackLossless,
@@ -42,7 +41,6 @@ export const VideoMuterView: React.FC = () => {
   const [selectedPreviewVideo, setSelectedPreviewVideo] = useState<{ url: string; name: string } | null>(null);
   const [statusNotification, setStatusNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  const isFSSupported = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
 
   const handleAddVideos = async (files: File[]) => {
     const videoFiles = files.filter((f) => {
@@ -202,28 +200,6 @@ export const VideoMuterView: React.FC = () => {
       });
     } else if (res.error && !res.error.includes('cancelled')) {
       setStatusNotification({ type: 'error', message: res.error });
-    }
-  };
-
-  const handleDownloadZip = async () => {
-    if (videos.length === 0) return;
-    setIsProcessingAll(true);
-    setProgressMsg('Creating ZIP bundle...');
-    setStatusNotification(null);
-
-    try {
-      await downloadMutedVideosAsZip(videos, 'Muted_Microstock_Videos.zip', (percent) => {
-        setProgressMsg(`Packaging ZIP: ${percent}%`);
-      });
-      setStatusNotification({
-        type: 'success',
-        message: `ZIP archive with ${videos.length} videos downloaded successfully!`,
-      });
-    } catch (err: any) {
-      setStatusNotification({ type: 'error', message: err.message || 'Failed to create ZIP.' });
-    } finally {
-      setIsProcessingAll(false);
-      setProgressMsg(null);
     }
   };
 
@@ -441,27 +417,14 @@ export const VideoMuterView: React.FC = () => {
                 </Button>
               )}
 
-              {isFSSupported && (
-                <Button
-                  size="sm"
-                  onClick={handleSaveToDirectory}
-                  disabled={isProcessingAll || videos.length === 0}
-                  className="gap-1.5 text-xs font-semibold"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  <span>{language === 'ar' ? 'حفظ في مجلد مباشر' : 'Save to Folder'}</span>
-                </Button>
-              )}
-
               <Button
                 size="sm"
-                variant={isFSSupported ? 'outline' : 'default'}
-                onClick={handleDownloadZip}
+                onClick={handleSaveToDirectory}
                 disabled={isProcessingAll || videos.length === 0}
-                className="gap-1.5 text-xs font-semibold"
+                className="gap-1.5 text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
               >
-                <Download className="w-3.5 h-3.5" />
-                <span>{language === 'ar' ? 'تحميل كـ ZIP' : 'Download All as .ZIP'}</span>
+                <Save className="w-3.5 h-3.5" />
+                <span>{language === 'ar' ? 'حفظ جميع الفيديوهات في المجلد (100%)' : 'Save 100% Videos to Folder'}</span>
               </Button>
             </div>
           </div>

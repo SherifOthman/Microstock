@@ -1,7 +1,5 @@
-import JSZip from 'jszip';
-import fileSaver from 'file-saver';
 import { cleanRawFilename } from '../cleaner/fileCleanerEngine';
-const saveAs = (fileSaver as any).saveAs || fileSaver;
+import { saveFilesToLocalDirectory, FileToSave } from '../desktop/desktopFs';
 
 export interface VideoInspectionResult {
   id: string;
@@ -77,6 +75,22 @@ export async function inspectVideoAudioTrack(file: File): Promise<{
   videoTrackCount: number;
   durationSeconds?: number;
 }> {
+  // 1. Native Desktop ffprobe Bridge (Electron / Tauri / Node)
+  if (typeof window !== 'undefined') {
+    const desktopApi = (window as any).electronAPI || (window as any).__TAURI__;
+    if (desktopApi?.probeAudio) {
+      try {
+        const nativeResult = await desktopApi.probeAudio(file);
+        if (nativeResult && typeof nativeResult.hasAudio === 'boolean') {
+          return nativeResult;
+        }
+      } catch (err) {
+        console.warn('[VideoAudio] Native probeAudio fallback to ISOBMFF parser:', err);
+      }
+    }
+  }
+
+  // 2. Strict ISOBMFF Box Parser
   try {
     // Read the first 16MB which typically contains the moov atom (faststart) or full file if < 16MB
     const readSize = Math.min(file.size, 16 * 1024 * 1024);
@@ -112,9 +126,48 @@ export async function inspectVideoAudioTrack(file: File): Promise<{
       for (const b of moovBoxes) {
         if (b.type === 'trak') {
           const trakBoxes = parseBoxes(data, b.offset + b.headerLen, b.offset + b.size);
+
+          // Check tkhd (track header) to verify if track is enabled and has non-zero duration
+          let trackEnabled = true;
+          let trackDuration = 1;
+          const tkhd = trakBoxes.find((x) => x.type === 'tkhd');
+          if (tkhd && tkhd.offset + tkhd.headerLen + 24 <= data.length) {
+            const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+            const version = data[tkhd.offset + tkhd.headerLen];
+            const flags =
+              (data[tkhd.offset + tkhd.headerLen + 1] << 16) |
+              (data[tkhd.offset + tkhd.headerLen + 2] << 8) |
+              data[tkhd.offset + tkhd.headerLen + 3];
+            trackEnabled = (flags & 0x01) !== 0;
+
+            if (version === 0 && tkhd.offset + tkhd.headerLen + 24 <= data.length) {
+              trackDuration = view.getUint32(tkhd.offset + tkhd.headerLen + 20);
+            } else if (version === 1 && tkhd.offset + tkhd.headerLen + 32 <= data.length) {
+              const high = view.getUint32(tkhd.offset + tkhd.headerLen + 24);
+              const low = view.getUint32(tkhd.offset + tkhd.headerLen + 28);
+              trackDuration = high > 0 ? high : low;
+            }
+          }
+
           const mdia = trakBoxes.find((x) => x.type === 'mdia');
           if (mdia) {
             const mdiaBoxes = parseBoxes(data, mdia.offset + mdia.headerLen, mdia.offset + mdia.size);
+
+            // Check mdhd (media header) duration
+            let mediaDuration = 1;
+            const mdhd = mdiaBoxes.find((x) => x.type === 'mdhd');
+            if (mdhd && mdhd.offset + mdhd.headerLen + 20 <= data.length) {
+              const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+              const version = data[mdhd.offset + mdhd.headerLen];
+              if (version === 0) {
+                mediaDuration = view.getUint32(mdhd.offset + mdhd.headerLen + 16);
+              } else if (version === 1 && mdhd.offset + mdhd.headerLen + 28 <= data.length) {
+                const high = view.getUint32(mdhd.offset + mdhd.headerLen + 20);
+                const low = view.getUint32(mdhd.offset + mdhd.headerLen + 24);
+                mediaDuration = high > 0 ? high : low;
+              }
+            }
+
             const hdlr = mdiaBoxes.find((x) => x.type === 'hdlr');
             if (hdlr && hdlr.offset + hdlr.headerLen + 12 <= data.length) {
               const htype = String.fromCharCode(
@@ -125,28 +178,33 @@ export async function inspectVideoAudioTrack(file: File): Promise<{
               );
 
               if (htype === 'soun') {
-                // Verify that the audio track actually has real audio samples (not an empty dummy track with 0 samples)
-                let hasRealSamples = true;
-                const minf = mdiaBoxes.find((x) => x.type === 'minf');
-                if (minf) {
-                  const minfBoxes = parseBoxes(data, minf.offset + minf.headerLen, minf.offset + minf.size);
-                  const stbl = minfBoxes.find((x) => x.type === 'stbl');
-                  if (stbl) {
-                    const stblBoxes = parseBoxes(data, stbl.offset + stbl.headerLen, stbl.offset + stbl.size);
-                    const stsz = stblBoxes.find((x) => x.type === 'stsz');
-                    if (stsz && stsz.offset + stsz.headerLen + 12 <= data.length) {
-                      const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-                      const sampleCount = view.getUint32(stsz.offset + stsz.headerLen + 8);
-                      if (sampleCount === 0) {
-                        hasRealSamples = false;
-                      }
-                    } else {
-                      const stts = stblBoxes.find((x) => x.type === 'stts');
-                      if (stts && stts.offset + stts.headerLen + 8 <= data.length) {
+                // Default to false: Must strictly prove real audio samples exist!
+                // Eliminates false positives on AI video generators that include silent/dummy audio tracks.
+                let hasRealSamples = false;
+
+                if (trackEnabled && trackDuration > 0 && mediaDuration > 0) {
+                  const minf = mdiaBoxes.find((x) => x.type === 'minf');
+                  if (minf) {
+                    const minfBoxes = parseBoxes(data, minf.offset + minf.headerLen, minf.offset + minf.size);
+                    const stbl = minfBoxes.find((x) => x.type === 'stbl');
+                    if (stbl) {
+                      const stblBoxes = parseBoxes(data, stbl.offset + stbl.headerLen, stbl.offset + stbl.size);
+                      const stsz = stblBoxes.find((x) => x.type === 'stsz');
+                      if (stsz && stsz.offset + stsz.headerLen + 12 <= data.length) {
                         const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-                        const entryCount = view.getUint32(stts.offset + stts.headerLen + 4);
-                        if (entryCount === 0) {
-                          hasRealSamples = false;
+                        const sampleCount = view.getUint32(stsz.offset + stsz.headerLen + 8);
+                        if (sampleCount > 0) {
+                          hasRealSamples = true;
+                        }
+                      } else {
+                        // Fallback to stts (time-to-sample)
+                        const stts = stblBoxes.find((x) => x.type === 'stts');
+                        if (stts && stts.offset + stts.headerLen + 8 <= data.length) {
+                          const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+                          const entryCount = view.getUint32(stts.offset + stts.headerLen + 4);
+                          if (entryCount > 0) {
+                            hasRealSamples = true;
+                          }
                         }
                       }
                     }
@@ -274,85 +332,37 @@ export async function stripAudioTrackLossless(file: File): Promise<Blob> {
 }
 
 /**
- * Saves muted videos directly to a folder via File System Access API
- * INCLUDES ALL VIDEOS: already-silent ones use original file, muted ones use processed blob
+ * Saves muted videos directly to a folder via Native Desktop File System (or File System Access API)
+ * 
+ * STRICT RULE: Guarantees 100% of files processed are saved to the output directory:
+ * - already_silent: saved using original file (no audio to remove)
+ * - muted: saved using processed mutedBlob (audio was stripped)
+ * - ready/idle/error: saved using original file so ZERO files are dropped
  */
 export async function saveMutedVideosToDirectory(
   items: VideoInspectionResult[],
   folderName = '_Muted_Videos',
   onProgress?: (done: number, total: number) => void
-): Promise<{ success: boolean; savedCount: number; error?: string }> {
-  try {
-    if (!('showDirectoryPicker' in window)) {
-      throw new Error('File System Access API not supported in this browser. Please use ZIP download.');
-    }
-
-    // Include ALL videos that were uploaded (don't filter out any)
-    // - already_silent: use original file (no audio to remove)
-    // - muted: use mutedBlob (audio was stripped)
-    // - ready/error: use original file (user wants them anyway for stock upload)
-    if (items.length === 0) {
-      throw new Error('No videos to save. Please add videos first.');
-    }
-
-    const dirHandle = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
-    const targetDir = folderName ? await dirHandle.getDirectoryHandle(folderName, { create: true }) : dirHandle;
-
-    let saved = 0;
-    for (const item of items) {
-      const blob = item.mutedBlob || item.file;
-      const filename = item.outputName.trim();
-      const fileHandle = await targetDir.getFileHandle(filename, { create: true });
-      const writable = await fileHandle.createWritable();
-      await writable.write(blob);
-      await writable.close();
-
-      saved++;
-      onProgress?.(saved, items.length);
-    }
-
-    return { success: true, savedCount: saved };
-  } catch (err: any) {
-    if (err.name === 'AbortError') {
-      return { success: false, savedCount: 0, error: 'User cancelled folder selection.' };
-    }
-    return { success: false, savedCount: 0, error: err.message || 'Failed to save videos.' };
-  }
-}
-
-/**
- * Downloads muted videos as a single .ZIP archive
- * INCLUDES ALL VIDEOS: already-silent ones use original file, muted ones use processed blob
- */
-export async function downloadMutedVideosAsZip(
-  items: VideoInspectionResult[],
-  zipFilename = 'Muted_Microstock_Videos.zip',
-  onProgress?: (percent: number) => void
-): Promise<void> {
-  const zip = new JSZip();
-
-  // Include ALL videos that were uploaded (don't filter out any)
-  // - already_silent: use original file (no audio to remove)
-  // - muted: use mutedBlob (audio was stripped)
-  // - ready/error: use original file (user wants them in the ZIP anyway for stock upload)
-  for (const item of items) {
-    const blob = item.mutedBlob || item.file;
-    zip.file(item.outputName, blob);
-  }
-
+): Promise<{ success: boolean; savedCount: number; error?: string; canceled?: boolean }> {
   if (items.length === 0) {
-    throw new Error('No videos to export. Please add videos first.');
+    throw new Error('No videos to save. Please add videos first.');
   }
 
-  const zipBlob = await zip.generateAsync(
-    {
-      type: 'blob',
-      compression: 'STORE', // Videos are already compressed; STORE is ultra-fast
-    },
-    (metadata) => {
-      onProgress?.(Math.round(metadata.percent));
-    }
-  );
+  // 100% Guaranteed Export: Every single video in the batch is preserved
+  const filesToSave: FileToSave[] = items.map((item) => ({
+    name: item.outputName.trim(),
+    data: item.mutedBlob || item.file,
+  }));
 
-  saveAs(zipBlob, zipFilename);
+  const res = await saveFilesToLocalDirectory(filesToSave, {
+    folderName,
+    onProgress: (done, total) => onProgress?.(done, total),
+  });
+
+  return {
+    success: res.success,
+    savedCount: res.savedCount,
+    error: res.error,
+    canceled: res.canceled,
+  };
 }

@@ -3,6 +3,7 @@ import JSZip from 'jszip';
 import fileSaver from 'file-saver';
 const saveAs = (fileSaver as any).saveAs || fileSaver;
 import { MasterMetadataRecord } from '../../types';
+import { saveFilesToLocalDirectory, FileToSave } from '../desktop/desktopFs';
 import {
   PlatformExportResult,
   UniversalTransformOptions,
@@ -209,4 +210,28 @@ export async function downloadAllCsvsAsZip(
   saveAs(zipBlob, `${cleanBatchName}_all_platforms_csv.zip`);
 
   return { downloadedCount, blockedCount };
+}
+
+/**
+ * Saves generated CSV files directly to a local directory via Native Desktop FS Bridge
+ */
+export async function saveCsvToDirectory(
+  results: PlatformExportResult[],
+  folderName = '_Metadata_CSVs',
+  onProgress?: (done: number, total: number) => void
+): Promise<{ success: boolean; savedCount: number; error?: string; canceled?: boolean }> {
+  const valid = results.filter((r) => !r.isBlocked && r.csvString);
+  if (valid.length === 0) {
+    throw new Error('No valid CSV files to save.');
+  }
+
+  const filesToSave: FileToSave[] = valid.map((r) => ({
+    name: r.filename,
+    data: r.csvString,
+  }));
+
+  return await saveFilesToLocalDirectory(filesToSave, {
+    folderName,
+    onProgress: (done, total) => onProgress?.(done, total),
+  });
 }

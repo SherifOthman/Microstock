@@ -137,8 +137,17 @@ export class BatchQueueService {
     // Process thumbnail downsampling and media extraction in micro-batches
     for (const item of this.items.values()) {
       if (item.status === 'resizing' && item.file) {
+        let extractTimer: any;
         try {
-          const media = await extractMediaInfo(item.file, undefined, 512, 0.75);
+          const extractTimeoutPromise = new Promise<never>((_, reject) => {
+            extractTimer = setTimeout(() => reject(new Error('Media extraction timed out after 20s')), 20000);
+          });
+
+          const media = await Promise.race([
+            extractMediaInfo(item.file, undefined, 512, 0.75),
+            extractTimeoutPromise,
+          ]);
+
           item.thumbnailBase64 = media.thumbnailBase64;
           item.thumbnailDataUrl = media.thumbnailDataUrl;
           item.compressedSizeBytes = media.compressedSizeBytes;
@@ -204,6 +213,8 @@ export class BatchQueueService {
             createdAt: Date.now(),
           };
           await db.masterRecords.put(errDraft);
+        } finally {
+          if (extractTimer) clearTimeout(extractTimer);
         }
       }
     }
@@ -248,7 +259,7 @@ export class BatchQueueService {
       }
 
       const pendingItem = Array.from(this.items.values()).find(
-        (i) => i.status === 'ready' || (i.status === 'error' && i.retryCount < this.maxRetries)
+        (i) => i.status === 'ready'
       );
 
       // If no items are pending, check if any workers are still running
@@ -304,7 +315,7 @@ export class BatchQueueService {
 
     let lease: any = null;
     const startTime = performance.now();
-    const WATCHDOG_MS = 45000;
+    const WATCHDOG_MS = 20000;
     let watchdogTimer: any;
 
     try {
@@ -325,7 +336,7 @@ export class BatchQueueService {
         item.assignedModel = keyRecord.modelId;
         this.notify();
 
-        // 2. Build prompt & invoke vision API
+        // 2. Build prompt & invoke vision API with strict 20s timeout
         const adapter = getProviderAdapter(keyRecord.providerId);
         const prompt = buildVisionPrompt(
           item.filename,
@@ -336,13 +347,26 @@ export class BatchQueueService {
           item.hasRealPreview
         );
 
-        const rawAiText = await adapter.analyzeImage(
-          keyRecord.key,
-          keyRecord.modelId,
-          item.thumbnailBase64!,
-          prompt,
-          SYSTEM_VISION_PROMPT
-        );
+        let apiTimer: any;
+        const apiTimeoutPromise = new Promise<never>((_, reject) => {
+          apiTimer = setTimeout(() => reject(new Error('AI Provider API call timed out after 20s')), 20000);
+        });
+
+        let rawAiText: string;
+        try {
+          rawAiText = await Promise.race([
+            adapter.analyzeImage(
+              keyRecord.key,
+              keyRecord.modelId,
+              item.thumbnailBase64!,
+              prompt,
+              SYSTEM_VISION_PROMPT
+            ),
+            apiTimeoutPromise,
+          ]);
+        } finally {
+          if (apiTimer) clearTimeout(apiTimer);
+        }
 
         const latencyMs = Math.round(performance.now() - startTime);
         item.latencyMs = latencyMs;
@@ -420,7 +444,6 @@ export class BatchQueueService {
       await Promise.race([processingTask, watchdogPromise]);
     } catch (err: any) {
       item.retryCount++;
-      const isRetryable = item.retryCount < this.maxRetries;
 
       if (!item.attemptHistory) item.attemptHistory = [];
       if (lease) {
@@ -433,13 +456,14 @@ export class BatchQueueService {
         });
       }
 
-      item.status = isRetryable ? 'ready' : 'error';
+      // Mark status as 'error' (revealing Retry button on the card) and advance queue immediately
+      item.status = 'error';
       item.error = err.message || String(err);
-      this.notify(); // UI update: item failed/ready for retry
+      this.notify(); // UI update: item failed, revealing Retry button
 
       // Update Dexie database so failed image persists and can be retried
       await db.masterRecords.update(item.id, {
-        status: isRetryable ? 'pending' : 'error',
+        status: 'error',
         errorMessage: err.message || String(err),
       });
 
