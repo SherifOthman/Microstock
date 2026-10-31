@@ -138,7 +138,7 @@ export function App() {
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col antialiased">
       {/* Sleek Minimal Responsive Header (Level 1 Surface) */}
-      <header className="border-b border-slate-200/80 dark:border-white/[0.06] bg-slate-50/90 dark:bg-[#0F1420]/95 backdrop-blur-md sticky top-0 z-40 w-full overflow-hidden">
+      <header className="border-b border-zinc-200 dark:border-zinc-800 bg-white/95 dark:bg-[#1E1F20]/95 backdrop-blur-md sticky top-0 z-40 w-full overflow-hidden">
         <div className="max-w-[1700px] w-full mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-3">
           {/* Left: Brand Logo & Title (Clickable) + Return to Hub Grid Button */}
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -201,7 +201,7 @@ export function App() {
               {theme === 'dark' ? (
                 <Sun className="w-3.5 h-3.5 text-amber-400" />
               ) : (
-                <Moon className="w-3.5 h-3.5 text-slate-700" />
+                <Moon className="w-3.5 h-3.5 text-zinc-700" />
               )}
             </button>
 

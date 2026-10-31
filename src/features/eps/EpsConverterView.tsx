@@ -196,7 +196,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card border border-border p-4 sm:p-6 rounded-2xl shadow-xs">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
+            <div className="p-2 rounded-xl bg-blue-500/10 text-blue-500 border border-blue-500/20">
               <Layers className="w-5 h-5" />
             </div>
             <div>
@@ -246,7 +246,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
           e.preventDefault();
           if (e.dataTransfer.files) handleAddFiles(Array.from(e.dataTransfer.files));
         }}
-        className="border-2 border-dashed border-border hover:border-indigo-500/50 bg-card/50 hover:bg-card rounded-2xl p-6 text-center transition flex flex-col items-center justify-center gap-3 cursor-pointer"
+        className="border-2 border-dashed border-border hover:border-blue-500/50 bg-card/50 hover:bg-card rounded-2xl p-6 text-center transition flex flex-col items-center justify-center gap-3 cursor-pointer"
         onClick={() => fileInputRef.current?.click()}
       >
         <input
@@ -259,7 +259,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
             if (e.target.files) handleAddFiles(Array.from(e.target.files));
           }}
         />
-        <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center">
+        <div className="w-12 h-12 rounded-2xl bg-blue-500/10 text-blue-500 flex items-center justify-center">
           <UploadCloud className="w-6 h-6" />
         </div>
         <div className="space-y-1">
@@ -305,7 +305,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
               disabled={isConvertingBatch}
               className={`gap-1.5 transition-all ${
                 completedCount < items.length
-                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md font-semibold cursor-pointer'
+                  ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-md font-semibold cursor-pointer'
                   : 'variant-outline text-muted-foreground'
               }`}
             >
@@ -321,7 +321,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
                   className={`gap-1.5 transition-all ${
                     completedCount === items.length
                       ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md font-semibold cursor-pointer'
-                      : 'border-slate-200 dark:border-white/[0.08] bg-card hover:bg-accent text-foreground'
+                      : 'border-zinc-200 dark:border-zinc-800 bg-card hover:bg-accent text-foreground'
                   }`}
                 >
                   <Download className="w-3.5 h-3.5" />
@@ -345,7 +345,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
                     variant="secondary"
                     size="sm"
                     onClick={handleSendToStudio}
-                    className="gap-1.5 text-indigo-400 hover:text-indigo-300"
+                    className="gap-1.5 text-blue-400 hover:text-blue-300"
                   >
                     <Wand2 className="w-3.5 h-3.5" />
                     {language === 'ar' ? 'إرسال إلى استوديو الـ Metadata' : 'Send to Metadata Studio'}
@@ -381,13 +381,13 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
                       className="w-full h-full object-contain bg-white"
                     />
                   ) : item.status === 'rendering' ? (
-                    <div className="flex flex-col items-center gap-1.5 text-indigo-400">
+                    <div className="flex flex-col items-center gap-1.5 text-blue-400">
                       <Loader2 className="w-6 h-6 animate-spin" />
                       <span className="text-[10px] font-mono">Rasterizing...</span>
                     </div>
                   ) : (
                     <div className="flex flex-col items-center gap-1 text-muted-foreground">
-                      <Layers className="w-8 h-8 text-indigo-500/50" />
+                      <Layers className="w-8 h-8 text-blue-500/50" />
                       <span className="text-[10px] font-mono uppercase">EPS Vector</span>
                     </div>
                   )}

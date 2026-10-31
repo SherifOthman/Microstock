@@ -23,49 +23,49 @@
 }
 
 :root {
-  /* Slate + Indigo Studio Palette (Light Mode) */
-  --background: #f1f5f9; /* Slate 100 canvas */
-  --foreground: #0f172a; /* Slate 900 */
-  --card: #ffffff; /* Pure white card surface */
-  --card-foreground: #0f172a;
-  --popover: #ffffff;
-  --popover-foreground: #0f172a;
-  --primary: #4f46e5; /* Indigo 600 */
-  --primary-foreground: #ffffff;
-  --secondary: #f8fafc; /* Slate 50 recessed inner well */
-  --secondary-foreground: #0f172a;
-  --muted: #f1f5f9;
-  --muted-foreground: #64748b; /* Slate 500 */
-  --accent: #eef2ff; /* Indigo 50 */
-  --accent-foreground: #4338ca;
-  --destructive: #f43f5e; /* Rose 500 */
-  --destructive-foreground: #ffffff;
-  --border: #e2e8f0; /* Slate 200 */
-  --input: #e2e8f0;
-  --ring: #4f46e5;
+  /* Gemini-Style Clean Gray + Google Blue (Light Mode) */
+  --background: #F0F2F5; /* Zinc 100 — soft gray canvas */
+  --foreground: #18181B; /* Zinc 900 */
+  --card: #FFFFFF;
+  --card-foreground: #18181B;
+  --popover: #FFFFFF;
+  --popover-foreground: #18181B;
+  --primary: #2563EB; /* Blue 600 — Google Blue */
+  --primary-foreground: #FFFFFF;
+  --secondary: #F4F4F5; /* Zinc 100 — recessed inner well */
+  --secondary-foreground: #18181B;
+  --muted: #F4F4F5;
+  --muted-foreground: #71717A; /* Zinc 500 */
+  --accent: #EFF6FF; /* Blue 50 */
+  --accent-foreground: #1D4ED8;
+  --destructive: #EF4444; /* Red 500 */
+  --destructive-foreground: #FFFFFF;
+  --border: #E4E4E7; /* Zinc 200 */
+  --input: #E4E4E7;
+  --ring: #2563EB;
 }
 
 .dark {
-  /* 4-Tier Elevation Palette (Dark Mode) */
-  --background: #090d16; /* Level 0: Deepest rich slate-navy canvas */
-  --foreground: #f8fafc; /* Slate 50 */
-  --card: #151c2c; /* Level 2: Elevated slate card surface */
-  --card-foreground: #f8fafc;
-  --popover: #151c2c;
-  --popover-foreground: #f8fafc;
-  --primary: #6366f1; /* Indigo 500 */
-  --primary-foreground: #ffffff;
-  --secondary: #0b0f19; /* Level 3: Recessed inner well */
-  --secondary-foreground: #f8fafc;
-  --muted: #0f1420; /* Level 1: Subtly elevated panel */
-  --muted-foreground: #94a3b8; /* Slate 400 */
-  --accent: #1e2638;
-  --accent-foreground: #f8fafc;
-  --destructive: #f43f5e; /* Rose 500 */
-  --destructive-foreground: #ffffff;
-  --border: rgba(255, 255, 255, 0.08);
-  --input: rgba(255, 255, 255, 0.08);
-  --ring: #6366f1;
+  /* Gemini-Style Neutral Charcoal (Dark Mode — ZERO navy tint) */
+  --background: #131314; /* Gemini dark canvas */
+  --foreground: #FAFAFA;
+  --card: #1E1F20; /* Gemini card surface */
+  --card-foreground: #FAFAFA;
+  --popover: #1E1F20;
+  --popover-foreground: #FAFAFA;
+  --primary: #3B82F6; /* Blue 500 */
+  --primary-foreground: #FFFFFF;
+  --secondary: #131314; /* Recessed inner well */
+  --secondary-foreground: #FAFAFA;
+  --muted: #1E1F20;
+  --muted-foreground: #A1A1AA; /* Zinc 400 */
+  --accent: #282A2C;
+  --accent-foreground: #FAFAFA;
+  --destructive: #EF4444;
+  --destructive-foreground: #FAFAFA;
+  --border: #27272A; /* Zinc 800 */
+  --input: #27272A;
+  --ring: #3B82F6;
 }
 
 @layer base {

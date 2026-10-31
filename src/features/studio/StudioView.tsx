@@ -1335,7 +1335,7 @@ export const StudioView: React.FC = () => {
                 type="button"
                 size="sm"
                 onClick={() => setIsKeyRingOpen(true)}
-                className="h-8 px-3.5 text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-sm rounded-lg shrink-0 self-start sm:self-center gap-1.5 cursor-pointer"
+                className="h-8 px-3.5 text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-white shadow-sm rounded-lg shrink-0 self-start sm:self-center gap-1.5 cursor-pointer"
               >
                 <KeyRound className="w-3.5 h-3.5" />
                 <span>{t.manageKeysButton || t.manageKeys || 'Manage Keys'}</span>
@@ -1375,8 +1375,8 @@ export const StudioView: React.FC = () => {
                 disabled={isRunning}
                 className={`gap-1.5 text-xs w-full sm:w-auto justify-center transition-all ${
                   unifiedAssets.length === 0
-                    ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md font-semibold cursor-pointer ring-2 ring-indigo-500/20'
-                    : 'border-slate-200 dark:border-white/[0.08] bg-card hover:bg-accent text-foreground'
+                    ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-md font-semibold cursor-pointer ring-2 ring-blue-500/20'
+                    : 'border-zinc-200 dark:border-zinc-800 bg-card hover:bg-accent text-foreground'
                 }`}
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -1387,7 +1387,7 @@ export const StudioView: React.FC = () => {
                 size="sm"
                 onClick={() => folderInputRef.current?.click()}
                 disabled={isRunning}
-                className="gap-1.5 text-xs w-full sm:w-auto justify-center border-slate-200 dark:border-white/[0.08] bg-card hover:bg-accent text-foreground"
+                className="gap-1.5 text-xs w-full sm:w-auto justify-center border-zinc-200 dark:border-zinc-800 bg-card hover:bg-accent text-foreground"
               >
                 <FolderUp className="w-3.5 h-3.5" />
                 {t.selectFolder}
@@ -1442,7 +1442,7 @@ export const StudioView: React.FC = () => {
                   <Button
                     size="sm"
                     onClick={handleStartQueue}
-                    className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center bg-indigo-600 hover:bg-indigo-500 text-white shadow-md ring-2 ring-indigo-500/20 cursor-pointer animate-pulse"
+                    className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center bg-blue-600 hover:bg-blue-500 text-white shadow-md ring-2 ring-blue-500/20 cursor-pointer animate-pulse"
                   >
                     <Play className="w-3.5 h-3.5 fill-current" />
                     <span className="truncate">
@@ -1491,7 +1491,7 @@ export const StudioView: React.FC = () => {
                 className={`gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center transition-all ${
                   completedCount > 0 && pendingCount === 0
                     ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md cursor-pointer ring-2 ring-emerald-500/20'
-                    : 'opacity-40 cursor-not-allowed border-slate-200 dark:border-white/[0.08]'
+                    : 'opacity-40 cursor-not-allowed border-zinc-200 dark:border-zinc-800'
                 }`}
               >
                 <Download className="w-3.5 h-3.5" />

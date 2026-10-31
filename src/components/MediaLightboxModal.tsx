@@ -130,7 +130,7 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
               </>
             ) : isVector ? (
               <>
-                <Layers className="w-3 h-3 text-indigo-400" /> EPS VECTOR
+                <Layers className="w-3 h-3 text-blue-400" /> EPS VECTOR
               </>
             ) : (
               <>

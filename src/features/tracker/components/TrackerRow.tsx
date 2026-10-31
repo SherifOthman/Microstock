@@ -92,7 +92,7 @@ export const TrackerRow: React.FC<Props> = ({
           ) : record.mediaType === 'video' ? (
             <Film className="w-5 h-5 text-sky-400/60" />
           ) : record.mediaType === 'vector' ? (
-            <Layers className="w-5 h-5 text-indigo-400/60" />
+            <Layers className="w-5 h-5 text-blue-400/60" />
           ) : (
             <ImageIcon className="w-5 h-5 text-muted-foreground/40" />
           )}
@@ -104,7 +104,7 @@ export const TrackerRow: React.FC<Props> = ({
             </div>
           )}
           {record.mediaType === 'vector' && (
-            <div className="absolute bottom-0.5 left-0.5 px-1 py-0.2 rounded bg-black/80 text-[8px] font-mono text-indigo-300 font-bold">
+            <div className="absolute bottom-0.5 left-0.5 px-1 py-0.2 rounded bg-black/80 text-[8px] font-mono text-blue-300 font-bold">
               EPS
             </div>
           )}

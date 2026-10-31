@@ -224,12 +224,12 @@ export const AssetCard: React.FC<AssetCardProps> = ({
   // State-Driven UX Rule 3: Collapsed Pending Row for un-generated queue assets
   if (isQueued && !isProcessing && !isCompleted && !isManualEdit) {
     return (
-      <div className="p-3 bg-card rounded-xl border border-slate-200 dark:border-white/[0.07] shadow-xs flex items-center justify-between gap-3 hover:border-slate-300 dark:hover:border-white/15 transition-colors w-full min-w-0">
+      <div className="p-3 bg-card rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-xs flex items-center justify-between gap-3 hover:border-zinc-300 dark:hover:border-zinc-700 transition-colors w-full min-w-0">
         {/* Left: Thumbnail & basic file meta */}
         <div className="flex items-center gap-3 min-w-0">
           <div
             onClick={() => onOpenLightbox && onOpenLightbox(asset.id)}
-            className="w-11 h-11 rounded-lg overflow-hidden border border-slate-200/70 dark:border-white/[0.06] bg-slate-50 dark:bg-[#0B0F19] shrink-0 flex items-center justify-center cursor-pointer"
+            className="w-11 h-11 rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 shrink-0 flex items-center justify-center cursor-pointer"
             title="Click to view full preview"
           >
             {asset.thumbnailUrl ? (
@@ -266,7 +266,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
           <Button
             size="sm"
             onClick={() => onRegenerate(asset.id)}
-            className="h-7.5 px-3 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-xs cursor-pointer gap-1.5"
+            className="h-7.5 px-3 text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-xs cursor-pointer gap-1.5"
           >
             <Play className="w-3 h-3 fill-current" />
             <span className="hidden sm:inline">{language === 'ar' ? 'توليد الآن' : 'Generate'}</span>
@@ -556,8 +556,8 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 )}
               </div>
             ) : rec?.mediaType === 'vector' || asset.queueItem?.mediaType === 'vector' ? (
-              <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/85 backdrop-blur-xs text-[10px] font-mono text-indigo-300 flex items-center gap-1 border border-indigo-500/30 shadow-sm">
-                <Layers className="w-3 h-3 text-indigo-400" />
+              <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/85 backdrop-blur-xs text-[10px] font-mono text-blue-300 flex items-center gap-1 border border-blue-500/30 shadow-sm">
+                <Layers className="w-3 h-3 text-blue-400" />
                 <span>{t.vector}</span>
               </div>
             ) : (
@@ -655,7 +655,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             )}
 
             {/* Inline Telemetry Line */}
-            <div className="rounded-lg bg-slate-50 dark:bg-[#0B0F19] border border-slate-200/70 dark:border-white/[0.05] p-2 space-y-1 text-[10px] font-mono">
+            <div className="rounded-lg bg-zinc-100/80 dark:bg-zinc-900/80 border border-zinc-200 dark:border-zinc-800 p-2 space-y-1 text-[10px] font-mono">
               <div className="flex items-center justify-between text-muted-foreground">
                 <span>{formatBytes(originalSize)} → {formatBytes(compressedSize)}</span>
                 {savingsPercent !== null && (
@@ -665,7 +665,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 )}
               </div>
               {isCompleted && rec && (
-                <div className="flex items-center justify-between text-muted-foreground pt-1 border-t border-slate-200/50 dark:border-white/[0.04]">
+                <div className="flex items-center justify-between text-muted-foreground pt-1 border-t border-zinc-200/50 dark:border-zinc-700/50">
                   <span className="truncate max-w-[120px] text-foreground font-semibold">
                     {getCleanProviderName(rec.aiGenerationInfo?.provider)}
                   </span>
@@ -686,7 +686,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 variant="outline"
                 size="sm"
                 onClick={() => onRegenerate(asset.id)}
-                className="flex-1 h-7.5 text-xs gap-1.5 cursor-pointer hover:bg-secondary border-slate-200 dark:border-white/[0.08]"
+                className="flex-1 h-7.5 text-xs gap-1.5 cursor-pointer hover:bg-secondary border-zinc-200 dark:border-zinc-800"
               >
                 <RefreshCw className="w-3 h-3 text-muted-foreground" />
                 <span>{t.regenerate}</span>
@@ -732,7 +732,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
               type="button"
               onClick={() => onCopyText(localTitle, `${asset.id}_title`)}
               disabled={!localTitle}
-              className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer disabled:opacity-40"
+              className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-zinc-100 dark:hover:bg-zinc-800 transition cursor-pointer disabled:opacity-40"
             >
               {copiedKey === `${asset.id}_title` ? (
                 <>
@@ -754,7 +754,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             onBlur={handleBlurTitle}
             placeholder={isProcessing ? 'Generating title...' : 'Stock Asset Title...'}
             disabled={!rec}
-            className="text-xs bg-slate-50 dark:bg-[#0B0F19] border-slate-200/70 dark:border-white/[0.05] font-medium text-left h-8 focus:ring-1 focus:ring-indigo-500"
+            className="text-xs bg-zinc-100/80 dark:bg-zinc-900/80 border-zinc-200 dark:border-zinc-800 font-medium text-left h-8 focus:ring-1 focus:ring-blue-500"
           />
         </div>
 
@@ -782,7 +782,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 type="button"
                 onClick={() => onCopyText(localDesc, `${asset.id}_desc`)}
                 disabled={!localDesc}
-                className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer disabled:opacity-40"
+                className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-zinc-100 dark:hover:bg-zinc-800 transition cursor-pointer disabled:opacity-40"
               >
                 {copiedKey === `${asset.id}_desc` ? (
                   <>
@@ -806,7 +806,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             onBlur={handleBlurDesc}
             placeholder={isProcessing ? 'Generating description...' : 'Detailed stock description...'}
             disabled={!rec}
-            className={`text-xs bg-slate-50 dark:bg-[#0B0F19] border-slate-200/70 dark:border-white/[0.05] resize-none text-left focus:ring-1 focus:ring-indigo-500 ${
+            className={`text-xs bg-zinc-100/80 dark:bg-zinc-900/80 border-zinc-200 dark:border-zinc-800 resize-none text-left focus:ring-1 focus:ring-blue-500 ${
               isCompact && !isDescExpanded ? 'line-clamp-2 max-h-16' : ''
             }`}
           />
@@ -816,7 +816,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
             <div className="flex items-center gap-1.5 font-semibold text-foreground">
-              <Tag className="w-3.5 h-3.5 text-indigo-500" />
+              <Tag className="w-3.5 h-3.5 text-blue-500" />
               <span>{t.keywords}</span>
               {rec && (
                 <span className="text-[11px] font-mono font-normal text-muted-foreground">
@@ -839,7 +839,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                       setIsEditingKws(true);
                     }
                   }}
-                  className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                  className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-zinc-100 dark:hover:bg-zinc-800 transition cursor-pointer"
                 >
                   <Edit3 className="w-3 h-3 text-muted-foreground" />
                   <span>{isEditingKws ? t.cancel : t.edit}</span>
@@ -849,7 +849,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 type="button"
                 onClick={() => rec && onCopyText(rec.rankedKeywords.join(', '), `${asset.id}_kws`)}
                 disabled={!rec}
-                className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer disabled:opacity-40"
+                className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-zinc-100 dark:hover:bg-zinc-800 transition cursor-pointer disabled:opacity-40"
               >
                 {copiedKey === `${asset.id}_kws` ? (
                   <>
@@ -874,10 +874,10 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                   value={rawKwsInput}
                   onChange={(e) => setRawKwsInput(e.target.value)}
                   placeholder="Type or paste keywords separated by commas..."
-                  className="text-xs min-h-[70px] bg-slate-50 dark:bg-[#0B0F19] border-slate-200/70 dark:border-white/[0.05] font-mono text-left"
+                  className="text-xs min-h-[70px] bg-zinc-100/80 dark:bg-zinc-900/80 border-zinc-200 dark:border-zinc-800 font-mono text-left"
                 />
                 <div className="flex justify-end gap-2">
-                  <Button size="sm" onClick={handleSaveRawKeywords} className="h-7 text-xs bg-indigo-600 hover:bg-indigo-500 text-white">
+                  <Button size="sm" onClick={handleSaveRawKeywords} className="h-7 text-xs bg-blue-600 hover:bg-blue-500 text-white">
                     {t.saveKeywords}
                   </Button>
                 </div>
@@ -885,7 +885,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             ) : (
               <div
                 dir="ltr"
-                className={`p-2.5 sm:p-3 rounded-xl border border-slate-200/70 dark:border-white/[0.05] bg-slate-50/70 dark:bg-[#0B0F19] flex flex-wrap gap-1.5 text-left touch-pan-y ${
+                className={`p-2.5 sm:p-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/80 flex flex-wrap gap-1.5 text-left touch-pan-y ${
                   isCompact ? 'overflow-visible' : 'max-h-56 overflow-y-auto'
                 }`}
               >
@@ -943,10 +943,10 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                               canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
                             } ${
                               isTop10
-                                ? 'border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 font-semibold shadow-2xs hover:bg-indigo-500/20'
-                                : 'border-slate-200/60 dark:border-white/[0.05] bg-slate-100 dark:bg-[#151C2C] text-slate-700 dark:text-slate-300 hover:text-foreground'
+                                ? 'border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/15 text-blue-700 dark:text-blue-300 font-semibold shadow-2xs hover:bg-blue-100 dark:hover:bg-blue-500/25'
+                                : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 hover:text-foreground shadow-2xs'
                             } ${isDragging ? 'opacity-30 scale-95' : ''} ${
-                              isOver ? 'ring-2 ring-indigo-500 ring-offset-1 ring-offset-background' : ''
+                              isOver ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-background' : ''
                             }`}
                             title={isTop10 ? `#${i + 1} Top SEO Keyword` : `Keyword tag`}
                           >
@@ -955,7 +955,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                               <GripVertical className="w-2.5 h-2.5 opacity-40 hover:opacity-100 shrink-0" />
                             )}
                             {isTop10 && (
-                              <span className="text-[10px] font-mono text-indigo-600 dark:text-indigo-400 font-bold">
+                              <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 font-bold">
                                 #{i + 1}
                               </span>
                             )}
