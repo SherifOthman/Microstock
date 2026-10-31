@@ -349,10 +349,29 @@ export async function saveMutedVideosToDirectory(
   }
 
   // 100% Guaranteed Export: Every single video in the batch is preserved
-  const filesToSave: FileToSave[] = items.map((item) => ({
-    name: item.outputName.trim(),
-    data: item.mutedBlob || item.file,
-  }));
+  // - If muted -> save new muted blob as .mp4
+  // - If already silent -> copy/save original file
+  // - If failed to process/error -> copy/save original file and log warning
+  const filesToSave: FileToSave[] = items.map((item) => {
+    let filename = item.outputName.trim();
+    if (item.mutedBlob) {
+      if (!filename.toLowerCase().endsWith('.mp4')) {
+        filename = filename.replace(/\.[^/.]+$/, '') + '.mp4';
+      }
+      return {
+        name: filename,
+        data: item.mutedBlob,
+      };
+    } else {
+      if (item.status === 'error') {
+        console.warn(`[VideoMuter] Video "${item.originalName}" had processing error: ${item.errorMessage || 'unknown'}. Preserving original file under 100% export rule.`);
+      }
+      return {
+        name: filename,
+        data: item.file,
+      };
+    }
+  });
 
   const res = await saveFilesToLocalDirectory(filesToSave, {
     folderName,

@@ -112,9 +112,21 @@ function setupIpcHandlers() {
       }
 
       let saved = 0;
+      const seenNames = new Map();
       for (const item of files) {
         if (!item || !item.name) continue;
-        const filePath = path.join(targetDir, item.name);
+        let finalName = item.name;
+        const lower = finalName.toLowerCase();
+        if (seenNames.has(lower)) {
+          const count = seenNames.get(lower) + 1;
+          seenNames.set(lower, count);
+          const ext = path.extname(finalName);
+          const base = path.basename(finalName, ext);
+          finalName = `${base}_${count}${ext}`;
+        } else {
+          seenNames.set(lower, 1);
+        }
+        const filePath = path.join(targetDir, finalName);
         const buffer = Buffer.from(item.buffer);
         fs.writeFileSync(filePath, buffer);
         saved++;

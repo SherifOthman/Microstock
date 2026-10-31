@@ -15,6 +15,7 @@ import {
   Clock,
   Download,
   Film,
+  FolderDown,
   FolderUp,
   Loader2,
   Play,
@@ -336,30 +337,31 @@ export const VideoMuterView: React.FC = () => {
         </div>
       )}
 
-      {/* Drop Zone or Video List */}
+      {/* Drop Zone Area (Always visible at top) */}
       {videos.length === 0 ? (
         <div
           onDragOver={(e) => e.preventDefault()}
           onDrop={handleDrop}
-          className="border-2 border-dashed border-border hover:border-foreground/50 bg-card/50 rounded-2xl p-12 text-center transition space-y-4"
+          onClick={() => fileInputRef.current?.click()}
+          className="border-2 border-dashed border-border hover:border-foreground/40 bg-card/50 hover:bg-card/80 rounded-2xl p-10 text-center transition space-y-3 cursor-pointer"
         >
           <div className="w-12 h-12 rounded-xl bg-secondary text-foreground flex items-center justify-center mx-auto border border-border">
-            <Film className="w-6 h-6" />
+            <Film className="w-6 h-6 text-emerald-500" />
           </div>
           <div className="space-y-1">
             <h3 className="text-sm font-semibold text-foreground">
-              {language === 'ar' ? 'اسحب ملفات الفيديو هنا' : 'Drop stock video files here'}
+              {language === 'ar' ? 'اسحب ملفات الفيديو (.mp4 / .mov) هنا' : 'Drop .mp4 / .mov video files here'}
             </h3>
             <p className="text-xs text-muted-foreground max-w-md mx-auto">
               {language === 'ar'
-                ? 'يدعم MP4 و MOV و WebM. يتم كشف الصوت وإزالته بشكل فوري بدون فقدان للجودة.'
-                : 'Supports MP4, MOV, and WebM. Zero re-encoding ensures lightning speed (under 1s per 50MB clip).'}
+                ? 'يدعم MP4 و MOV. فحص سريع للصوت وإزالة مسار الصوت فورياً بدون أي إعادة ضغط (فقدان 0% في الجودة).'
+                : 'Supports .mp4 and .mov files. Fast audio stream detection and instant zero-loss audio stripping.'}
             </p>
           </div>
-          <div className="flex items-center justify-center gap-2 pt-2">
+          <div className="flex items-center justify-center gap-2 pt-2" onClick={(e) => e.stopPropagation()}>
             <Button size="sm" onClick={() => fileInputRef.current?.click()} className="gap-1.5 text-xs">
               <Plus className="w-3.5 h-3.5" />
-              <span>{language === 'ar' ? 'اختيار فيديوهات' : 'Select Videos'}</span>
+              <span>{language === 'ar' ? 'اختيار ملفات' : 'Select Files'}</span>
             </Button>
             <Button
               variant="outline"
@@ -373,49 +375,80 @@ export const VideoMuterView: React.FC = () => {
           </div>
         </div>
       ) : (
+        <div
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={handleDrop}
+          onClick={() => fileInputRef.current?.click()}
+          className="border-2 border-dashed border-border hover:border-foreground/40 bg-card/40 hover:bg-card/80 rounded-xl p-4 text-center transition flex flex-col sm:flex-row items-center justify-between gap-3 cursor-pointer"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 flex items-center justify-center shrink-0">
+              <Film className="w-4 h-4" />
+            </div>
+            <div className="text-left">
+              <p className="text-xs font-semibold text-foreground">
+                {language === 'ar' ? 'إضافة المزيد من الفيديوهات' : 'Drop more .mp4 / .mov files here'}
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                {language === 'ar' ? 'اسحب ملفات إضافية أو انقر للاختيار' : 'Drag additional videos or click to browse'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              className="h-7 text-xs gap-1"
+            >
+              <Plus className="w-3 h-3" />
+              <span>Add Files</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => folderInputRef.current?.click()}
+              className="h-7 text-xs gap-1"
+            >
+              <FolderUp className="w-3 h-3" />
+              <span>Add Folder</span>
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* List Display (Below the Dropzone) */}
+      {videos.length > 0 && (
         <div className="space-y-3">
           {/* Action Toolbar */}
           <div className="p-3 bg-card rounded-xl border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-            <div className="flex items-center gap-2 flex-wrap">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => fileInputRef.current?.click()}
-                className="gap-1.5 text-xs"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>{language === 'ar' ? 'إضافة فيديوهات' : 'Add Videos'}</span>
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => folderInputRef.current?.click()}
-                className="gap-1.5 text-xs"
-              >
-                <FolderUp className="w-3.5 h-3.5" />
-                <span>{t.selectFolder || 'Add Folder'}</span>
-              </Button>
+            <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+              <span className="font-semibold">{videos.length} videos loaded</span>
+              <span className="text-muted-foreground">•</span>
+              <span className="text-muted-foreground">{pendingMuteCount} with audio</span>
+              <span className="text-muted-foreground">•</span>
+              <span className="text-muted-foreground">{mutedCount} silent</span>
             </div>
 
-            {/* Mute All & Save Controls */}
+            {/* Primary Actions: Mute All & Save to Folder */}
             <div className="flex items-center gap-2 flex-wrap justify-between sm:justify-end">
-              {pendingMuteCount > 0 && (
-                <Button
-                  size="sm"
-                  onClick={handleMuteAll}
-                  disabled={isProcessingAll}
-                  className="gap-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white"
-                >
-                  {isProcessingAll ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <VolumeX className="w-3.5 h-3.5" />
-                  )}
-                  <span>
-                    {language === 'ar' ? `حذف الصوت من الكل (${pendingMuteCount})` : `Mute All (${pendingMuteCount})`}
-                  </span>
-                </Button>
-              )}
+              <Button
+                size="sm"
+                onClick={handleMuteAll}
+                disabled={isProcessingAll || pendingMuteCount === 0}
+                className="gap-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50"
+              >
+                {isProcessingAll ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <VolumeX className="w-3.5 h-3.5" />
+                )}
+                <span>
+                  {language === 'ar'
+                    ? `كتم الكل (${pendingMuteCount})`
+                    : `Mute All${pendingMuteCount > 0 ? ` (${pendingMuteCount})` : ''}`}
+                </span>
+              </Button>
 
               <Button
                 size="sm"
@@ -423,8 +456,8 @@ export const VideoMuterView: React.FC = () => {
                 disabled={isProcessingAll || videos.length === 0}
                 className="gap-1.5 text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
               >
-                <Save className="w-3.5 h-3.5" />
-                <span>{language === 'ar' ? 'حفظ جميع الفيديوهات في المجلد (100%)' : 'Save 100% Videos to Folder'}</span>
+                <FolderDown className="w-3.5 h-3.5" />
+                <span>{language === 'ar' ? 'حفظ في مجلد' : 'Save to Folder'}</span>
               </Button>
             </div>
           </div>
@@ -437,17 +470,17 @@ export const VideoMuterView: React.FC = () => {
             </div>
           )}
 
-          {/* Video Table */}
-          <div className="border border-border rounded-xl bg-card overflow-hidden">
+          {/* Video List Table */}
+          <div className="border border-border rounded-xl bg-card overflow-hidden shadow-xs">
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left">
                 <thead className="bg-secondary/40 border-b border-border text-muted-foreground font-mono text-[11px]">
                   <tr>
                     <th className="py-2.5 px-3 w-12 text-center">#</th>
                     <th className="py-2.5 px-3 min-w-[220px]">
-                      {language === 'ar' ? 'الفيديو والمواصفات' : 'Video File & Details'}
+                      {language === 'ar' ? 'اسم الملف والمواصفات' : 'Filename & Details'}
                     </th>
-                    <th className="py-2.5 px-3 min-w-[160px]">
+                    <th className="py-2.5 px-3 min-w-[150px]">
                       {language === 'ar' ? 'حالة الصوت' : 'Audio Status'}
                     </th>
                     <th className="py-2.5 px-3 min-w-[220px]">
@@ -481,36 +514,44 @@ export const VideoMuterView: React.FC = () => {
                         </td>
                         <td className="py-2.5 px-3 min-w-0">
                           {isAnalyzing && (
-                            <Badge variant="outline" className="gap-1 text-[10px] py-0 text-muted-foreground">
+                            <Badge variant="outline" className="gap-1 text-[11px] py-0.5 text-muted-foreground font-mono">
                               <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                              <span>Scanning tracks...</span>
+                              <span>Scanning...</span>
                             </Badge>
                           )}
                           {isAlreadySilent && (
                             <Badge
                               variant="outline"
-                              className="gap-1 text-[10px] py-0 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10"
+                              className="gap-1 text-[11px] py-0.5 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 font-medium"
                             >
-                              <VolumeX className="w-3 h-3" />
-                              <span>🔇 Already Silent</span>
+                              <span>Silent 🔇</span>
                             </Badge>
                           )}
                           {isMuted && (
                             <Badge
                               variant="outline"
-                              className="gap-1 text-[10px] py-0 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10"
+                              className="gap-1 text-[11px] py-0.5 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 font-medium"
                             >
                               <Check className="w-3 h-3" />
-                              <span>✓ Muted (Lossless)</span>
+                              <span>Silent 🔇 (Muted)</span>
                             </Badge>
                           )}
                           {!isAnalyzing && !isAlreadySilent && !isMuted && item.hasAudio && (
                             <Badge
                               variant="outline"
-                              className="gap-1 text-[10px] py-0 border-amber-500/30 text-amber-500 bg-amber-500/10"
+                              className="gap-1 text-[11px] py-0.5 border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/10 font-medium"
                             >
                               <Volume2 className="w-3 h-3" />
-                              <span>🔊 Audio Track Detected</span>
+                              <span>Has Audio 🔊</span>
+                            </Badge>
+                          )}
+                          {item.status === 'error' && (
+                            <Badge
+                              variant="outline"
+                              className="gap-1 text-[11px] py-0.5 border-zinc-500/30 text-muted-foreground bg-secondary font-medium"
+                              title={item.errorMessage || 'Inspection error'}
+                            >
+                              <span>Silent 🔇 (Original)</span>
                             </Badge>
                           )}
                         </td>
