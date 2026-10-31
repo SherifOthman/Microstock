@@ -317,18 +317,18 @@ export async function processVectorFile(
   ctx.strokeRect(20, 20, maxDim - 40, maxDim - 40);
 
   // Vector Badge Center
-  ctx.fillStyle = '#4F46E5';
+  ctx.fillStyle = '#2563EB';
   ctx.font = 'bold 32px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText('VECTOR ARTWORK', maxDim / 2, maxDim / 2 - 25);
 
   const cleanSubject = file.name ? file.name.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').toUpperCase() : 'ILLUSTRATION';
-  ctx.fillStyle = '#0F172A';
+  ctx.fillStyle = '#18181B';
   ctx.font = 'bold 22px sans-serif';
   ctx.fillText(cleanSubject.slice(0, 26), maxDim / 2, maxDim / 2 + 20);
 
-  ctx.fillStyle = '#64748B';
+  ctx.fillStyle = '#71717A';
   ctx.font = '14px sans-serif';
   ctx.fillText('Adobe Illustrator EPS 10', maxDim / 2, maxDim / 2 + 55);
 

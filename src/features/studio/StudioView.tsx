@@ -16,6 +16,7 @@ import { COUNTRIES } from '../../constants/countries';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import { Input } from '../../components/ui/input';
+import { Textarea } from '../../components/ui/textarea';
 import { Dialog } from '../../components/ui/dialog';
 import { ConfirmDialog } from '../../components/ui/alert-dialog';
 import { Switch } from '../../components/ui/switch';
@@ -72,6 +73,7 @@ import {
   Search,
   ShieldAlert,
   SlidersHorizontal,
+  Sparkles,
   Tag,
   Trash2,
   UploadCloud,
@@ -1272,6 +1274,40 @@ export const StudioView: React.FC = () => {
           </div>
         </div>
 
+        {/* Card 1.5: AI Context Hint / Prompt */}
+        <div className="p-3.5 bg-card rounded-xl border border-border space-y-2.5">
+          <div className="flex items-center justify-between pb-1.5 border-b border-border">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-blue-500" />
+              <span className="font-semibold text-xs text-foreground">
+                {language === 'ar' ? 'توجيه إضافي للذكاء الاصطناعي' : 'AI Context Hint / Prompt'}
+              </span>
+            </div>
+            {userCustomPrompt && (
+              <button
+                type="button"
+                onClick={() => setUserCustomPrompt('')}
+                className="text-[10px] text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                {language === 'ar' ? 'مسح' : 'Clear'}
+              </button>
+            )}
+          </div>
+          <Textarea
+            rows={2}
+            value={userCustomPrompt}
+            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setUserCustomPrompt(e.target.value)}
+            placeholder={t.contextHintPlaceholder || "e.g. '3D glass texture, minimalist, studio lighting'..."}
+            className="text-xs bg-zinc-100/80 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 resize-none w-full shadow-2xs"
+            title="Appended to AI vision prompt for all assets in this batch"
+          />
+          <p className="text-[10px] text-muted-foreground leading-normal">
+            {language === 'ar'
+              ? 'يُضاف هذا التوجيه تلقائياً إلى موجه التحليل البصري لجميع الملفات في هذه الجلسة.'
+              : 'This hint is automatically appended to the vision prompt for all assets.'}
+          </p>
+        </div>
+
         {/* Card 2: API Keys Status Widget */}
         <div className="p-3.5 bg-card rounded-xl border border-border flex items-center justify-between text-xs">
           <div className="space-y-0.5">
@@ -1376,7 +1412,7 @@ export const StudioView: React.FC = () => {
                 className={`gap-1.5 text-xs w-full sm:w-auto justify-center transition-all ${
                   unifiedAssets.length === 0
                     ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-md font-semibold cursor-pointer ring-2 ring-blue-500/20'
-                    : 'border-zinc-200 dark:border-zinc-800 bg-card hover:bg-accent text-foreground'
+                    : 'border-zinc-300 dark:border-zinc-800 bg-white hover:bg-zinc-50 dark:bg-card dark:hover:bg-accent text-zinc-800 dark:text-foreground'
                 }`}
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -1387,7 +1423,7 @@ export const StudioView: React.FC = () => {
                 size="sm"
                 onClick={() => folderInputRef.current?.click()}
                 disabled={isRunning}
-                className="gap-1.5 text-xs w-full sm:w-auto justify-center border-zinc-200 dark:border-zinc-800 bg-card hover:bg-accent text-foreground"
+                className="gap-1.5 text-xs w-full sm:w-auto justify-center border-zinc-300 dark:border-zinc-800 bg-white hover:bg-zinc-50 dark:bg-card dark:hover:bg-accent text-zinc-800 dark:text-foreground"
               >
                 <FolderUp className="w-3.5 h-3.5" />
                 {t.selectFolder}
@@ -1623,28 +1659,16 @@ export const StudioView: React.FC = () => {
         ) : (
           /* Populated State: Full-Width Unified Data Grid Table */
           <div className="space-y-3">
-            {/* Search Filter Bar & Optional Context Hint */}
+            {/* Search Filter Bar */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs w-full min-w-0">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 flex-1 w-full min-w-0">
-                <div className="relative w-full min-w-0">
-                  <Search className="w-3.5 h-3.5 text-muted-foreground absolute start-2.5 top-2 pointer-events-none" />
-                  <Input
-                    placeholder={t.searchAssetsPlaceholder}
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="h-7.5 ps-8 pe-2.5 w-full text-xs min-w-0"
-                  />
-                </div>
-
-                <div className="w-full min-w-0">
-                  <Input
-                    placeholder={t.contextHintPlaceholder}
-                    value={userCustomPrompt}
-                    onChange={(e) => setUserCustomPrompt(e.target.value)}
-                    className="h-7.5 text-xs bg-secondary/30 border-border w-full min-w-0"
-                    title="This hint will be appended to the AI vision prompt for all assets in this session"
-                  />
-                </div>
+              <div className="relative flex-1 w-full min-w-0">
+                <Search className="w-3.5 h-3.5 text-muted-foreground absolute start-2.5 top-2 pointer-events-none" />
+                <Input
+                  placeholder={t.searchAssetsPlaceholder}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="h-7.5 ps-8 pe-2.5 w-full text-xs min-w-0 bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-2xs"
+                />
               </div>
 
               <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0 w-full sm:w-auto">

@@ -513,7 +513,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 setHoverVideoUrl(null);
               }
             }}
-            className="relative rounded-xl overflow-hidden border border-border bg-muted/30 aspect-4/3 flex items-center justify-center group cursor-pointer"
+            className="relative rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 aspect-4/3 flex items-center justify-center group cursor-pointer"
             title="Click to view in Full-Screen Lightbox"
           >
             {isHoverPlaying && hoverVideoUrl ? (
@@ -529,7 +529,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
               <img
                 src={asset.thumbnailUrl}
                 alt={asset.filename}
-                className="w-full h-full object-cover"
+                className="w-full h-full object-contain bg-white dark:bg-zinc-900"
               />
             ) : (
               <ImageIcon className="w-10 h-10 text-muted-foreground/40" />
@@ -605,58 +605,60 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             </div>
           )}
 
-          {/* Filename & Compact Status */}
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <p className="text-xs font-semibold text-foreground truncate max-w-full block" title={asset.filename}>
-                {asset.filename}
-              </p>
-              {hasNonAsciiInFilename && (
+          {/* Filename & Adaptive Status + Telemetry */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-1.5 min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate block" title={asset.filename}>
+                  {asset.filename}
+                </p>
+                {hasNonAsciiInFilename && (
+                  <Badge
+                    variant="outline"
+                    className="h-4 px-1 text-[9px] gap-0.5 font-semibold text-amber-500 border-amber-500/30 bg-amber-500/10 shrink-0"
+                    title={language === 'ar' ? 'اسم الملف يحتوي على أحرف غير إنجليزية أو نقاط حذف (…) مما قد يعطل مطابقة CSV' : 'Filename contains non-ASCII characters or ellipsis (…) which may fail CSV matching'}
+                  >
+                    <AlertTriangle className="w-2.5 h-2.5" />
+                    <span>Non-ASCII</span>
+                  </Badge>
+                )}
+              </div>
+
+              {/* Inline Status Pill */}
+              {isCompleted && (
                 <Badge
                   variant="outline"
-                  className="h-4 px-1 text-[9px] gap-0.5 font-semibold text-amber-500 border-amber-500/30 bg-amber-500/10 shrink-0"
-                  title={language === 'ar' ? 'اسم الملف يحتوي على أحرف غير إنجليزية أو نقاط حذف (…) مما قد يعطل مطابقة CSV' : 'Filename contains non-ASCII characters or ellipsis (…) which may fail CSV matching'}
+                  className="py-0.5 px-2 rounded-md border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold text-[10px] flex items-center gap-1 shrink-0"
                 >
-                  <AlertTriangle className="w-2.5 h-2.5" />
-                  <span>Non-ASCII</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  <span>{t.completedStatus}</span>
+                </Badge>
+              )}
+
+              {isProcessing && (
+                <Badge
+                  variant="outline"
+                  className="py-0.5 px-2 rounded-md border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 font-semibold text-[10px] flex items-center gap-1 shrink-0"
+                >
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  <span>{t.processingStatus}</span>
+                </Badge>
+              )}
+
+              {isError && (
+                <Badge
+                  variant="outline"
+                  className="py-0.5 px-2 rounded-md border-destructive/40 bg-destructive/10 text-destructive font-semibold text-[10px] flex items-center gap-1 shrink-0"
+                >
+                  <AlertTriangle className="w-3 h-3" />
+                  <span>{t.failedStatus}</span>
                 </Badge>
               )}
             </div>
 
-            {/* Compact Status Pill */}
-            {isCompleted && (
-              <Badge
-                variant="outline"
-                className="w-full py-1 px-2.5 rounded-lg border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold text-xs flex items-center justify-center gap-1.5"
-              >
-                <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                <span>{t.completedStatus}</span>
-              </Badge>
-            )}
-
-            {isProcessing && (
-              <Badge
-                variant="outline"
-                className="w-full py-1 px-2.5 rounded-lg border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 font-semibold text-xs flex items-center justify-center gap-1.5"
-              >
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span>{t.processingStatus}</span>
-              </Badge>
-            )}
-
-            {isError && (
-              <Badge
-                variant="outline"
-                className="w-full py-1 px-2.5 rounded-lg border-destructive/40 bg-destructive/10 text-destructive font-semibold text-xs flex items-center justify-center gap-1.5"
-              >
-                <AlertTriangle className="w-3.5 h-3.5" />
-                <span>{t.failedStatus}</span>
-              </Badge>
-            )}
-
-            {/* Inline Telemetry Line */}
-            <div className="rounded-lg bg-zinc-100/80 dark:bg-zinc-900/80 border border-zinc-200 dark:border-zinc-800 p-2 space-y-1 text-[10px] font-mono">
-              <div className="flex items-center justify-between text-muted-foreground">
+            {/* Clean Light/Dark Adaptive Telemetry Block */}
+            <div className="rounded-lg bg-zinc-100/80 dark:bg-zinc-900/80 border border-zinc-200/70 dark:border-zinc-800 p-2.5 text-xs text-zinc-700 dark:text-zinc-300 space-y-1 font-mono">
+              <div className="flex items-center justify-between">
                 <span>{formatBytes(originalSize)} → {formatBytes(compressedSize)}</span>
                 {savingsPercent !== null && (
                   <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold border border-emerald-500/20">
@@ -665,8 +667,8 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 )}
               </div>
               {isCompleted && rec && (
-                <div className="flex items-center justify-between text-muted-foreground pt-1 border-t border-zinc-200/50 dark:border-zinc-700/50">
-                  <span className="truncate max-w-[120px] text-foreground font-semibold">
+                <div className="flex items-center justify-between pt-1 border-t border-zinc-200/50 dark:border-zinc-700/50 text-[11px]">
+                  <span className="truncate max-w-[120px] text-zinc-900 dark:text-zinc-100 font-semibold">
                     {getCleanProviderName(rec.aiGenerationInfo?.provider)}
                   </span>
                   {rec.aiGenerationInfo?.latencyMs && (
@@ -679,14 +681,14 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             </div>
           </div>
 
-          {/* Compact Actions Row */}
-          <div className="flex items-center gap-1.5 pt-0.5">
+          {/* Compact Actions Row (Single Clean Action without duplicate Delete button) */}
+          <div className="pt-0.5">
             {isCompleted && (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => onRegenerate(asset.id)}
-                className="flex-1 h-7.5 text-xs gap-1.5 cursor-pointer hover:bg-secondary border-zinc-200 dark:border-zinc-800"
+                className="w-full h-7.5 text-xs gap-1.5 cursor-pointer hover:bg-secondary border-zinc-200 dark:border-zinc-800 text-zinc-800 dark:text-zinc-100"
               >
                 <RefreshCw className="w-3 h-3 text-muted-foreground" />
                 <span>{t.regenerate}</span>
@@ -697,21 +699,12 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 variant="destructive"
                 size="sm"
                 onClick={() => onRegenerate(asset.id)}
-                className="flex-1 h-7.5 text-xs gap-1.5 cursor-pointer"
+                className="w-full h-7.5 text-xs gap-1.5 cursor-pointer"
               >
                 <RefreshCw className="w-3 h-3" />
                 <span>{t.retry || (language === 'ar' ? 'إعادة المحاولة' : 'Retry')}</span>
               </Button>
             )}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => onDelete(asset.id, asset.filename)}
-              className="h-7.5 w-7.5 text-muted-foreground hover:text-destructive cursor-pointer shrink-0"
-              title={t.deleteAsset}
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </Button>
           </div>
         </div>
 
@@ -754,7 +747,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             onBlur={handleBlurTitle}
             placeholder={isProcessing ? 'Generating title...' : 'Stock Asset Title...'}
             disabled={!rec}
-            className="text-xs bg-zinc-100/80 dark:bg-zinc-900/80 border-zinc-200 dark:border-zinc-800 font-medium text-left h-8 focus:ring-1 focus:ring-blue-500"
+            className="text-xs bg-zinc-100/80 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 font-medium text-left h-8 focus:ring-1 focus:ring-blue-500 shadow-2xs"
           />
         </div>
 
@@ -806,7 +799,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             onBlur={handleBlurDesc}
             placeholder={isProcessing ? 'Generating description...' : 'Detailed stock description...'}
             disabled={!rec}
-            className={`text-xs bg-zinc-100/80 dark:bg-zinc-900/80 border-zinc-200 dark:border-zinc-800 resize-none text-left focus:ring-1 focus:ring-blue-500 ${
+            className={`text-xs bg-zinc-100/80 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 resize-none text-left focus:ring-1 focus:ring-blue-500 shadow-2xs ${
               isCompact && !isDescExpanded ? 'line-clamp-2 max-h-16' : ''
             }`}
           />
@@ -874,7 +867,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                   value={rawKwsInput}
                   onChange={(e) => setRawKwsInput(e.target.value)}
                   placeholder="Type or paste keywords separated by commas..."
-                  className="text-xs min-h-[70px] bg-zinc-100/80 dark:bg-zinc-900/80 border-zinc-200 dark:border-zinc-800 font-mono text-left"
+                  className="text-xs min-h-[70px] bg-zinc-100/80 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 font-mono text-left shadow-2xs"
                 />
                 <div className="flex justify-end gap-2">
                   <Button size="sm" onClick={handleSaveRawKeywords} className="h-7 text-xs bg-blue-600 hover:bg-blue-500 text-white">
@@ -885,7 +878,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             ) : (
               <div
                 dir="ltr"
-                className={`p-2.5 sm:p-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/80 flex flex-wrap gap-1.5 text-left touch-pan-y ${
+                className={`p-2.5 sm:p-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-100/80 dark:bg-zinc-900/90 flex flex-wrap gap-1.5 text-left touch-pan-y ${
                   isCompact ? 'overflow-visible' : 'max-h-56 overflow-y-auto'
                 }`}
               >
@@ -909,7 +902,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                         return (
                           <Badge
                             key={`${kw}-${i}`}
-                            variant={isTop10 ? 'default' : 'secondary'}
+                            variant="outline"
                             draggable={canDrag}
                             onDragStart={(e) => {
                               if (!canDrag) return;
@@ -944,7 +937,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                             } ${
                               isTop10
                                 ? 'border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/15 text-blue-700 dark:text-blue-300 font-semibold shadow-2xs hover:bg-blue-100 dark:hover:bg-blue-500/25'
-                                : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 hover:text-foreground shadow-2xs'
+                                : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 hover:text-zinc-900 dark:hover:text-zinc-100 shadow-2xs'
                             } ${isDragging ? 'opacity-30 scale-95' : ''} ${
                               isOver ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-background' : ''
                             }`}

@@ -817,7 +817,7 @@ export async function rasterizeEpsFile(
   ctx.lineWidth = Math.max(2, Math.round(canvasWidth / 200));
   ctx.strokeRect(canvasWidth * 0.05, canvasHeight * 0.05, canvasWidth * 0.9, canvasHeight * 0.9);
 
-  ctx.fillStyle = '#4F46E5';
+  ctx.fillStyle = '#2563EB';
   ctx.font = `bold ${Math.round(canvasWidth / 18)}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -825,11 +825,11 @@ export async function rasterizeEpsFile(
 
   const rawFilename = (file as File).name || 'vector.eps';
   const cleanSubject = rawFilename.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').toUpperCase();
-  ctx.fillStyle = '#0F172A';
+  ctx.fillStyle = '#18181B';
   ctx.font = `bold ${Math.round(canvasWidth / 22)}px sans-serif`;
   ctx.fillText(cleanSubject.slice(0, 28), canvasWidth / 2, canvasHeight / 2 + 25);
 
-  ctx.fillStyle = '#64748B';
+  ctx.fillStyle = '#71717A';
   ctx.font = `${Math.round(canvasWidth / 32)}px sans-serif`;
   ctx.fillText('Adobe Illustrator EPS 10', canvasWidth / 2, canvasHeight / 2 + 70);
 
