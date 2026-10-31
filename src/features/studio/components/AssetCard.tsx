@@ -172,7 +172,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
   };
 
   const formatBytes = (bytes?: number): string => {
-    if (!bytes || bytes <= 0) return '—';
+    if (!bytes || bytes <= 0) return 'â€”';
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -252,10 +252,10 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             </div>
             <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
               <span>{formatBytes(originalSize)}</span>
-              <span>•</span>
+              <span>â€¢</span>
               <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 font-sans font-medium">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                {t.queuedStatus || 'في الانتظار'}
+                {t.queuedStatus || 'ÙÙŠ Ø§Ù„Ø§Ù†ØªØ¸Ø§Ø±'}
               </span>
             </div>
           </div>
@@ -266,10 +266,10 @@ export const AssetCard: React.FC<AssetCardProps> = ({
           <Button
             size="sm"
             onClick={() => onRegenerate(asset.id)}
-            className="h-7.5 px-3 text-xs font-medium bg-zinc-100 hover:bg-blue-600 text-zinc-700 hover:text-white dark:bg-zinc-800 dark:hover:bg-blue-600 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 transition-colors cursor-pointer gap-1.5 shadow-2xs"
+            className="h-7.5 px-3 text-xs font-medium bg-slate-100 hover:bg-blue-600 text-slate-700 hover:text-white dark:bg-zinc-800 dark:hover:bg-blue-600 dark:text-zinc-200 border border-slate-300 dark:border-zinc-700 transition-colors cursor-pointer gap-1.5 shadow-2xs"
           >
             <Play className="w-3 h-3 fill-current" />
-            <span className="hidden sm:inline">{language === 'ar' ? 'توليد الآن' : 'Generate'}</span>
+            <span className="hidden sm:inline">{language === 'ar' ? 'ØªÙˆÙ„ÙŠØ¯ Ø§Ù„Ø¢Ù†' : 'Generate'}</span>
           </Button>
 
           <Button
@@ -279,7 +279,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             className="h-7.5 px-2.5 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
           >
             <Edit3 className="w-3 h-3" />
-            <span className="hidden sm:inline">{language === 'ar' ? 'تعديل يدوي' : 'Manual Edit'}</span>
+            <span className="hidden sm:inline">{language === 'ar' ? 'ØªØ¹Ø¯ÙŠÙ„ ÙŠØ¯ÙˆÙŠ' : 'Manual Edit'}</span>
           </Button>
 
           <Button
@@ -368,7 +368,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                   <Badge
                     variant="outline"
                     className="h-4 px-1 text-[9px] gap-0.5 font-semibold text-amber-500 border-amber-500/30 bg-amber-500/10 shrink-0"
-                    title={language === 'ar' ? 'اسم الملف يحتوي على أحرف غير إنجليزية أو نقاط حذف (…) مما قد يعطل مطابقة CSV' : 'Filename contains non-ASCII characters or ellipsis (…) which may fail CSV matching'}
+                    title={language === 'ar' ? 'Ø§Ø³Ù… Ø§Ù„Ù…Ù„Ù ÙŠØ­ØªÙˆÙŠ Ø¹Ù„Ù‰ Ø£Ø­Ø±Ù ØºÙŠØ± Ø¥Ù†Ø¬Ù„ÙŠØ²ÙŠØ© Ø£Ùˆ Ù†Ù‚Ø§Ø· Ø­Ø°Ù (â€¦) Ù…Ù…Ø§ Ù‚Ø¯ ÙŠØ¹Ø·Ù„ Ù…Ø·Ø§Ø¨Ù‚Ø© CSV' : 'Filename contains non-ASCII characters or ellipsis (â€¦) which may fail CSV matching'}
                   >
                     <AlertTriangle className="w-2.5 h-2.5" />
                     <span>Non-ASCII</span>
@@ -386,13 +386,13 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                     title="Audio detected - Click to strip audio track"
                   >
                     <Volume2 className="w-2.5 h-2.5" />
-                    <span>{language === 'ar' ? 'كتم الصوت' : 'Mute'}</span>
+                    <span>{language === 'ar' ? 'ÙƒØªÙ… Ø§Ù„ØµÙˆØª' : 'Mute'}</span>
                   </Button>
                 )}
                 {asset.queueItem?.isMuted && (
                   <Badge variant="outline" className="h-5 px-1.5 text-[9px] gap-1 text-emerald-500 border-emerald-500/30 bg-emerald-500/10 font-mono">
                     <VolumeX className="w-2.5 h-2.5" />
-                    <span>{language === 'ar' ? 'صامت' : 'Silent'}</span>
+                    <span>{language === 'ar' ? 'ØµØ§Ù…Øª' : 'Silent'}</span>
                   </Badge>
                 )}
               </div>
@@ -436,11 +436,11 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                   </Badge>
                 )}
 
-                {/* Single muted string: Provider • Latency */}
+                {/* Single muted string: Provider â€¢ Latency */}
                 {isCompleted && rec && (
                   <span className="text-[11px] text-muted-foreground font-mono truncate">
                     {getCleanProviderName(rec.aiGenerationInfo?.provider)}
-                    {rec.aiGenerationInfo?.latencyMs ? ` • ${(rec.aiGenerationInfo.latencyMs / 1000).toFixed(1)}s` : ''}
+                    {rec.aiGenerationInfo?.latencyMs ? ` â€¢ ${(rec.aiGenerationInfo.latencyMs / 1000).toFixed(1)}s` : ''}
                   </span>
                 )}
                 {isProcessing && (
@@ -594,12 +594,12 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                   title="Audio track detected in video file. Click to strip audio losslessly."
                 >
                   {isMuting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Volume2 className="w-3 h-3" />}
-                  <span>{language === 'ar' ? '🔊 يوجد صوت — اضغط لكتمه' : '🔊 Audio Detected — Click to Mute'}</span>
+                  <span>{language === 'ar' ? 'ðŸ”Š ÙŠÙˆØ¬Ø¯ ØµÙˆØª â€” Ø§Ø¶ØºØ· Ù„ÙƒØªÙ…Ù‡' : 'ðŸ”Š Audio Detected â€” Click to Mute'}</span>
                 </Button>
               ) : asset.queueItem?.isMuted ? (
                 <div className="w-full py-1 px-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 text-[10px] font-mono text-center flex items-center justify-center gap-1">
                   <VolumeX className="w-3 h-3" />
-                  <span>{language === 'ar' ? '🔇 صامت جاهز (Silent Ready)' : '🔇 Silent Ready'}</span>
+                  <span>{language === 'ar' ? 'ðŸ”‡ ØµØ§Ù…Øª Ø¬Ø§Ù‡Ø² (Silent Ready)' : 'ðŸ”‡ Silent Ready'}</span>
                 </div>
               ) : null}
             </div>
@@ -616,7 +616,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                   <Badge
                     variant="outline"
                     className="h-4 px-1 text-[9px] gap-0.5 font-semibold text-amber-500 border-amber-500/30 bg-amber-500/10 shrink-0"
-                    title={language === 'ar' ? 'اسم الملف يحتوي على أحرف غير إنجليزية أو نقاط حذف (…) مما قد يعطل مطابقة CSV' : 'Filename contains non-ASCII characters or ellipsis (…) which may fail CSV matching'}
+                    title={language === 'ar' ? 'Ø§Ø³Ù… Ø§Ù„Ù…Ù„Ù ÙŠØ­ØªÙˆÙŠ Ø¹Ù„Ù‰ Ø£Ø­Ø±Ù ØºÙŠØ± Ø¥Ù†Ø¬Ù„ÙŠØ²ÙŠØ© Ø£Ùˆ Ù†Ù‚Ø§Ø· Ø­Ø°Ù (â€¦) Ù…Ù…Ø§ Ù‚Ø¯ ÙŠØ¹Ø·Ù„ Ù…Ø·Ø§Ø¨Ù‚Ø© CSV' : 'Filename contains non-ASCII characters or ellipsis (â€¦) which may fail CSV matching'}
                   >
                     <AlertTriangle className="w-2.5 h-2.5" />
                     <span>Non-ASCII</span>
@@ -657,9 +657,9 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             </div>
 
             {/* Clean Light/Dark Adaptive Telemetry Block */}
-            <div className="rounded-lg bg-zinc-100/90 dark:bg-zinc-900/90 border border-zinc-200/70 dark:border-zinc-800 p-2.5 text-xs text-zinc-700 dark:text-zinc-300 space-y-1 font-mono">
+            <div className="rounded-lg bg-slate-100 dark:bg-zinc-900/90 border border-slate-300/80 dark:border-zinc-800 p-2.5 text-xs text-zinc-700 dark:text-zinc-300 space-y-1 font-mono">
               <div className="flex items-center justify-between">
-                <span>{formatBytes(originalSize)} → {formatBytes(compressedSize)}</span>
+                <span>{formatBytes(originalSize)} â†’ {formatBytes(compressedSize)}</span>
                 {savingsPercent !== null && (
                   <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold border border-emerald-500/20">
                     -{savingsPercent}%
@@ -702,7 +702,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 className="w-full h-7.5 text-xs gap-1.5 cursor-pointer"
               >
                 <RefreshCw className="w-3 h-3" />
-                <span>{t.retry || (language === 'ar' ? 'إعادة المحاولة' : 'Retry')}</span>
+                <span>{t.retry || (language === 'ar' ? 'Ø¥Ø¹Ø§Ø¯Ø© Ø§Ù„Ù…Ø­Ø§ÙˆÙ„Ø©' : 'Retry')}</span>
               </Button>
             )}
           </div>
@@ -747,7 +747,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             onBlur={handleBlurTitle}
             placeholder={isProcessing ? 'Generating title...' : 'Stock Asset Title...'}
             disabled={!rec}
-            className="text-xs bg-zinc-100/90 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 font-medium text-left h-8 focus:ring-1 focus:ring-blue-500 shadow-2xs"
+            className="text-xs bg-slate-100 dark:bg-zinc-900/90 border border-slate-300 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 font-medium text-left h-8 focus:ring-1 focus:ring-blue-500 shadow-2xs"
           />
         </div>
 
@@ -799,7 +799,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             onBlur={handleBlurDesc}
             placeholder={isProcessing ? 'Generating description...' : 'Detailed stock description...'}
             disabled={!rec}
-            className={`text-xs bg-zinc-100/90 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 resize-none text-left focus:ring-1 focus:ring-blue-500 shadow-2xs ${
+            className={`text-xs bg-slate-100 dark:bg-zinc-900/90 border border-slate-300 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 resize-none text-left focus:ring-1 focus:ring-blue-500 shadow-2xs ${
               isCompact && !isDescExpanded ? 'line-clamp-2 max-h-16' : ''
             }`}
           />
@@ -817,7 +817,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 </span>
               )}
               <span className="text-[10px] text-muted-foreground font-normal hidden sm:inline">
-                • {t.dragToReorderTags}
+                â€¢ {t.dragToReorderTags}
               </span>
             </div>
             <div className="flex items-center gap-1.5">
@@ -867,7 +867,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                   value={rawKwsInput}
                   onChange={(e) => setRawKwsInput(e.target.value)}
                   placeholder="Type or paste keywords separated by commas..."
-                  className="text-xs min-h-[70px] bg-zinc-100/90 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 font-mono text-left shadow-2xs"
+                  className="text-xs min-h-[70px] bg-slate-100 dark:bg-zinc-900/90 border border-slate-300 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 font-mono text-left shadow-2xs"
                 />
                 <div className="flex justify-end gap-2">
                   <Button size="sm" onClick={handleSaveRawKeywords} className="h-7 text-xs bg-blue-600 hover:bg-blue-500 text-white">
@@ -878,7 +878,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             ) : (
               <div
                 dir="ltr"
-                className={`p-2.5 sm:p-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-100/90 dark:bg-zinc-900/90 flex flex-wrap gap-1.5 text-left touch-pan-y ${
+                className={`p-2.5 sm:p-3 rounded-xl border border-slate-300 dark:border-zinc-800 bg-slate-100/90 dark:bg-zinc-900/90 flex flex-wrap gap-1.5 text-left touch-pan-y ${
                   isCompact ? 'overflow-visible' : 'max-h-56 overflow-y-auto'
                 }`}
               >

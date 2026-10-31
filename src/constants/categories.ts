@@ -240,67 +240,74 @@ export function mapToDreamstimeCategories(
   let cat1 = 112; // Abstract -> Backgrounds default
   let cat2 = 141; // Abstract -> Textures default
 
-  const shutterFirst = shutterCats[0] || '';
-  const shutterNormalized = shutterFirst.toLowerCase();
+  // Normalize ALL shutterstock categories (not just first) for richer matching
+  const shutterAll = shutterCats
+    .filter(Boolean)
+    .map((s) => (s || '').toLowerCase())
+    .join(' ');
 
-  if (adobeCat === 7 || shutterNormalized.includes('food')) {
+  const has = (term: string) => shutterAll.includes(term);
+
+  if (adobeCat === 7 || has('food')) {
     cat1 = 137; // Nature -> Fruits & Vegetables
     cat2 = 127; // Industries -> Food & Beverages
-  } else if (adobeCat === 4 || shutterNormalized.includes('drink')) {
+  } else if (adobeCat === 4 || has('drink')) {
     cat1 = 127; // Industries -> Food & Beverages
     cat2 = 171; // Nature -> Water
-  } else if (adobeCat === 1 || shutterNormalized.includes('animal')) {
+  } else if (adobeCat === 1 || has('animal') || has('wildlife')) {
     cat1 = 168; // Animals -> Wildlife
     cat2 = 32;  // Animals -> Mammals
-  } else if (adobeCat === 2 || shutterNormalized.includes('building') || shutterNormalized.includes('interior')) {
+  } else if (adobeCat === 2 || has('building') || has('interior') || has('landmark')) {
     cat1 = 71;  // Arts & Architecture -> Generic architecture
     cat2 = 73;  // Arts & Architecture -> Indoor
-  } else if (adobeCat === 3 || shutterNormalized.includes('business') || shutterNormalized.includes('finance')) {
+  } else if (adobeCat === 3 || has('business') || has('finance')) {
     cat1 = 75;  // Business -> People
     cat2 = 80;  // Business -> Finance
-  } else if (adobeCat === 5 || shutterNormalized.includes('nature') || shutterNormalized.includes('park')) {
+  } else if (adobeCat === 5 || has('nature') || has('park') || has('outdoor')) {
     cat1 = 99;  // Industries -> Environment
     cat2 = 146; // Nature -> Landscapes
   } else if (adobeCat === 6) {
     cat1 = 46;  // Abstract -> Peace
     cat2 = 52;  // Abstract -> Success
-  } else if (adobeCat === 8 || shutterNormalized.includes('background')) {
-    cat1 = 112; // Abstract -> Backgrounds
-    cat2 = 141; // Abstract -> Textures
+  } else if (adobeCat === 16 || has('science') || has('medical') || has('healthcare') || has('health')) {
+    // Science / Healthcare / Medical — maps to Dreamstime Healthcare & Medical + Science
+    cat1 = 92;  // Industries -> Healthcare & Medical
+    cat2 = 209; // Technology -> Science
+  } else if (adobeCat === 8 || has('background') || has('texture') || has('abstract')) {
+    // Graphic Resources / Abstract / Backgrounds — maps to Illustrations & Clipart
+    cat1 = 163; // Illustrations & Clipart -> Illustrations
+    cat2 = 112; // Abstract -> Backgrounds
   } else if (adobeCat === 9) {
     cat1 = 158; // Abstract -> Fun
     cat2 = 41;  // Abstract -> Craftsmanship
-  } else if (adobeCat === 10 || shutterNormalized.includes('industrial')) {
+  } else if (adobeCat === 10 || has('industrial')) {
     cat1 = 100; // Industries -> Manufacturing
     cat2 = 90;  // Industries -> Construction
   } else if (adobeCat === 11) {
     cat1 = 146; // Nature -> Landscapes
     cat2 = 15;  // Nature -> Mountains
-  } else if (adobeCat === 12 || shutterNormalized.includes('beauty')) {
+  } else if (adobeCat === 12 || has('beauty') || has('fashion')) {
     cat1 = 153; // Arts & Architecture -> Home
     cat2 = 175; // People -> Cosmetic & Makeup
-  } else if (adobeCat === 13 || shutterNormalized.includes('people')) {
+  } else if (adobeCat === 13 || has('people')) {
     cat1 = 162; // People -> Portraits
     cat2 = 118; // People -> Families
   } else if (adobeCat === 14) {
     cat1 = 25;  // Nature -> Flowers & Gardens
     cat2 = 12;  // Nature -> Plants and trees
-  } else if (adobeCat === 15 || shutterNormalized.includes('religion')) {
+  } else if (adobeCat === 15 || has('religion')) {
     cat1 = 128; // Abstract -> Religion
     cat2 = 65;  // Travel -> Arts & Architecture
-  } else if (adobeCat === 16 || shutterNormalized.includes('science') || shutterNormalized.includes('medical')) {
-    cat1 = 209; // Technology -> Science
-    cat2 = 92;  // Industries -> Healthcare & Medical
   } else if (adobeCat === 17) {
     cat1 = 51;  // Abstract -> Stress
     cat2 = 44;  // Abstract -> Help
-  } else if (adobeCat === 18 || shutterNormalized.includes('sport')) {
+  } else if (adobeCat === 18 || has('sport')) {
     cat1 = 50;  // Abstract -> Sports
     cat2 = 156; // Objects -> Sports
-  } else if (adobeCat === 19 || shutterNormalized.includes('technology')) {
+  } else if (adobeCat === 19 || has('technology')) {
     cat1 = 105; // Technology -> Computers
     cat2 = 129; // Technology -> Electronics
-  } else if (adobeCat === 20 || shutterNormalized.includes('transportation')) {
+  } else if (adobeCat === 20 || has('transportation')) {
     cat1 = 98;  // Industries -> Transportation
     cat2 = 82;  // Business -> Transportation
   } else if (adobeCat === 21) {

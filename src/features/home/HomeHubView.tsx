@@ -149,7 +149,7 @@ export const HomeHubView: React.FC<HomeHubViewProps> = ({ onNavigate }) => {
           return (
             <Card
               key={tool.id}
-              className="bg-white dark:bg-[#141415] text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 shadow-xs hover:border-blue-500/40 dark:hover:border-blue-500/40 transition-all flex flex-col justify-between group overflow-hidden rounded-2xl"
+              className="bg-white dark:bg-[#18181B] text-zinc-900 dark:text-zinc-100 border border-slate-300/90 dark:border-zinc-800 shadow-sm hover:border-blue-500/50 dark:hover:border-blue-500/40 transition-all flex flex-col justify-between group overflow-hidden rounded-2xl"
             >
               <CardContent className="p-5 sm:p-6 space-y-4 flex-1 flex flex-col justify-between">
                 <div className="space-y-3.5">
@@ -177,7 +177,7 @@ export const HomeHubView: React.FC<HomeHubViewProps> = ({ onNavigate }) => {
                   <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">{tool.description}</p>
 
                   {/* Highlights Bullet List */}
-                  <div className="pt-2 border-t border-zinc-200/60 dark:border-zinc-800/60 space-y-1.5">
+                  <div className="pt-2 border-t border-slate-200/70 dark:border-zinc-800/60 space-y-1.5">
                     {tool.highlights.map((highlight, idx) => (
                       <div key={idx} className="flex items-start gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
@@ -192,7 +192,7 @@ export const HomeHubView: React.FC<HomeHubViewProps> = ({ onNavigate }) => {
                   <button
                     type="button"
                     onClick={() => onNavigate(tool.id)}
-                    className="w-full flex items-center justify-between gap-2 px-4 py-2.5 rounded-xl text-xs font-medium bg-zinc-100 hover:bg-blue-600 text-zinc-800 hover:text-white dark:bg-zinc-800 dark:hover:bg-blue-600 dark:text-zinc-100 transition-all duration-200 cursor-pointer shadow-2xs hover:shadow-md"
+                    className="w-full flex items-center justify-between gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold bg-slate-900 hover:bg-blue-600 text-white dark:bg-zinc-800 dark:hover:bg-blue-600 dark:text-zinc-100 transition-all duration-200 cursor-pointer shadow-sm hover:shadow-md"
                   >
                     <span>{tool.ctaText}</span>
                     <ArrowIcon className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1 rtl:group-hover:-translate-x-1" />

@@ -25,35 +25,35 @@
 }
 
 :root {
-  /* Official Vercel Geist / Linear Palette (Light Mode) */
-  --background: #FAFAFA;
-  --foreground: #09090B;
+  /* Crisp Light Mode — Cool canvas so white cards pop clearly */
+  --background: #E8ECF2;
+  --foreground: #0F172A;
   --card: #FFFFFF;
-  --card-foreground: #09090B;
+  --card-foreground: #0F172A;
   --popover: #FFFFFF;
-  --popover-foreground: #09090B;
+  --popover-foreground: #0F172A;
   --primary: #2563EB;
   --primary-foreground: #FFFFFF;
-  --secondary: #F4F4F5;
-  --secondary-foreground: #09090B;
-  --muted: #F4F4F5;
-  --muted-foreground: #71717A;
-  --accent: #F4F4F5;
-  --accent-foreground: #09090B;
+  --secondary: #F1F5F9;
+  --secondary-foreground: #0F172A;
+  --muted: #F1F5F9;
+  --muted-foreground: #64748B;
+  --accent: #F1F5F9;
+  --accent-foreground: #0F172A;
   --destructive: #EF4444;
   --destructive-foreground: #FFFFFF;
-  --border: #E4E4E7;
-  --input: #E4E4E7;
+  --border: #CBD5E1;
+  --input: #CBD5E1;
   --ring: #2563EB;
 }
 
 .dark {
-  /* Official Vercel Geist / Linear Palette (Dark Mode) */
-  --background: #0A0A0A;
+  /* Dark Mode — Elevated contrast, cards pop off carbon canvas */
+  --background: #09090B;
   --foreground: #EDEDED;
-  --card: #141415;
+  --card: #18181B;
   --card-foreground: #EDEDED;
-  --popover: #141415;
+  --popover: #18181B;
   --popover-foreground: #EDEDED;
   --primary: #3B82F6;
   --primary-foreground: #FFFFFF;
@@ -65,8 +65,8 @@
   --accent-foreground: #EDEDED;
   --destructive: #EF4444;
   --destructive-foreground: #EDEDED;
-  --border: #27272A;
-  --input: #27272A;
+  --border: #2E2E33;
+  --input: #2E2E33;
   --ring: #3B82F6;
 }
 
