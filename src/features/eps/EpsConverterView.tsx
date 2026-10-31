@@ -24,6 +24,7 @@ import {
   ZoomIn,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
+import { saveFilesToLocalDirectory, isNativeDirectorySupported, FileToSave } from '../../services/desktop/desktopFs';
 import JSZip from 'jszip';
 import fileSaver from 'file-saver';
 const saveAs = (fileSaver as any).saveAs || fileSaver;
@@ -56,7 +57,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
   const [isConvertingBatch, setIsConvertingBatch] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  const isFSSupported = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+  const isFSSupported = isNativeDirectorySupported();
 
   const targetDimension = resolutionPreset === 'agency_4mp' ? 2500 : 4000;
   const targetQuality = resolutionPreset === 'agency_4mp' ? 0.95 : 0.98;
@@ -155,17 +156,26 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
     if (completed.length === 0) return;
 
     try {
-      const dirHandle = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
-      for (const item of completed) {
-        const fileHandle = await dirHandle.getFileHandle(item.outputJpgName, { create: true });
-        const writable = await fileHandle.createWritable();
-        await writable.write(item.result!.blob);
-        await writable.close();
-      }
-      setStatusMessage({
-        type: 'success',
-        text: language === 'ar' ? `تم حفظ ${completed.length} صورة JPG في المجلد المحدد!` : `Saved ${completed.length} JPG images directly to folder!`,
+      const filesToSave: FileToSave[] = completed.map((item) => ({
+        name: item.outputJpgName,
+        data: item.result!.blob!,
+      }));
+
+      const res = await saveFilesToLocalDirectory(filesToSave, {
+        folderName: 'EPS_Converted_JPGs',
       });
+
+      if (res.success) {
+        setStatusMessage({
+          type: 'success',
+          text: language === 'ar' ? `تم حفظ ${res.savedCount} صورة JPG في المجلد بنجاح!` : `Saved ${res.savedCount} JPG images directly to folder!`,
+        });
+      } else if (!res.canceled) {
+        setStatusMessage({
+          type: 'error',
+          text: res.error || 'Failed to save to directory',
+        });
+      }
     } catch (err: any) {
       if (err.name !== 'AbortError') {
         setStatusMessage({
