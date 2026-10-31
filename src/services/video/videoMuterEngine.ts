@@ -1,11 +1,10 @@
-import { cleanRawFilename } from '../cleaner/fileCleanerEngine';
 import { saveFilesToLocalDirectory, FileToSave } from '../desktop/desktopFs';
 
 export interface VideoInspectionResult {
   id: string;
   file: File;
   originalName: string;
-  outputName: string;
+  outputName?: string;
   size: number;
   hasAudio: boolean;
   audioTrackCount: number;
@@ -349,15 +348,10 @@ export async function saveMutedVideosToDirectory(
   }
 
   // 100% Guaranteed Export: Every single video in the batch is preserved
-  // - If muted -> save new muted blob as .mp4
-  // - If already silent -> copy/save original file
-  // - If failed to process/error -> copy/save original file and log warning
+  // STRICT RULE: Filename goes in as filename.ext and is saved as exactly filename.ext (zero renaming / suffixes)
   const filesToSave: FileToSave[] = items.map((item) => {
-    let filename = item.outputName.trim();
+    const filename = item.originalName.trim();
     if (item.mutedBlob) {
-      if (!filename.toLowerCase().endsWith('.mp4')) {
-        filename = filename.replace(/\.[^/.]+$/, '') + '.mp4';
-      }
       return {
         name: filename,
         data: item.mutedBlob,

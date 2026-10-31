@@ -24,6 +24,7 @@ dist-ssr
 *.sw?
 
 # Environment & deployment
+release
 .env
 .env.*
 !.env.example

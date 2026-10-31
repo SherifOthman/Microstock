@@ -24,10 +24,7 @@ import {
   ZoomIn,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
-import { saveFilesToLocalDirectory, isNativeDirectorySupported, FileToSave } from '../../services/desktop/desktopFs';
-import JSZip from 'jszip';
-import fileSaver from 'file-saver';
-const saveAs = (fileSaver as any).saveAs || fileSaver;
+import { saveFilesToLocalDirectory, FileToSave } from '../../services/desktop/desktopFs';
 
 export interface EpsConvertItem {
   id: string;
@@ -56,8 +53,6 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
   const [resolutionPreset, setResolutionPreset] = useState<ResolutionPreset>('agency_4mp');
   const [isConvertingBatch, setIsConvertingBatch] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  const isFSSupported = isNativeDirectorySupported();
 
   const targetDimension = resolutionPreset === 'agency_4mp' ? 2500 : 4000;
   const targetQuality = resolutionPreset === 'agency_4mp' ? 0.95 : 0.98;
@@ -133,22 +128,24 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
     });
   };
 
-  const handleDownloadSingleJpg = (item: EpsConvertItem) => {
+  const handleSaveSingleJpg = async (item: EpsConvertItem) => {
     if (!item.result?.blob) return;
-    saveAs(item.result.blob, item.outputJpgName);
-  };
-
-  const handleDownloadAllZip = async () => {
-    const completed = items.filter((i) => i.result?.blob);
-    if (completed.length === 0) return;
-
-    const zip = new JSZip();
-    for (const item of completed) {
-      zip.file(item.outputJpgName, item.result!.blob);
+    try {
+      const res = await saveFilesToLocalDirectory([
+        { name: item.outputJpgName, data: item.result.blob },
+      ]);
+      if (res.success) {
+        setStatusMessage({
+          type: 'success',
+          text: language === 'ar' ? `تم حفظ ${item.outputJpgName} في المجلد بنجاح!` : `Saved ${item.outputJpgName} directly to folder!`,
+        });
+      }
+    } catch (err: any) {
+      setStatusMessage({
+        type: 'error',
+        text: err.message || 'Failed to save',
+      });
     }
-
-    const zipBlob = await zip.generateAsync({ type: 'blob' });
-    saveAs(zipBlob, `EPS_Converted_JPGs_${Date.now()}.zip`);
   };
 
   const handleSaveToDirectory = async () => {
@@ -327,28 +324,12 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
               <>
                 <Button
                   size="sm"
-                  onClick={handleDownloadAllZip}
-                  className={`gap-1.5 transition-all ${
-                    completedCount === items.length
-                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md font-semibold cursor-pointer'
-                      : 'border-zinc-200 dark:border-zinc-800 bg-card hover:bg-accent text-foreground'
-                  }`}
+                  onClick={handleSaveToDirectory}
+                  className="gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white shadow-md font-semibold cursor-pointer"
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  ZIP ({completedCount})
+                  <FolderDown className="w-3.5 h-3.5" />
+                  {language === 'ar' ? `حفظ (${completedCount}) في مجلد` : `Save to Folder (${completedCount})`}
                 </Button>
-
-                {isFSSupported && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleSaveToDirectory}
-                    className="gap-1.5"
-                  >
-                    <FolderDown className="w-3.5 h-3.5" />
-                    {language === 'ar' ? 'حفظ في مجلد' : 'Save to Folder'}
-                  </Button>
-                )}
 
                 {onSendToStudio && (
                   <Button
@@ -434,10 +415,10 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => handleDownloadSingleJpg(item)}
+                      onClick={() => handleSaveSingleJpg(item)}
                       className="h-7 text-xs px-2 gap-1 text-emerald-500 border-emerald-500/30"
                     >
-                      <Download className="w-3 h-3" /> JPG
+                      <FolderDown className="w-3 h-3" /> Save
                     </Button>
                   ) : (
                     <Button

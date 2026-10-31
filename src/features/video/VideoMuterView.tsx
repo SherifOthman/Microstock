@@ -5,10 +5,8 @@ import {
   saveMutedVideosToDirectory,
   stripAudioTrackLossless,
 } from '../../services/video/videoMuterEngine';
-import { cleanRawFilename } from '../../services/cleaner/fileCleanerEngine';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
-import { Switch } from '../../components/ui/switch';
 import {
   Check,
   CheckCircle2,
@@ -36,7 +34,6 @@ export const VideoMuterView: React.FC = () => {
   const folderInputRef = useRef<HTMLInputElement>(null);
 
   const [videos, setVideos] = useState<VideoInspectionResult[]>([]);
-  const [autoCleanFilename, setAutoCleanFilename] = useState(true);
   const [isProcessingAll, setIsProcessingAll] = useState(false);
   const [progressMsg, setProgressMsg] = useState<string | null>(null);
   const [selectedPreviewVideo, setSelectedPreviewVideo] = useState<{ url: string; name: string } | null>(null);
@@ -57,24 +54,18 @@ export const VideoMuterView: React.FC = () => {
 
     if (videoFiles.length === 0) return;
 
-    // Initial item objects
-    const newItems: VideoInspectionResult[] = videoFiles.map((file, idx) => {
-      const cleanName = autoCleanFilename
-        ? `${cleanRawFilename(file.name, '_')}.${(file.name.split('.').pop() || 'mp4').toLowerCase()}`
-        : file.name;
-
-      return {
-        id: `${file.name}-${file.size}-${Date.now()}-${idx}`,
-        file,
-        originalName: file.name,
-        outputName: cleanName,
-        size: file.size,
-        hasAudio: false,
-        audioTrackCount: 0,
-        videoTrackCount: 1,
-        status: 'analyzing',
-      };
-    });
+    // Initial item objects - strictly preserving original filename
+    const newItems: VideoInspectionResult[] = videoFiles.map((file, idx) => ({
+      id: `${file.name}-${file.size}-${Date.now()}-${idx}`,
+      file,
+      originalName: file.name,
+      outputName: file.name,
+      size: file.size,
+      hasAudio: false,
+      audioTrackCount: 0,
+      videoTrackCount: 1,
+      status: 'analyzing',
+    }));
 
     setVideos((prev) => [...prev, ...newItems]);
 
@@ -216,7 +207,7 @@ export const VideoMuterView: React.FC = () => {
   const handlePreview = (item: VideoInspectionResult) => {
     const blobToPlay = item.mutedBlob || item.file;
     const url = URL.createObjectURL(blobToPlay);
-    setSelectedPreviewVideo({ url, name: item.outputName });
+    setSelectedPreviewVideo({ url, name: item.originalName });
   };
 
   const pendingMuteCount = videos.filter((v) => v.hasAudio && v.status !== 'muted').length;
@@ -278,36 +269,6 @@ export const VideoMuterView: React.FC = () => {
             </Button>
           </div>
         )}
-      </div>
-
-      {/* Options & Filename Sanitizer Toggle Bar */}
-      <div className="p-4 rounded-xl border border-border bg-card shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <Switch
-            checked={autoCleanFilename}
-            onCheckedChange={(val) => {
-              setAutoCleanFilename(val);
-              setVideos((prev) =>
-                prev.map((v) => ({
-                  ...v,
-                  outputName: val
-                    ? `${cleanRawFilename(v.originalName, '_')}.${(v.originalName.split('.').pop() || 'mp4').toLowerCase()}`
-                    : v.originalName,
-                }))
-              );
-            }}
-            id="clean-fn-toggle"
-          />
-          <label htmlFor="clean-fn-toggle" className="text-xs font-medium text-foreground cursor-pointer">
-            {language === 'ar'
-              ? 'تطبيق قواعد تنظيف وتنسيق اسم الملف تلقائياً أثناء الحفظ'
-              : 'Apply smart filename cleaning rules to output videos'}
-          </label>
-        </div>
-
-        <div className="text-xs text-muted-foreground font-mono">
-          <span>{videos.length} videos • {mutedCount} silent / {pendingMuteCount} with audio</span>
-        </div>
       </div>
 
       {/* Notification banner */}
@@ -477,14 +438,11 @@ export const VideoMuterView: React.FC = () => {
                 <thead className="bg-secondary/40 border-b border-border text-muted-foreground font-mono text-[11px]">
                   <tr>
                     <th className="py-2.5 px-3 w-12 text-center">#</th>
-                    <th className="py-2.5 px-3 min-w-[220px]">
+                    <th className="py-2.5 px-3 min-w-[280px]">
                       {language === 'ar' ? 'اسم الملف والمواصفات' : 'Filename & Details'}
                     </th>
-                    <th className="py-2.5 px-3 min-w-[150px]">
+                    <th className="py-2.5 px-3 min-w-[180px]">
                       {language === 'ar' ? 'حالة الصوت' : 'Audio Status'}
-                    </th>
-                    <th className="py-2.5 px-3 min-w-[220px]">
-                      {language === 'ar' ? 'اسم الملف النهائي' : 'Target Filename'}
                     </th>
                     <th className="py-2.5 px-3 w-28 text-center">
                       {language === 'ar' ? 'الإجراء' : 'Action'}
@@ -554,9 +512,6 @@ export const VideoMuterView: React.FC = () => {
                               <span>Silent 🔇 (Original)</span>
                             </Badge>
                           )}
-                        </td>
-                        <td className="py-2.5 px-3 min-w-0 font-mono text-muted-foreground truncate max-w-xs">
-                          {item.outputName}
                         </td>
                         <td className="py-2.5 px-3 text-center">
                           <div className="flex items-center justify-center gap-1.5">
