@@ -18,10 +18,10 @@ export function buttonVariants({
       'bg-primary text-primary-foreground hover:bg-primary/90 shadow-xs': variant === 'default',
       'bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-xs':
         variant === 'destructive',
-      'border border-border bg-transparent hover:bg-accent hover:text-accent-foreground':
+      'border border-border bg-transparent text-foreground hover:bg-accent hover:text-accent-foreground':
         variant === 'outline',
       'bg-secondary text-secondary-foreground hover:bg-secondary/80': variant === 'secondary',
-      'hover:bg-accent hover:text-accent-foreground': variant === 'ghost',
+      'text-foreground hover:bg-accent hover:text-accent-foreground': variant === 'ghost',
       'text-primary underline-offset-4 hover:underline': variant === 'link',
       'h-9 px-4 py-2': size === 'default',
       'h-8 rounded-md px-3 text-xs': size === 'sm',

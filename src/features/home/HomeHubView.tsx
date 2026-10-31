@@ -149,7 +149,7 @@ export const HomeHubView: React.FC<HomeHubViewProps> = ({ onNavigate }) => {
           return (
             <Card
               key={tool.id}
-              className="bg-white dark:bg-[#1E1F20] border border-zinc-200/90 dark:border-zinc-800 shadow-xs hover:border-blue-500/40 dark:hover:border-blue-500/40 transition-all flex flex-col justify-between group overflow-hidden rounded-2xl"
+              className="bg-white dark:bg-[#141415] text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800 shadow-xs hover:border-blue-500/40 dark:hover:border-blue-500/40 transition-all flex flex-col justify-between group overflow-hidden rounded-2xl"
             >
               <CardContent className="p-5 sm:p-6 space-y-4 flex-1 flex flex-col justify-between">
                 <div className="space-y-3.5">

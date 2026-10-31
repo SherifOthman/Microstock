@@ -312,7 +312,12 @@ function extractXmpThumbnail(epsText: string): string | null {
   for (const regex of patterns) {
     const match = epsText.match(regex);
     if (match && match[1]) {
-      const cleanB64 = match[1].replace(/[\s\r\n]+/g, '');
+      // Clean XML entities &#xA; (LF), &#xD; (CR), &#x9; (TAB) before base64 decoding
+      const cleanB64 = match[1]
+        .replace(/&#xA;/gi, '\n')
+        .replace(/&#xD;/gi, '')
+        .replace(/&#x9;/gi, '')
+        .replace(/[\s\r\n]+/g, '');
       if (cleanB64.length > 100) {
         return `data:image/jpeg;base64,${cleanB64}`;
       }
@@ -347,10 +352,52 @@ function extractEmbeddedJpegStream(buffer: ArrayBuffer): Blob | null {
   return null;
 }
 
+interface PsPathCommand {
+  type: 'moveto' | 'lineto' | 'curveto' | 'quadto' | 'rect' | 'close' | 'fill' | 'eofill' | 'stroke' | 'fillstroke' | 'eofillstroke' | 'newpath' | 'color' | 'linewidth';
+  args?: number[];
+  color?: string;
+  isStroke?: boolean;
+}
+
+/**
+ * Fits and draws any image or canvas source centered onto the target canvas with pure white background,
+ * preserving original aspect ratio without distortion or cropping.
+ */
+function drawFittedImage(
+  ctx: CanvasRenderingContext2D,
+  src: CanvasImageSource,
+  srcW: number,
+  srcH: number,
+  targetW: number,
+  targetH: number
+) {
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, targetW, targetH);
+  if (srcW <= 0 || srcH <= 0) {
+    ctx.drawImage(src, 0, 0, targetW, targetH);
+    return;
+  }
+  const aspect = srcW / srcH;
+  const targetAspect = targetW / targetH;
+  let renderW = targetW;
+  let renderH = targetH;
+  let offsetX = 0;
+  let offsetY = 0;
+
+  if (aspect > targetAspect) {
+    renderH = targetW / aspect;
+    offsetY = (targetH - renderH) / 2;
+  } else {
+    renderW = targetH * aspect;
+    offsetX = (targetW - renderW) / 2;
+  }
+  ctx.drawImage(src, offsetX, offsetY, renderW, renderH);
+}
+
 /**
  * Tier 1: PostScript Level 2/3 Vector Path Parser
- * Extracts vector commands and executes them directly on an HTML5 Canvas context
- * Uses a token-stream operand stack to handle multiple operators per line and Illustrator procsets.
+ * Extracts vector commands, tracks exact artwork bounding box, centers and scales paths
+ * to fit 85% of canvas with 15% padding, avoiding bottom-left clipping.
  */
 function renderPostScriptVectorPaths(
   epsContent: string,
@@ -360,36 +407,52 @@ function renderPostScriptVectorPaths(
   targetWidth: number,
   targetHeight: number
 ): number {
-  ctx.save();
+  // Determine artwork body: skip prologue/setup headers if %%EndSetup or %%Page: is present
+  let body = epsContent;
+  const pageMatch = epsContent.search(/%%Page:\s*\d+/i);
+  const endSetupMatch = epsContent.search(/%%EndSetup/i);
 
-  // Background is pure white (#FFFFFF)
-  ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(0, 0, targetWidth, targetHeight);
-
-  // Apply world transform
-  ctx.translate(-bb.llx * scale, targetHeight + bb.lly * scale);
-  ctx.scale(scale, -scale);
-
-  // Default drawing properties
-  ctx.fillStyle = '#000000';
-  ctx.strokeStyle = '#000000';
-  ctx.lineWidth = 1;
-  ctx.lineCap = 'butt';
-  ctx.lineJoin = 'miter';
-
-  const psStart = epsContent.indexOf('%!PS-Adobe');
-  const body = psStart >= 0 ? epsContent.slice(psStart) : epsContent;
+  if (pageMatch >= 0) {
+    body = epsContent.slice(pageMatch);
+  } else if (endSetupMatch >= 0) {
+    body = epsContent.slice(endSetupMatch + 10);
+  } else {
+    const psStart = epsContent.indexOf('%!PS-Adobe');
+    if (psStart >= 0) body = epsContent.slice(psStart);
+  }
 
   const lines = body.split(/[\r\n]+/);
   let pathOpCount = 0;
-  let inPath = false;
   const stack: number[] = [];
+  const commands: PsPathCommand[] = [];
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  const trackPoint = (x: number, y: number) => {
+    if (isFinite(x) && isFinite(y)) {
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  };
 
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i].trim();
-    if (!rawLine) continue;
-    // Skip comments
-    if (rawLine.startsWith('%')) {
+    if (!rawLine || rawLine.startsWith('%')) continue;
+
+    // Skip font dictionary / procset definition lines
+    if (
+      rawLine.includes('/Font') ||
+      rawLine.includes('/CIDInit') ||
+      rawLine.includes('/CIDFont') ||
+      rawLine.includes('/ProcSet') ||
+      rawLine.includes('findfont') ||
+      rawLine.includes('setfont')
+    ) {
       continue;
     }
 
@@ -404,7 +467,6 @@ function renderPostScriptVectorPaths(
         continue;
       }
 
-      // It's an operator!
       const op = tok;
 
       // Color operators
@@ -416,11 +478,9 @@ function renderPostScriptVectorPaths(
           const c = stack.pop()!;
           const [r, g, b] = cmykToRgb(c, m, y, k);
           const col = `rgb(${r},${g},${b})`;
-          if (op === 'K' || op === 'X') {
-            ctx.strokeStyle = col;
-          } else {
-            ctx.fillStyle = col;
-            if (op === 'k') ctx.strokeStyle = col;
+          commands.push({ type: 'color', color: col, isStroke: op === 'K' || op === 'X' });
+          if (op === 'k') {
+            commands.push({ type: 'color', color: col, isStroke: true });
           }
         }
         continue;
@@ -432,11 +492,9 @@ function renderPostScriptVectorPaths(
           const g = Math.round(stack.pop()! * 255);
           const r = Math.round(stack.pop()! * 255);
           const col = `rgb(${r},${g},${b})`;
-          if (op === 'RG') {
-            ctx.strokeStyle = col;
-          } else {
-            ctx.fillStyle = col;
-            ctx.strokeStyle = col;
+          commands.push({ type: 'color', color: col, isStroke: op === 'RG' });
+          if (op === 'rg' || op === 'setrgbcolor') {
+            commands.push({ type: 'color', color: col, isStroke: true });
           }
         }
         continue;
@@ -446,11 +504,9 @@ function renderPostScriptVectorPaths(
         if (stack.length >= 1) {
           const gVal = Math.round(stack.pop()! * 255);
           const col = `rgb(${gVal},${gVal},${gVal})`;
-          if (op === 'G') {
-            ctx.strokeStyle = col;
-          } else {
-            ctx.fillStyle = col;
-            ctx.strokeStyle = col;
+          commands.push({ type: 'color', color: col, isStroke: op === 'G' });
+          if (op === 'g' || op === 'setgray') {
+            commands.push({ type: 'color', color: col, isStroke: true });
           }
         }
         continue;
@@ -459,7 +515,7 @@ function renderPostScriptVectorPaths(
       if (op === 'setlinewidth' || op === 'w') {
         if (stack.length >= 1) {
           const lw = stack.pop()!;
-          if (lw > 0) ctx.lineWidth = lw;
+          if (lw > 0) commands.push({ type: 'linewidth', args: [lw] });
         }
         continue;
       }
@@ -469,11 +525,8 @@ function renderPostScriptVectorPaths(
         if (stack.length >= 2) {
           const y = stack.pop()!;
           const x = stack.pop()!;
-          if (!inPath) {
-            ctx.beginPath();
-            inPath = true;
-          }
-          ctx.moveTo(x, y);
+          trackPoint(x, y);
+          commands.push({ type: 'moveto', args: [x, y] });
           pathOpCount++;
         }
         continue;
@@ -483,7 +536,8 @@ function renderPostScriptVectorPaths(
         if (stack.length >= 2) {
           const y = stack.pop()!;
           const x = stack.pop()!;
-          ctx.lineTo(x, y);
+          trackPoint(x, y);
+          commands.push({ type: 'lineto', args: [x, y] });
           pathOpCount++;
         }
         continue;
@@ -497,7 +551,10 @@ function renderPostScriptVectorPaths(
           const x2 = stack.pop()!;
           const y1 = stack.pop()!;
           const x1 = stack.pop()!;
-          ctx.bezierCurveTo(x1, y1, x2, y2, x3, y3);
+          trackPoint(x1, y1);
+          trackPoint(x2, y2);
+          trackPoint(x3, y3);
+          commands.push({ type: 'curveto', args: [x1, y1, x2, y2, x3, y3] });
           pathOpCount++;
         }
         continue;
@@ -509,7 +566,9 @@ function renderPostScriptVectorPaths(
           const x3 = stack.pop()!;
           const y2 = stack.pop()!;
           const x2 = stack.pop()!;
-          ctx.quadraticCurveTo(x2, y2, x3, y3);
+          trackPoint(x2, y2);
+          trackPoint(x3, y3);
+          commands.push({ type: 'quadto', args: [x2, y2, x3, y3] });
           pathOpCount++;
         }
         continue;
@@ -521,7 +580,9 @@ function renderPostScriptVectorPaths(
           const x3 = stack.pop()!;
           const y1 = stack.pop()!;
           const x1 = stack.pop()!;
-          ctx.quadraticCurveTo(x1, y1, x3, y3);
+          trackPoint(x1, y1);
+          trackPoint(x3, y3);
+          commands.push({ type: 'quadto', args: [x1, y1, x3, y3] });
           pathOpCount++;
         }
         continue;
@@ -533,80 +594,134 @@ function renderPostScriptVectorPaths(
           const w = stack.pop()!;
           const y = stack.pop()!;
           const x = stack.pop()!;
-          ctx.rect(x, y, w, h);
+          trackPoint(x, y);
+          trackPoint(x + w, y + h);
+          commands.push({ type: 'rect', args: [x, y, w, h] });
           pathOpCount++;
         }
         continue;
       }
 
       if (op === 'closepath' || op === 'h' || op === 'H' || op === 'cp') {
-        ctx.closePath();
+        commands.push({ type: 'close' });
         continue;
       }
 
       // Painting operators
       if (op === 'fill' || op === 'f' || op === 'F') {
-        ctx.fill();
-        inPath = false;
+        commands.push({ type: 'fill' });
         stack.length = 0;
         continue;
       }
 
       if (op === 'eofill' || op === 'f*') {
-        ctx.fill('evenodd');
-        inPath = false;
+        commands.push({ type: 'eofill' });
         stack.length = 0;
         continue;
       }
 
       if (op === 'stroke' || op === 's' || op === 'S' || op === 'o' || op === 'O') {
-        ctx.stroke();
-        inPath = false;
+        commands.push({ type: 'stroke' });
         stack.length = 0;
         continue;
       }
 
       if (op === 'b' || op === 'B') {
-        ctx.fill();
-        ctx.stroke();
-        inPath = false;
+        commands.push({ type: 'fillstroke' });
         stack.length = 0;
         continue;
       }
 
       if (op === 'b*' || op === 'B*') {
-        ctx.fill('evenodd');
-        ctx.stroke();
-        inPath = false;
+        commands.push({ type: 'eofillstroke' });
         stack.length = 0;
         continue;
       }
 
       if (op === 'newpath' || op === 'n' || op === 'N') {
-        ctx.beginPath();
-        inPath = true;
+        commands.push({ type: 'newpath' });
         stack.length = 0;
-        continue;
-      }
-
-      if (op === '*u' || op === '*U' || op === 'u' || op === 'U') {
-        // Illustrator compound path or group delimiter
-        continue;
-      }
-
-      if (op === 'q' || op === 'gsave') {
-        ctx.save();
-        continue;
-      }
-
-      if (op === 'Q' || op === 'grestore') {
-        ctx.restore();
         continue;
       }
 
       if (stack.length > 100) {
         stack.length = 0;
       }
+    }
+  }
+
+  // PASS 2: Determine actual bounding box and setup centered view
+  ctx.save();
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, targetWidth, targetHeight);
+
+  const artWidth = isFinite(minX) && isFinite(maxX) ? maxX - minX : 0;
+  const artHeight = isFinite(minY) && isFinite(maxY) ? maxY - minY : 0;
+
+  if (artWidth > 0 && artHeight > 0) {
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    // Scale to fit 85% of canvas with 15% padding
+    const availW = targetWidth * 0.85;
+    const availH = targetHeight * 0.85;
+    const fitScale = Math.min(availW / artWidth, availH / artHeight);
+
+    // Center the artwork on canvas
+    ctx.translate(targetWidth / 2, targetHeight / 2);
+    ctx.scale(fitScale, -fitScale);
+    ctx.translate(-centerX, -centerY);
+  } else {
+    // Fallback to bounding box from headers
+    ctx.translate(-bb.llx * scale, targetHeight + bb.lly * scale);
+    ctx.scale(scale, -scale);
+  }
+
+  ctx.fillStyle = '#000000';
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 1;
+  ctx.lineCap = 'butt';
+  ctx.lineJoin = 'miter';
+
+  let inPath = false;
+  for (const cmd of commands) {
+    if (cmd.type === 'color') {
+      if (cmd.isStroke) ctx.strokeStyle = cmd.color!;
+      else ctx.fillStyle = cmd.color!;
+    } else if (cmd.type === 'linewidth') {
+      ctx.lineWidth = cmd.args![0];
+    } else if (cmd.type === 'moveto') {
+      if (!inPath) { ctx.beginPath(); inPath = true; }
+      ctx.moveTo(cmd.args![0], cmd.args![1]);
+    } else if (cmd.type === 'lineto') {
+      ctx.lineTo(cmd.args![0], cmd.args![1]);
+    } else if (cmd.type === 'curveto') {
+      ctx.bezierCurveTo(cmd.args![0], cmd.args![1], cmd.args![2], cmd.args![3], cmd.args![4], cmd.args![5]);
+    } else if (cmd.type === 'quadto') {
+      ctx.quadraticCurveTo(cmd.args![0], cmd.args![1], cmd.args![2], cmd.args![3]);
+    } else if (cmd.type === 'rect') {
+      ctx.rect(cmd.args![0], cmd.args![1], cmd.args![2], cmd.args![3]);
+    } else if (cmd.type === 'close') {
+      ctx.closePath();
+    } else if (cmd.type === 'newpath') {
+      ctx.beginPath();
+      inPath = true;
+    } else if (cmd.type === 'fill') {
+      ctx.fill();
+      inPath = false;
+    } else if (cmd.type === 'eofill') {
+      ctx.fill('evenodd');
+      inPath = false;
+    } else if (cmd.type === 'stroke') {
+      ctx.stroke();
+      inPath = false;
+    } else if (cmd.type === 'fillstroke') {
+      ctx.fill();
+      ctx.stroke();
+      inPath = false;
+    } else if (cmd.type === 'eofillstroke') {
+      ctx.fill('evenodd');
+      ctx.stroke();
+      inPath = false;
     }
   }
 
@@ -696,7 +811,7 @@ export async function rasterizeEpsFile(
   const dosPreview = extractBinaryDosEpsPreview(buffer);
   if (dosPreview) {
     if (dosPreview.canvas) {
-      ctx.drawImage(dosPreview.canvas, 0, 0, canvasWidth, canvasHeight);
+      drawFittedImage(ctx, dosPreview.canvas, dosPreview.canvas.width, dosPreview.canvas.height, canvasWidth, canvasHeight);
       const dataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
       const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/jpeg', jpegQuality));
       return {
@@ -713,7 +828,7 @@ export async function rasterizeEpsFile(
       const objUrl = URL.createObjectURL(dosPreview.blob);
       try {
         const img = await loadImageElement(objUrl);
-        ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+        drawFittedImage(ctx, img, img.naturalWidth || img.width, img.naturalHeight || img.height, canvasWidth, canvasHeight);
         URL.revokeObjectURL(objUrl);
         const dataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
         const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/jpeg', jpegQuality));
@@ -742,7 +857,7 @@ export async function rasterizeEpsFile(
   if (xmpB64) {
     try {
       const img = await loadImageElement(xmpB64);
-      ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+      drawFittedImage(ctx, img, img.naturalWidth || img.width, img.naturalHeight || img.height, canvasWidth, canvasHeight);
       const dataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
       const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/jpeg', jpegQuality));
       return {
@@ -766,7 +881,7 @@ export async function rasterizeEpsFile(
     const objUrl = URL.createObjectURL(jpegStream);
     try {
       const img = await loadImageElement(objUrl);
-      ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+      drawFittedImage(ctx, img, img.naturalWidth || img.width, img.naturalHeight || img.height, canvasWidth, canvasHeight);
       URL.revokeObjectURL(objUrl);
       const dataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
       const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/jpeg', jpegQuality));

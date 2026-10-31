@@ -1298,7 +1298,7 @@ export const StudioView: React.FC = () => {
             value={userCustomPrompt}
             onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setUserCustomPrompt(e.target.value)}
             placeholder={t.contextHintPlaceholder || "e.g. '3D glass texture, minimalist, studio lighting'..."}
-            className="text-xs bg-zinc-100/80 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 resize-none w-full shadow-2xs"
+            className="text-xs bg-zinc-100/90 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 resize-none w-full shadow-2xs"
             title="Appended to AI vision prompt for all assets in this batch"
           />
           <p className="text-[10px] text-muted-foreground leading-normal">
@@ -1667,7 +1667,7 @@ export const StudioView: React.FC = () => {
                   placeholder={t.searchAssetsPlaceholder}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="h-7.5 ps-8 pe-2.5 w-full text-xs min-w-0 bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-2xs"
+                  className="h-7.5 ps-8 pe-2.5 w-full text-xs min-w-0 bg-zinc-100/90 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-2xs"
                 />
               </div>
 

@@ -240,7 +240,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
           </div>
           <div className="min-w-0 space-y-0.5">
             <div className="flex items-center gap-1.5 min-w-0">
-              <span className="text-xs sm:text-sm font-semibold text-foreground truncate max-w-[200px] sm:max-w-xs md:max-w-md block" title={asset.filename}>
+              <span className="text-xs sm:text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate max-w-[200px] sm:max-w-xs md:max-w-md block" title={asset.filename}>
                 {asset.filename}
               </span>
               {hasNonAsciiInFilename && (
@@ -266,7 +266,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
           <Button
             size="sm"
             onClick={() => onRegenerate(asset.id)}
-            className="h-7.5 px-3 text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-xs cursor-pointer gap-1.5"
+            className="h-7.5 px-3 text-xs font-medium bg-zinc-100 hover:bg-blue-600 text-zinc-700 hover:text-white dark:bg-zinc-800 dark:hover:bg-blue-600 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 transition-colors cursor-pointer gap-1.5 shadow-2xs"
           >
             <Play className="w-3 h-3 fill-current" />
             <span className="hidden sm:inline">{language === 'ar' ? 'توليد الآن' : 'Generate'}</span>
@@ -358,7 +358,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             <div className="flex-1 min-w-0 space-y-1">
               <div className="flex items-center gap-1.5 min-w-0">
                 <span
-                  className="text-xs sm:text-sm font-semibold text-foreground truncate max-w-full block"
+                  className="text-xs sm:text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate max-w-full block"
                   title={asset.filename}
                 >
                   {asset.filename}
@@ -657,7 +657,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             </div>
 
             {/* Clean Light/Dark Adaptive Telemetry Block */}
-            <div className="rounded-lg bg-zinc-100/80 dark:bg-zinc-900/80 border border-zinc-200/70 dark:border-zinc-800 p-2.5 text-xs text-zinc-700 dark:text-zinc-300 space-y-1 font-mono">
+            <div className="rounded-lg bg-zinc-100/90 dark:bg-zinc-900/90 border border-zinc-200/70 dark:border-zinc-800 p-2.5 text-xs text-zinc-700 dark:text-zinc-300 space-y-1 font-mono">
               <div className="flex items-center justify-between">
                 <span>{formatBytes(originalSize)} → {formatBytes(compressedSize)}</span>
                 {savingsPercent !== null && (
@@ -688,7 +688,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                 variant="outline"
                 size="sm"
                 onClick={() => onRegenerate(asset.id)}
-                className="w-full h-7.5 text-xs gap-1.5 cursor-pointer hover:bg-secondary border-zinc-200 dark:border-zinc-800 text-zinc-800 dark:text-zinc-100"
+                className="w-full h-7.5 text-xs gap-1.5 cursor-pointer font-medium bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-2xs"
               >
                 <RefreshCw className="w-3 h-3 text-muted-foreground" />
                 <span>{t.regenerate}</span>
@@ -715,7 +715,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
         {/* Title Field with Copy & Character Counter */}
         <div className="space-y-1">
           <div className="flex items-center justify-between text-xs">
-            <label className="font-semibold text-foreground flex items-center gap-1.5">
+            <label className="font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
               <span>{t.title}</span>
               <span className="text-[10px] font-mono font-normal text-muted-foreground">
                 ({(localTitle || '').length} chars)
@@ -747,14 +747,14 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             onBlur={handleBlurTitle}
             placeholder={isProcessing ? 'Generating title...' : 'Stock Asset Title...'}
             disabled={!rec}
-            className="text-xs bg-zinc-100/80 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 font-medium text-left h-8 focus:ring-1 focus:ring-blue-500 shadow-2xs"
+            className="text-xs bg-zinc-100/90 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 font-medium text-left h-8 focus:ring-1 focus:ring-blue-500 shadow-2xs"
           />
         </div>
 
         {/* Description Field with Copy, Character Counter & Expand Toggle on Compact */}
         <div className="space-y-1">
           <div className="flex items-center justify-between text-xs">
-            <label className="font-semibold text-foreground flex items-center gap-1.5">
+            <label className="font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
               <span>{t.description}</span>
               <span className="text-[10px] font-mono font-normal text-muted-foreground">
                 ({(localDesc || '').length} chars)
@@ -799,7 +799,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             onBlur={handleBlurDesc}
             placeholder={isProcessing ? 'Generating description...' : 'Detailed stock description...'}
             disabled={!rec}
-            className={`text-xs bg-zinc-100/80 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 resize-none text-left focus:ring-1 focus:ring-blue-500 shadow-2xs ${
+            className={`text-xs bg-zinc-100/90 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 resize-none text-left focus:ring-1 focus:ring-blue-500 shadow-2xs ${
               isCompact && !isDescExpanded ? 'line-clamp-2 max-h-16' : ''
             }`}
           />
@@ -808,7 +808,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
         {/* Keywords Management with Mobile Non-Scrollable Collapse & Safe Touch Navigation */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
-            <div className="flex items-center gap-1.5 font-semibold text-foreground">
+            <div className="flex items-center gap-1.5 font-semibold text-zinc-900 dark:text-zinc-100">
               <Tag className="w-3.5 h-3.5 text-blue-500" />
               <span>{t.keywords}</span>
               {rec && (
@@ -867,7 +867,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
                   value={rawKwsInput}
                   onChange={(e) => setRawKwsInput(e.target.value)}
                   placeholder="Type or paste keywords separated by commas..."
-                  className="text-xs min-h-[70px] bg-zinc-100/80 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 font-mono text-left shadow-2xs"
+                  className="text-xs min-h-[70px] bg-zinc-100/90 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 font-mono text-left shadow-2xs"
                 />
                 <div className="flex justify-end gap-2">
                   <Button size="sm" onClick={handleSaveRawKeywords} className="h-7 text-xs bg-blue-600 hover:bg-blue-500 text-white">
@@ -878,7 +878,7 @@ export const AssetCard: React.FC<AssetCardProps> = ({
             ) : (
               <div
                 dir="ltr"
-                className={`p-2.5 sm:p-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-100/80 dark:bg-zinc-900/90 flex flex-wrap gap-1.5 text-left touch-pan-y ${
+                className={`p-2.5 sm:p-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-100/90 dark:bg-zinc-900/90 flex flex-wrap gap-1.5 text-left touch-pan-y ${
                   isCompact ? 'overflow-visible' : 'max-h-56 overflow-y-auto'
                 }`}
               >

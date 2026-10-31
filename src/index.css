@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -23,47 +25,47 @@
 }
 
 :root {
-  /* Gemini-Style Clean Gray + Google Blue (Light Mode) */
-  --background: #F0F2F5; /* Zinc 100 — soft gray canvas */
-  --foreground: #18181B; /* Zinc 900 */
+  /* Official Vercel Geist / Linear Palette (Light Mode) */
+  --background: #FAFAFA;
+  --foreground: #09090B;
   --card: #FFFFFF;
-  --card-foreground: #18181B;
+  --card-foreground: #09090B;
   --popover: #FFFFFF;
-  --popover-foreground: #18181B;
-  --primary: #2563EB; /* Blue 600 — Google Blue */
+  --popover-foreground: #09090B;
+  --primary: #2563EB;
   --primary-foreground: #FFFFFF;
-  --secondary: #F4F4F5; /* Zinc 100 — recessed inner well */
-  --secondary-foreground: #18181B;
+  --secondary: #F4F4F5;
+  --secondary-foreground: #09090B;
   --muted: #F4F4F5;
-  --muted-foreground: #71717A; /* Zinc 500 */
-  --accent: #EFF6FF; /* Blue 50 */
-  --accent-foreground: #1D4ED8;
-  --destructive: #EF4444; /* Red 500 */
+  --muted-foreground: #71717A;
+  --accent: #F4F4F5;
+  --accent-foreground: #09090B;
+  --destructive: #EF4444;
   --destructive-foreground: #FFFFFF;
-  --border: #E4E4E7; /* Zinc 200 */
+  --border: #E4E4E7;
   --input: #E4E4E7;
   --ring: #2563EB;
 }
 
 .dark {
-  /* Gemini-Style Neutral Charcoal (Dark Mode — ZERO navy tint) */
-  --background: #131314; /* Gemini dark canvas */
-  --foreground: #FAFAFA;
-  --card: #1E1F20; /* Gemini card surface */
-  --card-foreground: #FAFAFA;
-  --popover: #1E1F20;
-  --popover-foreground: #FAFAFA;
-  --primary: #3B82F6; /* Blue 500 */
+  /* Official Vercel Geist / Linear Palette (Dark Mode) */
+  --background: #0A0A0A;
+  --foreground: #EDEDED;
+  --card: #141415;
+  --card-foreground: #EDEDED;
+  --popover: #141415;
+  --popover-foreground: #EDEDED;
+  --primary: #3B82F6;
   --primary-foreground: #FFFFFF;
-  --secondary: #131314; /* Recessed inner well */
-  --secondary-foreground: #FAFAFA;
-  --muted: #1E1F20;
-  --muted-foreground: #A1A1AA; /* Zinc 400 */
-  --accent: #282A2C;
-  --accent-foreground: #FAFAFA;
+  --secondary: #1F1F22;
+  --secondary-foreground: #EDEDED;
+  --muted: #1F1F22;
+  --muted-foreground: #A1A1AA;
+  --accent: #1F1F22;
+  --accent-foreground: #EDEDED;
   --destructive: #EF4444;
-  --destructive-foreground: #FAFAFA;
-  --border: #27272A; /* Zinc 800 */
+  --destructive-foreground: #EDEDED;
+  --border: #27272A;
   --input: #27272A;
   --ring: #3B82F6;
 }

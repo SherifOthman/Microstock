@@ -138,7 +138,7 @@ export function App() {
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col antialiased">
       {/* Sleek Minimal Responsive Header (Level 1 Surface) */}
-      <header className="border-b border-zinc-200 dark:border-zinc-800 bg-white/95 dark:bg-[#1E1F20]/95 backdrop-blur-md sticky top-0 z-40 w-full overflow-hidden text-zinc-900 dark:text-zinc-100">
+      <header className="border-b border-zinc-200 dark:border-zinc-800 bg-white/95 dark:bg-[#141415]/95 backdrop-blur-md sticky top-0 z-40 w-full overflow-hidden text-zinc-900 dark:text-zinc-100">
         <div className="max-w-[1700px] w-full mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-3">
           {/* Left: Brand Logo & Title (Clickable) + Return to Hub Grid Button */}
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -165,8 +165,8 @@ export function App() {
               onClick={() => handleTabChange('home')}
               className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer shrink-0 ${
                 activeTab === 'home'
-                  ? 'bg-primary text-primary-foreground border-primary shadow-xs'
-                  : 'bg-white hover:bg-zinc-100 dark:bg-card dark:hover:bg-accent text-zinc-800 dark:text-zinc-100 border-zinc-200 dark:border-zinc-800'
+                  ? 'bg-zinc-200 text-zinc-900 dark:bg-zinc-700 dark:text-zinc-100 border-zinc-300 dark:border-zinc-600 shadow-xs'
+                  : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-100 border-zinc-200 dark:border-zinc-700'
               }`}
               title="All Tools Dashboard / لوحة جميع الأدوات"
             >
@@ -181,7 +181,7 @@ export function App() {
             <button
               type="button"
               onClick={() => setLanguage(language === 'en' ? 'ar' : 'en')}
-              className="px-2 sm:px-2.5 h-8 rounded-lg bg-white hover:bg-zinc-100 dark:bg-card dark:hover:bg-accent border border-zinc-200 dark:border-zinc-800 flex items-center gap-1 sm:gap-1.5 text-xs font-semibold text-zinc-800 dark:text-zinc-100 cursor-pointer transition shadow-2xs"
+              className="px-2 sm:px-2.5 h-8 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 flex items-center gap-1 sm:gap-1.5 text-xs font-semibold text-zinc-900 dark:text-zinc-100 cursor-pointer transition shadow-2xs"
               title="Toggle Language / تبديل اللغة"
             >
               <Languages className="w-3.5 h-3.5 text-primary shrink-0" />
@@ -194,7 +194,7 @@ export function App() {
             <button
               type="button"
               onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-              className="w-8 h-8 rounded-lg bg-white hover:bg-zinc-100 dark:bg-card dark:hover:bg-accent border border-zinc-200 dark:border-zinc-800 flex items-center justify-center text-zinc-800 dark:text-zinc-100 cursor-pointer transition shadow-2xs"
+              className="w-8 h-8 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 flex items-center justify-center text-zinc-900 dark:text-zinc-100 cursor-pointer transition shadow-2xs"
               title={theme === 'dark' ? t.switchToLight : t.switchToDark}
               aria-label="Toggle theme"
             >
@@ -210,7 +210,7 @@ export function App() {
               <button
                 type="button"
                 onClick={() => setIsKeyRingOpen(true)}
-                className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-white hover:bg-zinc-100 dark:bg-card dark:hover:bg-accent border border-zinc-200 dark:border-zinc-800 text-xs font-medium text-zinc-800 dark:text-zinc-100 cursor-pointer transition shadow-2xs"
+                className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 text-xs font-medium text-zinc-900 dark:text-zinc-100 cursor-pointer transition shadow-2xs"
                 title="Manage API Keys & Priority Cascade"
               >
                 <KeyRound className="w-3.5 h-3.5 text-primary shrink-0" />
@@ -219,7 +219,7 @@ export function App() {
             )}
 
             {/* 100% Local DB badge on desktop */}
-            <div className="hidden md:flex items-center gap-1.5 text-[11px] font-mono pl-2 border-l border-zinc-200 dark:border-zinc-800">
+            <div className="hidden md:flex items-center gap-1.5 text-[11px] font-mono pl-2 border-l border-zinc-200 dark:border-zinc-700">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
               <span className="text-zinc-700 dark:text-zinc-300 font-medium">{t.localDb}</span>
             </div>

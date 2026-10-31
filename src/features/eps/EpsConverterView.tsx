@@ -373,7 +373,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
             <Card key={item.id} className="overflow-hidden flex flex-col justify-between border-border bg-card">
               <div className="p-3 space-y-2.5">
                 {/* Thumbnail Preview Area */}
-                <div className="aspect-square rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center overflow-hidden relative">
+                <div className="aspect-square rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex items-center justify-center overflow-hidden relative">
                   {item.result?.dataUrl ? (
                     <img
                       src={item.result.dataUrl}
