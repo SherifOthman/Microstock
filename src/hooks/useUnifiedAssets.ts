@@ -1,7 +1,8 @@
 /**
  * Custom Hook: useUnifiedAssets
  * Merges Dexie DB masterRecords with in-memory queue items,
- * enforcing in-place updates and strict chronological sorting by createdAt.
+ * enforcing in-place updates and strict, deterministic chronological sorting by createdAt
+ * with natural alphanumeric and unique ID fallbacks.
  */
 
 import { useMemo } from 'react';
@@ -22,12 +23,43 @@ export interface UnifiedAssetsResult {
   failedCount: number;
 }
 
+/**
+ * Strict deterministic sorting algorithm:
+ * 1. Primary: createdAt ascending (strictly chronological)
+ * 2. Secondary fallback: Natural alphanumeric filename sorting ({ numeric: true, sensitivity: 'base' })
+ *    This ensures that 001_, 002_, and item_2 precede item_10 without lexicographical jumping.
+ * 3. Tertiary fallback: Deterministic ID string comparison to guarantee 100% immutability and position stability.
+ */
+export function sortUnifiedAssets(rows: UnifiedAssetRow[]): UnifiedAssetRow[] {
+  return [...rows].sort((a, b) => {
+    // 1. Primary: strictly chronological by createdAt ascending
+    const timeA = a.createdAt || 0;
+    const timeB = b.createdAt || 0;
+    if (timeA !== timeB) {
+      return timeA - timeB;
+    }
+
+    // 2. Secondary fallback: Natural sequential alphanumeric sort on filename
+    const nameDiff = a.filename.localeCompare(b.filename, undefined, {
+      numeric: true,
+      sensitivity: 'base',
+    });
+    if (nameDiff !== 0) {
+      return nameDiff;
+    }
+
+    // 3. Tertiary fallback: Deterministic ID comparison to guarantee 100% stability
+    return (a.id || '').localeCompare(b.id || '');
+  });
+}
+
 export function useUnifiedAssets(
   queueState: QueueState,
   searchQuery = '',
   statusFilter = 'all'
 ): UnifiedAssetsResult {
-  const liveRecords = useLiveQuery(() => db.masterRecords.toArray(), []) || [];
+  // Query Dexie masterRecords ordered deterministically by createdAt index
+  const liveRecords = useLiveQuery(() => db.masterRecords.orderBy('createdAt').toArray(), []) || [];
 
   return useMemo(() => {
     const rowMap = new Map<string, UnifiedAssetRow>();
@@ -106,12 +138,8 @@ export function useUnifiedAssets(
       }
     });
 
-    // Strict in-place chronological sort by createdAt ascending (immutable position)
-    const allRows = Array.from(rowMap.values()).sort((a, b) => {
-      const timeDiff = a.createdAt - b.createdAt;
-      if (timeDiff !== 0) return timeDiff;
-      return a.filename.localeCompare(b.filename);
-    });
+    // Strict in-place deterministic sort
+    const allRows = sortUnifiedAssets(Array.from(rowMap.values()));
 
     // Filter by search query & status filter
     const query = searchQuery.trim().toLowerCase();

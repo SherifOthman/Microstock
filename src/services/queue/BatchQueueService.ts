@@ -190,7 +190,9 @@ export class BatchQueueService {
     this.status = 'resizing';
     this.notify();
 
-    for (const file of files) {
+    const baseTime = Date.now();
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
       const id = crypto.randomUUID();
       const item: QueueItem = {
         id,
@@ -199,7 +201,7 @@ export class BatchQueueService {
         originalSizeBytes: file.size,
         status: 'resizing',
         retryCount: 0,
-        createdAt: Date.now(),
+        createdAt: baseTime + i,
       };
       this.items.set(id, item);
     }
