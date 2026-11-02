@@ -38,8 +38,6 @@ export interface EpsConvertItem {
   result?: EpsRenderResult;
 }
 
-export type ResolutionPreset = 'agency_4mp' | 'ultra_16mp';
-
 interface EpsConverterViewProps {
   onSendToStudio?: (files: File[]) => void;
 }
@@ -50,12 +48,8 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
   const folderInputRef = useRef<HTMLInputElement>(null);
 
   const [items, setItems] = useState<EpsConvertItem[]>([]);
-  const [resolutionPreset, setResolutionPreset] = useState<ResolutionPreset>('agency_4mp');
   const [isConvertingBatch, setIsConvertingBatch] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  const targetDimension = resolutionPreset === 'agency_4mp' ? 2500 : 4000;
-  const targetQuality = resolutionPreset === 'agency_4mp' ? 0.95 : 0.98;
 
   const handleAddFiles = (newFiles: File[]) => {
     const epsFiles = newFiles.filter((f) => {
@@ -97,7 +91,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
     );
 
     try {
-      const res = await rasterizeEpsFile(item.file, targetDimension, targetQuality);
+      const res = await rasterizeEpsFile(item.file);
       setItems((prev) =>
         prev.map((i) => (i.id === item.id ? { ...i, status: 'completed', result: res, progressMsg: undefined } : i))
       );
@@ -208,41 +202,21 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
             </div>
             <div>
               <h1 className="text-lg sm:text-xl font-bold text-foreground">
-                {language === 'ar' ? 'محول ملفات EPS إلى صور JPG عالية الدقة' : 'EPS 10 to High-Res JPG Extractor'}
+                {language === 'ar' ? 'محول ملفات EPS إلى صور JPG الاحترافية (300 DPI)' : 'Native EPS to JPG Extractor (300 DPI)'}
               </h1>
               <p className="text-xs text-muted-foreground">
                 {language === 'ar'
-                  ? 'رسترة متجهات Illustrator EPS بدقة 4MP+ أو 16MP على خلفية بيضاء نقية مع الحفاظ على الأبعاد والنسب الأصلية.'
-                  : 'Client-side Illustrator EPS 10 vector rasterizer for microstock agency preview requirements (4MP+ to 16MP).'}
+                  ? 'رسترة متجهات Illustrator بمحرك Ghostscript بدقة 300 DPI ونظام ألوان DeviceRGB وتنعيم فائق (4-bit Supersampling) وجودة 100% مع خلفية بيضاء نقية.'
+                  : 'Native Ghostscript rasterizer at 300 DPI, DeviceRGB color space, art-optimized supersampling anti-aliasing, and 100% JPEG quality matching Adobe Illustrator.'}
               </p>
             </div>
           </div>
         </div>
 
-        {/* Resolution Selector */}
-        <div className="flex items-center gap-2 bg-secondary/50 p-1.5 rounded-xl border border-border">
-          <button
-            type="button"
-            onClick={() => setResolutionPreset('agency_4mp')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
-              resolutionPreset === 'agency_4mp'
-                ? 'bg-card text-foreground font-semibold shadow-xs'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            4MP+ Agency (2500px)
-          </button>
-          <button
-            type="button"
-            onClick={() => setResolutionPreset('ultra_16mp')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
-              resolutionPreset === 'ultra_16mp'
-                ? 'bg-card text-foreground font-semibold shadow-xs'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            16MP Ultra HD (4000px)
-          </button>
+        {/* Engine Badge */}
+        <div className="flex items-center gap-2 bg-secondary/50 px-3 py-1.5 rounded-xl border border-border text-xs font-mono text-zinc-300">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span>Ghostscript 300 DPI • RGB • Art-Optimized (100% Quality)</span>
         </div>
       </div>
 

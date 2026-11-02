@@ -4,6 +4,7 @@ import { MODEL_DISPLAY_NAMES, PROVIDERS_META, PROVIDER_ORDER } from '../../../co
 import { createApiKeyRecord, saveApiKey, updateApiKey, removeApiKey, getAllApiKeys } from '../../../db';
 import { keyRingScheduler } from '../../../services/scheduler/KeyRingScheduler';
 import { getProviderAdapter } from '../../../services/providers';
+import { decryptSecret } from '../../../services/desktop/secureStorage';
 import { Dialog } from '../../../components/ui/dialog';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
@@ -59,6 +60,7 @@ export const AddKeyDialog: React.FC<Props> = ({
   const { t, isRtl } = useLanguage();
   const [providerId, setProviderId] = useState<ProviderType>(initialProvider);
   const [inputKeysText, setInputKeysText] = useState<string>('');
+  const [customKeyLabel, setCustomKeyLabel] = useState<string>('');
   const [keysList, setKeysList] = useState<KeyEntry[]>([]);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [availableModels, setAvailableModels] = useState<string[]>(
@@ -96,22 +98,24 @@ export const AddKeyDialog: React.FC<Props> = ({
   // Pre-load all saved keys from database when dialog opens
   useEffect(() => {
     if (open) {
-      getAllApiKeys().then((records) => {
-        const loaded: KeyEntry[] = records
-          .sort((a, b) => a.createdAt - b.createdAt)
-          .map((r) => ({
-            id: r.id,
-            providerId: r.providerId,
-            key: r.key,
-            label: r.label,
-            model: r.modelId,
-            rpm: r.rpmLimit,
-            createdAt: r.createdAt,
-            isTesting: false,
-            testStatus: r.status === 'healthy' ? 'success' : r.status === 'invalid' ? 'failed' : 'idle',
-            latencyMs: r.lastLatencyMs,
-            error: r.lastError,
-          }));
+      getAllApiKeys().then(async (records) => {
+        const loaded: KeyEntry[] = await Promise.all(
+          records
+            .sort((a, b) => a.createdAt - b.createdAt)
+            .map(async (r) => ({
+              id: r.id,
+              providerId: r.providerId,
+              key: await decryptSecret(r.key),
+              label: r.label,
+              model: r.modelId,
+              rpm: r.rpmLimit,
+              createdAt: r.createdAt,
+              isTesting: false,
+              testStatus: r.status === 'healthy' ? 'success' : r.status === 'invalid' ? 'failed' : 'idle',
+              latencyMs: r.lastLatencyMs,
+              error: r.lastError,
+            }))
+        );
         setKeysList(loaded);
       });
     }
@@ -259,10 +263,15 @@ export const AddKeyDialog: React.FC<Props> = ({
 
         if (res.success) {
           // Success / Valid: Immediately create and save to database!
+          const label =
+            customKeyLabel.trim() && newLines.length === 1
+              ? customKeyLabel.trim()
+              : `${currentMeta.name} #${keysList.filter((k) => k.providerId === providerId).length + i + 1}`;
+
           const record = createApiKeyRecord(
             providerId,
             rawKey,
-            `${currentMeta.name} #${keysList.filter((k) => k.providerId === providerId).length + i + 1}`,
+            label,
             selectedModel,
             currentMeta.defaultRpm
           );
@@ -327,6 +336,7 @@ export const AddKeyDialog: React.FC<Props> = ({
 
     setKeysList((prev) => [...prev, ...newEntries]);
     setInputKeysText('');
+    setCustomKeyLabel('');
     setIsProcessing(false);
   };
 
@@ -415,14 +425,15 @@ export const AddKeyDialog: React.FC<Props> = ({
   };
 
   const maskKey = (key: string) => {
+    if (!key || key.startsWith('enc:')) return '••••••••';
     if (key.includes(':')) {
       const [acc, tok] = key.split(':');
       const maskedAcc = acc.length > 8 ? `${acc.slice(0, 4)}...${acc.slice(-4)}` : acc;
-      const maskedTok = tok.length > 10 ? `${tok.slice(0, 5)}••••${tok.slice(-4)}` : '••••••••';
+      const maskedTok = tok.length > 8 ? `${tok.slice(0, 4)}••••${tok.slice(-4)}` : '••••••••';
       return `Account: ${maskedAcc} • Token: ${maskedTok}`;
     }
-    if (key.length <= 10) return '••••••••';
-    return `${key.slice(0, 6)}••••${key.slice(-4)}`;
+    if (key.length <= 8) return '••••••••';
+    return `${key.slice(0, 4)}••••${key.slice(-4)}`;
   };
 
   return (
@@ -518,6 +529,18 @@ export const AddKeyDialog: React.FC<Props> = ({
               {(t.getFreeKeyFrom || 'Get free key from {name}').replace('{name}', currentMeta.name)}
             </a>
           </div>
+
+          {/* Optional Custom Label for single-key addition */}
+          <div>
+            <Input
+              type="text"
+              placeholder={isRtl ? 'اسم أو تصنيف المفتاح (اختياري، مثلاً: حسابي الأساسي)' : 'Custom Key Label (optional, e.g. "Main Account Key")'}
+              value={customKeyLabel}
+              onChange={(e) => setCustomKeyLabel(e.target.value)}
+              className="h-8 text-xs bg-card"
+            />
+          </div>
+
           <div dir="ltr" className="flex flex-col sm:flex-row gap-2 text-left">
             <textarea
               rows={2}

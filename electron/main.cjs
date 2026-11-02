@@ -1,10 +1,93 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const { spawn, spawnSync } = require('child_process');
 
 let mainWindow = null;
 
+// Locate Ghostscript binary on Windows
+function findGhostscriptExecutable() {
+  const commonPaths = [
+    'C:\\Program Files\\gs\\gs10.08.0\\bin\\gswin64c.exe',
+    'C:\\Program Files\\gs\\gs10.04.0\\bin\\gswin64c.exe',
+    'C:\\Program Files\\gs\\gs10.03.0\\bin\\gswin64c.exe',
+    'C:\\Program Files\\gs\\gs10.02.0\\bin\\gswin64c.exe',
+  ];
+
+  for (const p of commonPaths) {
+    if (fs.existsSync(p)) return p;
+  }
+
+  // Search C:\Program Files\gs dynamically
+  const gsRoot = 'C:\\Program Files\\gs';
+  if (fs.existsSync(gsRoot)) {
+    try {
+      const dirs = fs.readdirSync(gsRoot);
+      for (const d of dirs) {
+        const binCandidate = path.join(gsRoot, d, 'bin', 'gswin64c.exe');
+        if (fs.existsSync(binCandidate)) return binCandidate;
+        const binCandidate32 = path.join(gsRoot, d, 'bin', 'gswin32c.exe');
+        if (fs.existsSync(binCandidate32)) return binCandidate32;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // System PATH fallback
+  try {
+    const which = spawnSync('where', ['gswin64c.exe'], { encoding: 'utf8', windowsHide: true });
+    if (which.status === 0 && which.stdout.trim()) {
+      return which.stdout.trim().split(/\r?\n/)[0];
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
+// Windows Shell Notification to immediately refresh Windows Explorer folders
+function notifyWindowsShellFolder(folderPath) {
+  if (process.platform !== 'win32') return;
+  const scriptPath = path.join(__dirname, 'refresh-shell.ps1');
+  if (fs.existsSync(scriptPath)) {
+    try {
+      const child = spawn('powershell.exe', [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        scriptPath,
+      ], {
+        windowsHide: true,
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+// Synchronously write and explicitly fsync to force OS buffer flush
+function writeAndFlushFileSync(filePath, buffer) {
+  const fd = fs.openSync(filePath, 'w');
+  try {
+    fs.writeSync(fd, buffer, 0, buffer.length, 0);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// Let hardware acceleration run normally unless explicitly disabled
+// (disableHardwareAcceleration can cause invisible windows on some Windows GPU setups)
+
 function createWindow() {
+  console.log('[Electron Main] Creating window...');
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
@@ -13,6 +96,10 @@ function createWindow() {
     title: 'Microstock Studio',
     backgroundColor: '#09090b',
     autoHideMenuBar: true,
+    show: false,
+    center: true,
+    frame: false,
+    skipTaskbar: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -21,18 +108,55 @@ function createWindow() {
     },
   });
 
-  const isDev = process.env.NODE_ENV === 'development';
+  // Force the window to be visible, focused, and maximized on the active screen once ready
+  mainWindow.once('ready-to-show', () => {
+    console.log('[Electron Main] ready-to-show fired. Showing, focusing and maximizing window.');
+    mainWindow.show();
+    mainWindow.maximize();
+    mainWindow.focus();
+  });
+
+  // Safety fallback: if ready-to-show hasn't fired in 3s, force display
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isVisible()) {
+      console.log('[Electron Main] Fallback timer: showing window.');
+      mainWindow.show();
+      mainWindow.maximize();
+      mainWindow.focus();
+    }
+  }, 3000);
+
+  console.log('[Electron Main] Window created, bounds:', mainWindow.getBounds());
+
+  const isDev = !app.isPackaged;
   const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
 
-  if (isDev && !app.isPackaged) {
-    mainWindow.loadURL(devUrl);
+  if (isDev) {
+    console.log('[Electron Main] Dev mode — loading:', devUrl);
+    mainWindow.loadURL(devUrl).catch((err) => {
+      console.error('[Electron Main] Failed to load dev URL:', err);
+      // Fallback to dist/index.html even in dev if vite isn't ready
+      mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    });
     // Open DevTools in dev mode if requested
     if (process.env.OPEN_DEVTOOLS) {
       mainWindow.webContents.openDevTools();
     }
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    const indexPath = path.join(__dirname, '../dist/index.html');
+    console.log('[Electron Main] Production mode — loading:', indexPath);
+    mainWindow.loadFile(indexPath).catch((err) => {
+      console.error('[Electron Main] Failed to load file:', err);
+    });
   }
+
+  // Log any renderer crashes
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    console.error('[Electron Main] Renderer crashed:', details);
+  });
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error('[Electron Main] Page failed to load:', errorCode, errorDescription);
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -70,6 +194,164 @@ app.on('window-all-closed', () => {
 });
 
 function setupIpcHandlers() {
+  // Window Control IPC
+  ipcMain.on('window-minimize', () => {
+    if (mainWindow) mainWindow.minimize();
+  });
+
+  ipcMain.on('window-maximize', () => {
+    if (mainWindow) {
+      if (mainWindow.isMaximized()) {
+        mainWindow.unmaximize();
+      } else {
+        mainWindow.maximize();
+      }
+    }
+  });
+
+  ipcMain.on('window-close', () => {
+    if (mainWindow) mainWindow.close();
+  });
+
+  ipcMain.handle('window-is-maximized', () => {
+    return mainWindow ? mainWindow.isMaximized() : false;
+  });
+
+  // Native Secure Storage via Electron safeStorage (Windows DPAPI / OS Keychain)
+  ipcMain.handle('secure:isAvailable', () => {
+    try {
+      return Boolean(
+        safeStorage &&
+        typeof safeStorage.isEncryptionAvailable === 'function' &&
+        safeStorage.isEncryptionAvailable()
+      );
+    } catch {
+      return false;
+    }
+  });
+
+  ipcMain.handle('secure:encrypt', async (event, plainText) => {
+    if (!plainText) return '';
+    try {
+      if (safeStorage && safeStorage.isEncryptionAvailable()) {
+        const buffer = safeStorage.encryptString(plainText);
+        return `enc:${buffer.toString('hex')}`;
+      }
+    } catch (err) {
+      console.error('[Electron] safeStorage encryption failed:', err);
+    }
+    return plainText;
+  });
+
+  ipcMain.handle('secure:decrypt', async (event, cipherText) => {
+    if (!cipherText) return '';
+    if (typeof cipherText === 'string' && cipherText.startsWith('enc:')) {
+      try {
+        if (safeStorage && safeStorage.isEncryptionAvailable()) {
+          const hex = cipherText.slice(4);
+          const buffer = Buffer.from(hex, 'hex');
+          return safeStorage.decryptString(buffer);
+        }
+      } catch (err) {
+        console.error('[Electron] safeStorage decryption failed:', err);
+      }
+    }
+    return cipherText;
+  });
+
+  // Shell: Open file location in Windows Explorer
+  ipcMain.handle('shell:showItemInFolder', async (event, filePath) => {
+    try {
+      if (filePath && typeof filePath === 'string' && fs.existsSync(filePath)) {
+        shell.showItemInFolder(filePath);
+        return { success: true };
+      }
+      return { success: false, error: 'File path does not exist on disk.' };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // Shell: Open folder path in Windows Explorer
+  ipcMain.handle('shell:openPath', async (event, folderPath) => {
+    try {
+      if (folderPath && typeof folderPath === 'string' && fs.existsSync(folderPath)) {
+        await shell.openPath(folderPath);
+        return { success: true };
+      }
+      return { success: false, error: 'Folder path does not exist.' };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // IPC: Smart Quarantine (Move flagged file to _Needs_Fixing / [Media Type] beside master folder)
+  ipcMain.handle('fs:quarantineFile', async (event, payload) => {
+    try {
+      const filePath = typeof payload === 'string' ? payload : payload?.filePath;
+      const mediaType = (typeof payload === 'object' && payload?.mediaType) || 'Photos';
+      const masterDir = typeof payload === 'object' ? payload?.masterDir : null;
+
+      if (!filePath || typeof filePath !== 'string') {
+        return { success: false, error: 'Invalid file path' };
+      }
+
+      // Safety catch: if user already moved or deleted the file in Windows Explorer, ignore silently (ENOENT)
+      if (!fs.existsSync(filePath)) {
+        return { success: true, moved: false, reason: 'File already moved or deleted (ENOENT)' };
+      }
+
+      // Root for quarantine: beside the master folder if available, else beside original file
+      let baseDir;
+      if (masterDir && typeof masterDir === 'string' && fs.existsSync(masterDir)) {
+        baseDir = path.dirname(masterDir);
+      } else {
+        baseDir = path.dirname(filePath);
+      }
+
+      const targetDir = path.join(baseDir, '_Needs_Fixing', mediaType);
+
+      // Automatically create _Needs_Fixing / [Media Type] directory if it does not exist
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
+
+      const fileName = path.basename(filePath);
+      let targetPath = path.join(targetDir, fileName);
+
+      // Handle duplicate filename in quarantine folder
+      if (fs.existsSync(targetPath)) {
+        const ext = path.extname(fileName);
+        const base = path.basename(fileName, ext);
+        targetPath = path.join(targetDir, `${base}_${Date.now()}${ext}`);
+      }
+
+      try {
+        fs.renameSync(filePath, targetPath);
+      } catch (renameErr) {
+        // Silent catch for ENOENT if race condition with user manual action
+        if (renameErr.code === 'ENOENT') {
+          return { success: true, moved: false, reason: 'File already moved or deleted (ENOENT)' };
+        }
+        if (renameErr.code === 'EXDEV') {
+          fs.copyFileSync(filePath, targetPath);
+          fs.unlinkSync(filePath);
+        } else {
+          throw renameErr;
+        }
+      }
+
+      // Refresh Windows Explorer for both folders
+      notifyWindowsShellFolder(path.dirname(filePath));
+      notifyWindowsShellFolder(targetDir);
+
+      return { success: true, moved: true, targetPath, targetDir };
+    } catch (err) {
+      console.warn('[Electron Main] fs:quarantineFile safety catch:', err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
   // IPC: Directory Selection Dialog
   ipcMain.handle('dialog:selectDirectory', async (event, options = {}) => {
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -128,9 +410,12 @@ function setupIpcHandlers() {
         }
         const filePath = path.join(targetDir, finalName);
         const buffer = Buffer.from(item.buffer);
-        fs.writeFileSync(filePath, buffer);
+        writeAndFlushFileSync(filePath, buffer);
         saved++;
       }
+
+      // Notify Windows Shell so Windows Explorer updates immediately without pressing F5
+      notifyWindowsShellFolder(targetDir);
 
       return {
         success: true,
@@ -144,6 +429,257 @@ function setupIpcHandlers() {
         savedCount: 0,
         error: err.message || 'Failed to save files natively.',
       };
+    }
+  });
+
+  // IPC: Scan Master Directory for Media-First Batches (Photos/B01, Videos/B01, Vectors/B01)
+  ipcMain.handle('fs:scanMasterDirectory', async (event, masterPath) => {
+    try {
+      if (!masterPath || typeof masterPath !== 'string') {
+        return { success: false, error: 'No directory path provided.' };
+      }
+
+      if (!fs.existsSync(masterPath)) {
+        return { success: false, error: 'Destination directory does not exist on disk.' };
+      }
+
+      const stat = fs.statSync(masterPath);
+      if (!stat.isDirectory()) {
+        return { success: false, error: 'Specified path is not a directory.' };
+      }
+
+      const scanBatchesInDir = (dirPath) => {
+        if (!fs.existsSync(dirPath)) return [];
+        let entries = [];
+        try {
+          entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        } catch {
+          return [];
+        }
+
+        const batches = [];
+        for (const ent of entries) {
+          if (!ent.isDirectory()) continue;
+          const match = ent.name.match(/^B(?:atch)?[-_\s]?(\d+)$/i);
+          if (match) {
+            const batchNum = parseInt(match[1], 10);
+            const folderFullPath = path.join(dirPath, ent.name);
+            let files = [];
+            try {
+              files = fs.readdirSync(folderFullPath).filter((f) => {
+                try {
+                  return fs.statSync(path.join(folderFullPath, f)).isFile();
+                } catch {
+                  return false;
+                }
+              });
+            } catch {
+              files = [];
+            }
+
+            let highestIndex = 0;
+            let lastFileName = '';
+
+            for (const f of files) {
+              // Match patterns like B01_001__name.jpg, B03_010.jpg, 010_...
+              const numMatch = f.match(/(?:^B\d+[-_](\d+)|[-_](\d+)\.[^.]+$|^(\d+)[-_])/i);
+              if (numMatch) {
+                const parsed = parseInt(numMatch[1] || numMatch[2] || numMatch[3], 10);
+                if (!isNaN(parsed) && parsed > highestIndex && parsed < 100000) {
+                  highestIndex = parsed;
+                  lastFileName = f;
+                }
+              }
+            }
+
+            if (highestIndex === 0 && files.length > 0) {
+              highestIndex = files.length;
+              lastFileName = files[files.length - 1];
+            }
+
+            batches.push({
+              name: ent.name,
+              number: batchNum,
+              path: folderFullPath,
+              fileCount: files.length,
+              highestIndex,
+              lastFileName,
+            });
+          }
+        }
+
+        return batches.sort((a, b) => a.number - b.number);
+      };
+
+      // 1. Scan Media-First Hierarchies: Master/Photos, Master/Videos, Master/Vectors
+      const mediaBatches = {
+        Photos: scanBatchesInDir(path.join(masterPath, 'Photos')),
+        Videos: scanBatchesInDir(path.join(masterPath, 'Videos')),
+        Vectors: scanBatchesInDir(path.join(masterPath, 'Vectors')),
+      };
+
+      // 2. Also scan Root Master for legacy B01, B02 batches if any
+      const rootBatches = scanBatchesInDir(masterPath);
+
+      // Latest batch across all categories
+      const allBatches = [
+        ...mediaBatches.Photos,
+        ...mediaBatches.Videos,
+        ...mediaBatches.Vectors,
+        ...rootBatches,
+      ];
+      const latestBatch = allBatches.length > 0 ? allBatches.sort((a, b) => b.number - a.number)[0] : null;
+
+      return {
+        success: true,
+        masterPath,
+        mediaBatches,
+        batches: rootBatches.length > 0 ? rootBatches : mediaBatches.Photos,
+        latestBatch,
+      };
+    } catch (err) {
+      console.error('[Electron Main] fs:scanMasterDirectory error:', err);
+      return { success: false, error: err.message || 'Failed to scan master directory.' };
+    }
+  });
+
+  // IPC: Save Batch Files Natively into Subfolders (B01, B02...) with Windows Explorer Refresh
+  ipcMain.handle('fs:saveBatchFiles', async (event, payload) => {
+    try {
+      const { masterDir, files } = payload;
+      if (!masterDir || !fs.existsSync(masterDir)) {
+        return { success: false, error: 'Master destination directory does not exist.' };
+      }
+      if (!files || !Array.isArray(files) || files.length === 0) {
+        return { success: false, error: 'No files provided to save.' };
+      }
+
+      let savedCount = 0;
+      const modifiedFolders = new Set();
+
+      for (const item of files) {
+        if (!item || !item.relativePath || !item.buffer) continue;
+        const fullPath = path.join(masterDir, item.relativePath);
+        const folderPath = path.dirname(fullPath);
+
+        if (!fs.existsSync(folderPath)) {
+          fs.mkdirSync(folderPath, { recursive: true });
+        }
+        modifiedFolders.add(folderPath);
+
+        const buffer = Buffer.from(item.buffer);
+        writeAndFlushFileSync(fullPath, buffer);
+        savedCount++;
+      }
+
+      // Immediately refresh Windows Explorer for master folder and all touched batch subfolders
+      notifyWindowsShellFolder(masterDir);
+      for (const dir of modifiedFolders) {
+        notifyWindowsShellFolder(dir);
+      }
+
+      return {
+        success: true,
+        savedCount,
+        masterDir,
+        foldersCreated: Array.from(modifiedFolders),
+      };
+    } catch (err) {
+      console.error('[Electron Main] fs:saveBatchFiles error:', err);
+      return { success: false, error: err.message || 'Failed to save batch files.' };
+    }
+  });
+
+  // IPC: High-Fidelity Native EPS to JPG Rasterization via Ghostscript
+  ipcMain.handle('eps:rasterizeNative', async (event, payload) => {
+    try {
+      const { fileBuffer, fileName } = payload;
+      if (!fileBuffer) {
+        return { success: false, error: 'No EPS buffer provided' };
+      }
+
+      const gsBinary = findGhostscriptExecutable();
+      if (!gsBinary) {
+        return {
+          success: false,
+          error: 'Ghostscript binary not found. Please install Ghostscript or place gswin64c.exe in Program Files.',
+        };
+      }
+
+      const tempDir = os.tmpdir();
+      const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const tempEps = path.join(tempDir, `eps_input_${uniqueId}.eps`);
+      const tempJpg = path.join(tempDir, `eps_out_${uniqueId}.jpg`);
+
+      writeAndFlushFileSync(tempEps, Buffer.from(fileBuffer));
+
+      // Ghostscript execution matching Adobe Illustrator "Export As" (300 DPI, DeviceRGB, Art-Optimized):
+      // -dSAFER -dBATCH -dNOPAUSE: Unattended execution sandbox
+      // -dEPSCrop: Crop strictly to Artboard / %%BoundingBox
+      // -r300: 300 DPI rasterization (multiplies vector points for commercial microstock resolution)
+      // -sDEVICE=jpeg: JPEG output
+      // -dJPEGQ=100: Maximum JPEG quality (100% / zero compression artifacts)
+      // -dTextAlphaBits=4: 4-bit font supersampling anti-aliasing
+      // -dGraphicsAlphaBits=4: 4-bit vector graphics supersampling anti-aliasing (smooth curves, no jagged edges)
+      // -sColorConversionStrategy=RGB: Enforces RGB color conversion
+      // -dProcessColorModel=/DeviceRGB: Enforces sRGB device color model (mandatory for microstock)
+      // -dBackgroundColor=16#FFFFFF: Pure white background (#FFFFFF)
+      const gsArgs = [
+        '-dSAFER',
+        '-dBATCH',
+        '-dNOPAUSE',
+        '-dEPSCrop',
+        '-r300',
+        '-sDEVICE=jpeg',
+        '-dJPEGQ=100',
+        '-dTextAlphaBits=4',
+        '-dGraphicsAlphaBits=4',
+        '-sColorConversionStrategy=RGB',
+        '-dProcessColorModel=/DeviceRGB',
+        '-dBackgroundColor=16#FFFFFF',
+        '-sOutputFile=' + tempJpg,
+        tempEps,
+      ];
+
+      const proc = spawnSync(gsBinary, gsArgs, {
+        windowsHide: true,
+        encoding: 'utf8',
+        maxBuffer: 50 * 1024 * 1024,
+      });
+
+      if (proc.status !== 0 || !fs.existsSync(tempJpg)) {
+        const errMsg = proc.stderr || proc.stdout || 'Ghostscript exited with status ' + proc.status;
+        try { if (fs.existsSync(tempEps)) fs.unlinkSync(tempEps); } catch {}
+        try { if (fs.existsSync(tempJpg)) fs.unlinkSync(tempJpg); } catch {}
+        return { success: false, error: errMsg };
+      }
+
+      const jpgBuffer = fs.readFileSync(tempJpg);
+
+      // Read dimensions from SOF marker
+      let width = 0;
+      let height = 0;
+      for (let i = 0; i < jpgBuffer.length - 8; i++) {
+        if (jpgBuffer[i] === 0xff && (jpgBuffer[i + 1] === 0xc0 || jpgBuffer[i + 1] === 0xc2)) {
+          height = jpgBuffer.readUInt16BE(i + 5);
+          width = jpgBuffer.readUInt16BE(i + 7);
+          break;
+        }
+      }
+
+      // Cleanup temp files
+      try { if (fs.existsSync(tempEps)) fs.unlinkSync(tempEps); } catch {}
+      try { if (fs.existsSync(tempJpg)) fs.unlinkSync(tempJpg); } catch {}
+
+      return {
+        success: true,
+        buffer: jpgBuffer.buffer.slice(jpgBuffer.byteOffset, jpgBuffer.byteOffset + jpgBuffer.byteLength),
+        width,
+        height,
+      };
+    } catch (err) {
+      console.error('[Electron Main] eps:rasterizeNative error:', err);
+      return { success: false, error: err.message || 'EPS rasterization failed.' };
     }
   });
 }

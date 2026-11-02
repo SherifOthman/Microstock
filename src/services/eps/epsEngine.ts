@@ -748,10 +748,47 @@ function loadImageElement(src: string): Promise<HTMLImageElement> {
  */
 export async function rasterizeEpsFile(
   file: File | Blob,
-  targetLongestSide = 2500,
-  jpegQuality = 0.95
+  targetLongestSide = 4000,
+  jpegQuality = 0.98
 ): Promise<EpsRenderResult> {
+  if (file.size === 0) {
+    throw new Error(`EPS file "${(file as File).name || 'unknown'}" is corrupted or empty (0 bytes)`);
+  }
   const buffer = await file.arrayBuffer();
+  const rawFileName = (file as File).name || 'vector.eps';
+
+  // ==========================================
+  // TIER 0: Native Ghostscript Rasterization (Exact Native Artboard Dimensions & Vector Fidelity)
+  // Bypasses browser Canvas limitations; renders gradients, meshes, clipping paths identically to Adobe Illustrator.
+  // ==========================================
+  if (typeof window !== 'undefined' && window.electronAPI?.rasterizeEpsNative) {
+    try {
+      const nativeRes = await window.electronAPI.rasterizeEpsNative(buffer, rawFileName);
+      if (nativeRes.success && nativeRes.buffer) {
+        const nativeBlob = new Blob([nativeRes.buffer], { type: 'image/jpeg' });
+        const nativeDataUrl = URL.createObjectURL(nativeBlob);
+
+        // Create canvas wrapper for compatibility
+        const canvas = document.createElement('canvas');
+        canvas.width = nativeRes.width || 0;
+        canvas.height = nativeRes.height || 0;
+
+        return {
+          width: nativeRes.width || 0,
+          height: nativeRes.height || 0,
+          canvas,
+          dataUrl: nativeDataUrl,
+          blob: nativeBlob,
+          sourceTier: 'vector',
+          pathOpCount: 1000,
+        };
+      } else {
+        console.warn('[EpsEngine] Native Ghostscript rasterize warning:', nativeRes.error);
+      }
+    } catch (nativeErr) {
+      console.warn('[EpsEngine] Native Ghostscript error, falling back to vector/preview engine:', nativeErr);
+    }
+  }
 
   // Detect DOS EPS Binary Header (0xC5D0D3C6) to locate exact PostScript stream offset
   let psStartOffset = 0;
@@ -805,9 +842,36 @@ export async function rasterizeEpsFile(
   ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
   // ==========================================
-  // TIER 1: Check High-Resolution Embedded Previews FIRST
+  // TIER 1: PostScript Level 2/3 Vector Engine (High-Resolution Scalable Vector Render)
+  // We prioritize pure vector parsing so the output is rendered sharply at the requested resolution (e.g. 4000px)
+  // rather than upscaling low-resolution embedded raster thumbnails.
   // ==========================================
-  // 1A. DOS EPS Binary Header (TIFF or JPEG preview)
+  const fullText = psStartOffset > 0 
+    ? decoder.decode(buffer.slice(psStartOffset, psStartOffset + psLength))
+    : decoder.decode(buffer);
+
+  const scale = canvasWidth / bb.width;
+  const pathOpCount = renderPostScriptVectorPaths(fullText, ctx, bb, scale, canvasWidth, canvasHeight);
+
+  if (pathOpCount >= 10) {
+    const dataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
+    const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/jpeg', jpegQuality));
+    return {
+      width: canvasWidth,
+      height: canvasHeight,
+      canvas,
+      dataUrl,
+      blob,
+      sourceTier: 'vector',
+      boundingBox: bb,
+      pathOpCount,
+    };
+  }
+
+  // ==========================================
+  // TIER 2: Fallback to Embedded Previews (if vector path extraction yielded < 10 ops)
+  // ==========================================
+  // 2A. DOS EPS Binary Header (TIFF or JPEG preview)
   const dosPreview = extractBinaryDosEpsPreview(buffer);
   if (dosPreview) {
     if (dosPreview.canvas) {
@@ -848,11 +912,7 @@ export async function rasterizeEpsFile(
     }
   }
 
-  // 1B. Embedded XMP Base64 Thumbnail
-  const fullText = psStartOffset > 0 
-    ? decoder.decode(buffer.slice(psStartOffset, psStartOffset + psLength))
-    : decoder.decode(buffer);
-
+  // 2B. Embedded XMP Base64 Thumbnail
   const xmpB64 = extractXmpThumbnail(fullText) || extractXmpThumbnail(decoder.decode(buffer.slice(0, Math.min(buffer.byteLength, 2 * 1024 * 1024))));
   if (xmpB64) {
     try {
@@ -875,7 +935,7 @@ export async function rasterizeEpsFile(
     }
   }
 
-  // 1C. Embedded JPEG Stream anywhere in buffer
+  // 2C. Embedded JPEG Stream anywhere in buffer
   const jpegStream = extractEmbeddedJpegStream(buffer);
   if (jpegStream) {
     const objUrl = URL.createObjectURL(jpegStream);
@@ -898,27 +958,6 @@ export async function rasterizeEpsFile(
     } catch {
       URL.revokeObjectURL(objUrl);
     }
-  }
-
-  // ==========================================
-  // TIER 2: PostScript Level 2/3 Vector Engine
-  // ==========================================
-  const scale = canvasWidth / bb.width;
-  const pathOpCount = renderPostScriptVectorPaths(fullText, ctx, bb, scale, canvasWidth, canvasHeight);
-
-  if (pathOpCount >= 10) {
-    const dataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
-    const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/jpeg', jpegQuality));
-    return {
-      width: canvasWidth,
-      height: canvasHeight,
-      canvas,
-      dataUrl,
-      blob,
-      sourceTier: 'vector',
-      boundingBox: bb,
-      pathOpCount,
-    };
   }
 
   // ==========================================

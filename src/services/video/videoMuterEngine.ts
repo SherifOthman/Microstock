@@ -73,7 +73,19 @@ export async function inspectVideoAudioTrack(file: File): Promise<{
   audioTrackCount: number;
   videoTrackCount: number;
   durationSeconds?: number;
+  isCorrupt?: boolean;
+  error?: string;
 }> {
+  if (!file || file.size === 0) {
+    return {
+      hasAudio: false,
+      audioTrackCount: 0,
+      videoTrackCount: 0,
+      durationSeconds: 0,
+      isCorrupt: true,
+      error: `Video file "${file?.name || 'unknown'}" is empty (0 bytes)`,
+    };
+  }
   // 1. Native Desktop ffprobe Bridge (Electron / Tauri / Node)
   if (typeof window !== 'undefined') {
     const desktopApi = (window as any).electronAPI || (window as any).__TAURI__;
@@ -284,6 +296,9 @@ export async function inspectVideoAudioTrack(file: File): Promise<{
  * Losslessly removes audio tracks from an MP4/MOV file in milliseconds without re-encoding
  */
 export async function stripAudioTrackLossless(file: File): Promise<Blob> {
+  if (!file || file.size === 0) {
+    throw new Error(`Cannot mute 0-byte video file "${file?.name || 'unknown'}"`);
+  }
   const buffer = await file.arrayBuffer();
   const data = new Uint8Array(buffer);
 

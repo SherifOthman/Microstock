@@ -28,6 +28,8 @@ import { KeyRingView } from './features/keyring/components/KeyRingView';
 import { AppLogo } from './components/icons/AppLogo';
 import { useLanguage } from './context/LanguageContext';
 
+import { CustomTitleBar } from './components/CustomTitleBar';
+
 export type AppTab = 'home' | 'studio' | 'tracker' | 'cleaner' | 'muter' | 'eps';
 
 const TAB_TO_PATH: Record<AppTab, string> = {
@@ -63,6 +65,27 @@ function getInitialTab(): AppTab {
 }
 
 export function App() {
+  const isElectron = typeof window !== 'undefined' && Boolean((window as unknown as { electronAPI?: unknown }).electronAPI);
+
+  if (!isElectron) {
+    return (
+      <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center p-8 text-center font-sans">
+        <div className="max-w-md p-6 bg-zinc-900 border border-red-500/30 rounded-2xl shadow-2xl space-y-4">
+          <div className="w-12 h-12 mx-auto rounded-full bg-red-500/10 flex items-center justify-center text-red-500 text-2xl font-bold">
+            !
+          </div>
+          <h1 className="text-xl font-bold text-red-400">Desktop Client Required</h1>
+          <p className="text-sm text-zinc-400 leading-relaxed">
+            Microstock Studio is a native desktop application. Direct browser access via localhost is disabled to protect file system integrity.
+          </p>
+          <p className="text-xs text-zinc-500 border-t border-zinc-800 pt-3">
+            Please run the app through the desktop launcher or <code className="text-zinc-300 bg-zinc-800 px-1.5 py-0.5 rounded">npm run electron:dev</code>.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   const { language, setLanguage, t } = useLanguage();
   const [, setKeys] = useState<ApiKeyRecord[]>([]);
   const [activeTab, setActiveTab] = useState<AppTab>(getInitialTab);
@@ -136,9 +159,14 @@ export function App() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col antialiased">
-      {/* Sleek Minimal Responsive Header (Level 1 Surface) */}
-      <header className="border-b border-slate-300 dark:border-zinc-800 bg-white/95 dark:bg-[#18181B]/95 backdrop-blur-md sticky top-0 z-40 w-full overflow-hidden text-zinc-900 dark:text-zinc-100">
+    <div className="h-screen w-screen bg-background text-foreground flex flex-col antialiased overflow-hidden select-none">
+      {/* Frameless Window Custom Titlebar - strictly fixed at the absolute top */}
+      <div className="shrink-0 z-50">
+        <CustomTitleBar />
+      </div>
+
+      {/* Sleek Minimal Responsive Header (Level 1 Surface) - fixed below titlebar */}
+      <header className="shrink-0 border-b border-slate-300 dark:border-zinc-800 bg-white/95 dark:bg-[#18181B]/95 backdrop-blur-md z-40 w-full overflow-hidden text-zinc-900 dark:text-zinc-100">
         <div className="max-w-[1700px] w-full mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-3">
           {/* Left: Brand Logo & Title (Clickable) + Return to Hub Grid Button */}
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -227,20 +255,22 @@ export function App() {
         </div>
       </header>
 
-      {/* Main Workspace (Dedicated Standalone Views) */}
-      <main className="flex-1 max-w-[1700px] w-full mx-auto px-3 sm:px-6 py-4 sm:py-5 min-w-0 overflow-x-hidden">
-        {activeTab === 'home' && <HomeHubView onNavigate={(tool) => handleTabChange(tool)} />}
-        {activeTab === 'studio' && <StudioView />}
-        {activeTab === 'tracker' && <TrackerView />}
-        {activeTab === 'cleaner' && <FileCleanerView />}
-        {activeTab === 'muter' && <VideoMuterView />}
+      {/* Main Workspace (Dedicated Standalone Views) - strict viewport containment */}
+      <main className="flex-1 max-w-[1700px] w-full mx-auto px-3 sm:px-6 py-3 min-w-0 overflow-hidden flex flex-col">
+        {activeTab === 'home' && <div className="flex-1 overflow-y-auto"><HomeHubView onNavigate={(tool) => handleTabChange(tool)} /></div>}
+        {activeTab === 'studio' && <div className="flex-1 min-h-0 h-full"><StudioView /></div>}
+        {activeTab === 'tracker' && <div className="flex-1 overflow-y-auto"><TrackerView /></div>}
+        {activeTab === 'cleaner' && <div className="flex-1 overflow-y-auto"><FileCleanerView /></div>}
+        {activeTab === 'muter' && <div className="flex-1 overflow-y-auto"><VideoMuterView /></div>}
         {activeTab === 'eps' && (
-          <EpsConverterView
-            onSendToStudio={(files) => {
-              batchQueueService.addFiles(files);
-              handleTabChange('studio');
-            }}
-          />
+          <div className="flex-1 overflow-y-auto">
+            <EpsConverterView
+              onSendToStudio={(files) => {
+                batchQueueService.addFiles(files);
+                handleTabChange('studio');
+              }}
+            />
+          </div>
         )}
       </main>
 

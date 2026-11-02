@@ -88,11 +88,19 @@ export async function saveFilesToLocalDirectory(
     })
   );
 
-  const result = await electronAPI.saveFiles(preparedFiles, options.folderName);
-  return {
-    success: result.success,
-    savedCount: result.savedCount || files.length,
-    canceled: result.canceled,
-    error: result.error,
-  };
+  try {
+    const result = await electronAPI.saveFiles(preparedFiles, options.folderName);
+    return {
+      success: Boolean(result?.success),
+      savedCount: typeof result?.savedCount === 'number' ? result.savedCount : (result?.success ? files.length : 0),
+      canceled: Boolean(result?.canceled),
+      error: result?.error,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      savedCount: 0,
+      error: err?.message || 'File system operation failed',
+    };
+  }
 }

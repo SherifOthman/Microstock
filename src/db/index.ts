@@ -12,6 +12,7 @@ import {
   SupportedPlatform,
 } from '../types';
 import { PROVIDERS_META, PROVIDER_ORDER } from '../constants/providers';
+import { encryptSecret } from '../services/desktop/secureStorage';
 
 export interface SettingItem {
   key: string;
@@ -138,15 +139,44 @@ export async function getApiKeysByProvider(providerId: ProviderType): Promise<Ap
 }
 
 export async function saveApiKey(record: ApiKeyRecord): Promise<void> {
-  await db.apiKeys.put(record);
+  const encKey = await encryptSecret(record.key);
+  await db.apiKeys.put({ ...record, key: encKey });
 }
 
 export async function bulkInsertApiKeys(records: ApiKeyRecord[]): Promise<void> {
-  await db.apiKeys.bulkPut(records);
+  const encRecords = await Promise.all(
+    records.map(async (r) => ({
+      ...r,
+      key: await encryptSecret(r.key),
+    }))
+  );
+  await db.apiKeys.bulkPut(encRecords);
 }
 
 export async function updateApiKey(id: string, changes: Partial<ApiKeyRecord>): Promise<void> {
+  if (changes.key) {
+    changes.key = await encryptSecret(changes.key);
+  }
   await db.apiKeys.update(id, changes);
+}
+
+/**
+ * Auto-migrates any plaintext API keys stored in IndexedDB to OS-level DPAPI encrypted format
+ */
+export async function migratePlaintextApiKeys(): Promise<void> {
+  try {
+    const keys = await db.apiKeys.toArray();
+    for (const k of keys) {
+      if (k.key && !k.key.startsWith('enc:')) {
+        const encKey = await encryptSecret(k.key);
+        if (encKey !== k.key) {
+          await db.apiKeys.update(k.id, { key: encKey });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[DB] Plaintext key migration failed:', err);
+  }
 }
 
 export async function removeApiKey(id: string): Promise<void> {

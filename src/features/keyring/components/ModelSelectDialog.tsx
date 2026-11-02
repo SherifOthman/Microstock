@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ApiKeyRecord, ModelInfo } from '../../../types';
 import { getProviderAdapter } from '../../../services/providers';
 import { PROVIDERS_META } from '../../../constants/providers';
+import { decryptSecret } from '../../../services/desktop/secureStorage';
 import { Dialog } from '../../../components/ui/dialog';
 import { Input } from '../../../components/ui/input';
 import { Button } from '../../../components/ui/button';
@@ -40,7 +41,8 @@ export const ModelSelectDialog: React.FC<Props> = ({ keyRecord, open, onClose, o
     setError(null);
     try {
       const adapter = getProviderAdapter(keyRecord.providerId);
-      const models = await adapter.fetchModels(keyRecord.key);
+      const rawSecret = await decryptSecret(keyRecord.key);
+      const models = await adapter.fetchModels(rawSecret);
       setAvailableModels(models);
     } catch (err: any) {
       setError(err.message || 'Failed to fetch models');

@@ -60,17 +60,19 @@ export interface MasterMetadataRecord {
   videoMeta?: {
     durationSeconds?: number;
     resolution?: string;
+    width?: number;
+    height?: number;
   };
   isAiGenerated: boolean;
   baseTitle: string;
   detailedDescription: string;
   rankedKeywords: string[]; // 40-50 tags
-  categories: {
-    adobeCategoryId: number; // 1-21
-    shutterstockCategories: [string, string?]; // Up to 2 of 26 official names
-    dreamstimeCategory1: number; // Visual subject 1
-    dreamstimeCategory2: number; // Visual subject 2
-    dreamstimeCategory3: number; // 114 for AI, or subject 3
+  categories?: {
+    adobeCategoryId?: number; // 1-21
+    shutterstockCategories?: (string | undefined)[]; // Up to 2 of 26 official names
+    dreamstimeCategory1?: number; // Visual subject 1
+    dreamstimeCategory2?: number; // Visual subject 2
+    dreamstimeCategory3?: number; // 114 for AI, or subject 3
   };
   aiGenerationInfo?: {
     prompt: string;
@@ -154,3 +156,5 @@ export interface AppSettings {
   platformLimits?: Record<SupportedPlatform, number>;
   providerModels?: Partial<Record<ProviderType, string>>;
 }
+
+export * from './renamer';

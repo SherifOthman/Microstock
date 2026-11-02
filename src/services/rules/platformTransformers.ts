@@ -1,5 +1,6 @@
 import type { MasterMetadataRecord } from '../../types';
 import { DREAMSTIME_CATEGORIES, mapToDreamstimeCategories } from '../../constants/categories';
+import { formatShutterstockCategories } from '../../constants/shutterstockCategories';
 
 export interface PlatformExportRow {
   [columnName: string]: string | number;
@@ -13,6 +14,7 @@ export interface PlatformExportResult {
   isBlocked?: boolean;
   blockedReason?: string;
   rowCount: number;
+  additionalResults?: PlatformExportResult[];
 }
 
 const FORBIDDEN_AI_WORDS = [
@@ -162,6 +164,18 @@ export function toTitleCase(str: string): string {
     .join(' ');
 }
 
+// Universal filename cleaner for CSV export:
+// - The Ellipsis Bug: Microstock servers automatically convert '…' (U+2026) to '_'
+// - Non-ASCII Diacritics: Normalizes and strips accents (e.g. Açaí -> Acai)
+export function sanitizeExportFilename(filename: string): string {
+  if (!filename) return '';
+  // 1. Replace Unicode ellipsis (…) with underscore
+  let clean = filename.replace(/\u2026/g, '_');
+  // 2. Normalize and strip non-ASCII diacritics
+  clean = clean.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return clean;
+}
+
 // 1. Adobe Stock Transformer
 export function transformForAdobeStock(records: MasterMetadataRecord[]): PlatformExportRow[] {
   return records.map((rec) => {
@@ -175,7 +189,7 @@ export function transformForAdobeStock(records: MasterMetadataRecord[]): Platfor
     const defaultCat = isVector ? 8 : (rec.categories?.adobeCategoryId || 8);
 
     return {
-      Filename: rec.filename ?? '',
+      Filename: sanitizeExportFilename(rec.filename ?? ''),
       Title: cleanTitle,
       Keywords: cleanKw.join(', '),
       Category: rec.categories?.adobeCategoryId || defaultCat,
@@ -258,7 +272,7 @@ export function transformForFreepik(
       : '';
 
     return {
-      'File name': rec.filename ?? '',
+      'File name': sanitizeExportFilename(rec.filename ?? ''),
       Title: cleanTitle,
       Keywords: keywords,
       Prompt: prompt,
@@ -277,8 +291,10 @@ export function transformForShutterstock(
   const illustrationVal = options?.illustration ? 'yes' : 'no';
 
   const rows = records.map((rec) => {
-    // CRITICAL FIX: Shutterstock Categories - NO SPACE after comma (e.g., "Nature,Parks/Outdoor")
-    const categoriesStr = (rec.categories?.shutterstockCategories ?? []).filter(Boolean).join(',');
+    const isVideoMedia = Boolean(rec.mediaType === 'video' || (rec.filename && /\.(mp4|mov|webm|avi|mkv)$/i.test(rec.filename)));
+    
+    // Normalize categories strictly to Shutterstock official lists (19 Video vs 26 Image)
+    const categoriesStr = formatShutterstockCategories(rec.categories?.shutterstockCategories || [], isVideoMedia);
     
     // Semantic truncate description at 200 chars ending with a period
     const cleanDesc = smartTruncate(rec.detailedDescription ?? '', 200, true);
@@ -288,7 +304,7 @@ export function transformForShutterstock(
     const effectiveIllustration = isVectorMedia ? 'yes' : illustrationVal;
 
     return {
-      Filename: rec.filename ?? '',
+      Filename: sanitizeExportFilename(rec.filename ?? ''),
       Description: cleanDesc,
       Keywords: (rec.rankedKeywords ?? []).slice(0, 50).join(', '),
       Categories: categoriesStr || 'Miscellaneous',
@@ -303,19 +319,29 @@ export function transformForShutterstock(
 
 /**
  * Sanitizes local filenames to match Vecteezy's web uploader ingestion rules.
- * Vecteezy's Add Data web uploader strips all spaces, hyphens, and underscores
- * from the base filename, keeping the extension.
+ * Vecteezy strips spaces and underscores to merge words, but KEEPS hyphens (-) intact.
+ * Also normalizes/strips diacritics and removes ellipsis/special characters.
  */
 export function sanitizeForVecteezyWeb(filename: string): string {
   if (!filename) return '';
   const lastDot = filename.lastIndexOf('.');
-  if (lastDot === -1) {
-    return filename.replace(/[\s\-_]+/g, '');
-  }
-  const base = filename.slice(0, lastDot);
-  const ext = filename.slice(lastDot);
-  const cleanBase = base.replace(/[\s\-_]+/g, '');
-  return `${cleanBase}${ext.toLowerCase()}`;
+  const ext = lastDot !== -1 ? filename.slice(lastDot).toLowerCase() : '';
+  let base = lastDot !== -1 ? filename.slice(0, lastDot) : filename;
+
+  // 1. Replace Unicode ellipsis (…) with underscore
+  base = base.replace(/\u2026/g, '_');
+
+  // 2. Normalize unicode diacritics / accents (e.g. Açaí -> Acai)
+  base = base.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  // 3. Strip spaces and underscores to merge words, but keep hyphens (-) intact
+  // First strip spaces and underscores
+  base = base.replace(/[\s_]+/g, '');
+
+  // 4. Remove any remaining illegal characters except alphanumeric and hyphen (-)
+  base = base.replace(/[^a-zA-Z0-9\-]/g, '');
+
+  return `${base}${ext}`;
 }
 
 // 4. Vecteezy Transformer
@@ -359,7 +385,7 @@ export function transformForVecteezy(
   });
 }
 
-// 5. Dreamstime Transformer (15-Column FTP Schema)
+// 5. Dreamstime Transformer (15-Column FTP Schema for Images & Vectors)
 export function transformForDreamstime(
   records: MasterMetadataRecord[],
   options?: DreamstimeTransformOptions
@@ -406,7 +432,8 @@ export function transformForDreamstime(
       const mapped = mapToDreamstimeCategories(
         rec.categories?.adobeCategoryId,
         rec.categories?.shutterstockCategories,
-        recordIsAi
+        recordIsAi,
+        cleanTitle
       );
       cat1 = mapped.cat1;
       if (!cat2 || !DREAMSTIME_CATEGORIES[cat2]) {
@@ -415,7 +442,7 @@ export function transformForDreamstime(
     }
 
     return {
-      Filename: rec.filename ?? '',
+      Filename: sanitizeExportFilename(rec.filename ?? ''),
       'Image Name': cleanTitle,
       Description: cleanDesc,
       'Category 1': cat1,
@@ -434,13 +461,86 @@ export function transformForDreamstime(
   });
 }
 
+// 5b. Dreamstime Video Transformer (13-Column FTP Schema for Videos)
+// Strictly requires 'Video Name' (col 2), NO 'Free', NO 'P-EL', W-EL and SR-EL present
+export function transformForDreamstimeVideos(
+  records: MasterMetadataRecord[],
+  options?: DreamstimeTransformOptions
+): PlatformExportRow[] {
+  const isEditorial = options?.editorial ? 1 : 0;
+  const wel = options?.wel !== undefined ? (options.wel ? 1 : 0) : 1;
+  const srel = options?.srel !== undefined ? (options.srel ? 1 : 0) : 0;
+
+  return records.map((rec) => {
+    let description = (rec.detailedDescription ?? '').trim();
+
+    // Rule 2: If AI generated, append mandatory AI disclosure
+    const recordIsAi = options?.isAiGenerated !== undefined ? options.isAiGenerated : rec.isAiGenerated;
+    if (recordIsAi && !description.toLowerCase().includes('ai-generated')) {
+      description = `${description.replace(/\.$/, '')}, AI-generated video.`;
+    }
+
+    const cleanTitle = smartTruncate(rec.baseTitle ?? '', 250, false);
+
+    // Rule 1: Description MUST be strictly longer than Video Name
+    if (description.length <= cleanTitle.length) {
+      description = `${description.replace(/\.$/, '')}. High quality detailed commercial stock video footage visual asset.`;
+    }
+
+    // Ensure Description ends with a period
+    if (!description.endsWith('.')) {
+      description += '.';
+    }
+
+    let cleanDesc = smartTruncate(description, 756, true);
+    if (cleanDesc.length <= cleanTitle.length) {
+      cleanDesc = `${cleanDesc} High quality detailed commercial stock asset.`;
+    }
+
+    // Official Dreamstime categories with fallback mapper
+    let cat1 = rec.categories?.dreamstimeCategory1 || 0;
+    let cat2 = rec.categories?.dreamstimeCategory2 || 0;
+    const cat3 = recordIsAi ? 212 : (rec.categories?.dreamstimeCategory3 || 0);
+
+    if (!cat1 || !DREAMSTIME_CATEGORIES[cat1]) {
+      const mapped = mapToDreamstimeCategories(
+        rec.categories?.adobeCategoryId,
+        rec.categories?.shutterstockCategories,
+        recordIsAi,
+        cleanTitle
+      );
+      cat1 = mapped.cat1;
+      if (!cat2 || !DREAMSTIME_CATEGORIES[cat2]) {
+        cat2 = mapped.cat2;
+      }
+    }
+
+    return {
+      Filename: sanitizeExportFilename(rec.filename ?? ''),
+      'Video Name': cleanTitle,
+      Description: cleanDesc,
+      'Category 1': cat1,
+      'Category 2': cat2,
+      'Category 3': cat3,
+      keywords: (rec.rankedKeywords ?? []).join(', '),
+      'W-EL': wel,
+      'SR-EL': srel,
+      'SR-Price': '',
+      Editorial: isEditorial,
+      'MR doc Ids': '',
+      'Pr Docs': '',
+    };
+  });
+}
+
 // 6. 123RF Transformer (Official 5-Column Schema: "oldfilename","123rf_filename","description","keywords","country")
 export function transformFor123rf(
   records: MasterMetadataRecord[],
   options?: OneTwoThreeRfTransformOptions
 ): PlatformExportRow[] {
-  // Default country code: 'EG' (Egypt) as requested; can be empty or custom
-  const country = options?.countryCode !== undefined ? options.countryCode.trim().toUpperCase() : 'EG';
+  // Default country code: 'EG' (Egypt) as requested; can be empty ('', 'none') or custom ISO code
+  const rawCountry = options?.countryCode !== undefined ? options.countryCode.trim() : 'EG';
+  const country = rawCountry.toLowerCase() === 'none' ? '' : rawCountry.toUpperCase();
 
   return records.map((rec) => {
     // 123RF official column schema: "oldfilename","123rf_filename","description","keywords","country"
@@ -448,7 +548,7 @@ export function transformFor123rf(
     const keywords = (rec.rankedKeywords ?? []).slice(0, 50).join(', ');
 
     return {
-      oldfilename: rec.filename ?? '',
+      oldfilename: sanitizeExportFilename(rec.filename ?? ''),
       '123rf_filename': '',
       description: cleanDesc,
       keywords: keywords,

@@ -40,22 +40,31 @@ UNIVERSAL SAFE-ZONE GUIDELINES:
 
 5. "category_shutterstock":
    - Array of 1 or 2 strings matching Shutterstock's 26 official categories:
-     ["Abstract", "Animals/Wildlife", "The Arts", "Backgrounds/Textures", "Beauty/Fashion",
-      "Buildings/Landmarks", "Business/Finance", "Celebrities", "Education", "Food and Drink",
+     ["Abstract", "Animals/Wildlife", "Arts", "Backgrounds/Textures", "Beauty/Fashion",
+      "Buildings/Landmarks", "Business/Finance", "Celebrities", "Education", "Food and drink",
       "Healthcare/Medical", "Holidays", "Industrial", "Interiors", "Miscellaneous",
       "Nature", "Objects", "Parks/Outdoor", "People", "Religion",
       "Science", "Signs/Symbols", "Sports/Recreation", "Technology", "Transportation", "Vintage"].
 
 6. "dreamstime_category_1" and "dreamstime_category_2":
-   - Numerical category IDs matching Dreamstime's verified official categories:
-     * Food & Produce: 137 (Nature -> Fruits & Vegetables), 127 (Industries -> Food & Beverages), 28 (Nature -> Food ingredients)
-     * Textures & Backgrounds: 112 (Abstract -> Backgrounds), 141 (Abstract -> Textures), 164 (Abstract -> Colors)
-     * Nature & Landscapes: 146 (Nature -> Landscapes), 25 (Nature -> Flowers & Gardens), 12 (Nature -> Plants & trees), 171 (Nature -> Water)
-     * Architecture & Home: 71 (Arts & Architecture -> Generic architecture), 73 (Indoor), 153 (Home), 138 (Objects -> Home related)
-     * Business & Tech: 75 (Business -> People), 80 (Finance), 105 (Technology -> Computers), 129 (Electronics)
-     * Fitness & Sports: 50 (Abstract -> Sports), 156 (Objects -> Sports), 123 (People -> Active)
-     * People & Portraits: 162 (People -> Portraits), 116 (Women), 117 (Men), 118 (Families)
-     * Animals: 30 (Animals -> Pets), 31 (Birds), 32 (Mammals), 168 (Wildlife)
+   - STRICT REQUIREMENT: Choose the two most accurate category strings STRICTLY from the official Dreamstime list below.
+   - Output the exact category string (e.g. "Industries -> Transportation", "Objects -> Sports"). DO NOT invent or guess any category name.
+   - OFFICIAL DREAMSTIME CATEGORIES LIST:
+     * Abstract: "Abstract -> Aerial", "Abstract -> Backgrounds", "Abstract -> Blurs", "Abstract -> Colors", "Abstract -> Competition", "Abstract -> Craftsmanship", "Abstract -> Danger", "Abstract -> Exploration", "Abstract -> Fun", "Abstract -> Help", "Abstract -> Love", "Abstract -> Luxury", "Abstract -> Mobile", "Abstract -> Peace", "Abstract -> Planetarium", "Abstract -> Power", "Abstract -> Purity", "Abstract -> Religion", "Abstract -> Seasonal & Holiday", "Abstract -> Security", "Abstract -> Sports", "Abstract -> Stress", "Abstract -> Success", "Abstract -> Teamwork", "Abstract -> Textures", "Abstract -> Unique"
+     * Animals: "Animals -> Birds", "Animals -> Farm", "Animals -> Insects", "Animals -> Mammals", "Animals -> Marine life", "Animals -> Pets", "Animals -> Reptiles & Amphibians", "Animals -> Rodents", "Animals -> Wildlife"
+     * Arts & Architecture: "Arts & Architecture -> Details", "Arts & Architecture -> Generic architecture", "Arts & Architecture -> Historic buildings", "Arts & Architecture -> Home", "Arts & Architecture -> Indoor", "Arts & Architecture -> Landmarks", "Arts & Architecture -> Modern buildings", "Arts & Architecture -> Night scenes", "Arts & Architecture -> Outdoor", "Arts & Architecture -> Ruins & Ancient", "Arts & Architecture -> Work places"
+     * Business: "Business -> Communications", "Business -> Computers", "Business -> Finance", "Business -> Industries", "Business -> Metaphors", "Business -> Objects", "Business -> People", "Business -> Still-life", "Business -> Teams", "Business -> Transportation", "Business -> Travel"
+     * Editorial: "Editorial -> Celebrities", "Editorial -> Commercial", "Editorial -> Events", "Editorial -> Landmarks", "Editorial -> People", "Editorial -> Politics", "Editorial -> Sports", "Editorial -> Weather & Environment"
+     * Holidays: "Holidays -> Chinese New Year", "Holidays -> Christmas", "Holidays -> Cinco de Mayo", "Holidays -> Diwali", "Holidays -> Easter", "Holidays -> Fathers Day", "Holidays -> Halloween", "Holidays -> Hanukkah", "Holidays -> Mardi Gras", "Holidays -> Mothers Day", "Holidays -> New Years", "Holidays -> Other", "Holidays -> Ramadan", "Holidays -> Thanksgiving", "Holidays -> Valentines Day"
+     * IT & C: "IT & C -> Artificial Intelligence", "IT & C -> Connectivity", "IT & C -> Equipment", "IT & C -> Internet", "IT & C -> Networking"
+     * Illustrations & Clipart: "Illustrations & Clipart -> 3D & Computer generated", "Illustrations & Clipart -> AI generated", "Illustrations & Clipart -> Hand drawn & Artistic", "Illustrations & Clipart -> Illustrations", "Illustrations & Clipart -> Vector"
+     * Industries: "Industries -> Agriculture", "Industries -> Architecture", "Industries -> Banking", "Industries -> Cargo & Shipping", "Industries -> Communications", "Industries -> Computers", "Industries -> Construction", "Industries -> Education", "Industries -> Entertainment", "Industries -> Environment", "Industries -> Food & Beverages", "Industries -> Healthcare & Medical", "Industries -> Insurance", "Industries -> Legal", "Industries -> Manufacturing", "Industries -> Military", "Industries -> Oil and gas", "Industries -> Power and energy", "Industries -> Sports", "Industries -> Transportation", "Industries -> Travel"
+     * Nature: "Nature -> Clouds and skies", "Nature -> Deserts", "Nature -> Details", "Nature -> Fields & Meadows", "Nature -> Flowers & Gardens", "Nature -> Food ingredients", "Nature -> Forests", "Nature -> Fruits & Vegetables", "Nature -> Generic vegetation", "Nature -> Geologic and mineral", "Nature -> Lakes and rivers", "Nature -> Landscapes", "Nature -> Mountains", "Nature -> Plants and trees", "Nature -> Sea & Ocean", "Nature -> Seasons specific", "Nature -> Sunsets & Sunrises", "Nature -> Tropical", "Nature -> Water", "Nature -> Waterfalls"
+     * Objects: "Objects -> Clothing & Accessories", "Objects -> Electronics", "Objects -> Home related", "Objects -> Isolated", "Objects -> Music and sound", "Objects -> Other", "Objects -> Retro", "Objects -> Sports", "Objects -> Still life", "Objects -> Tools", "Objects -> Toys"
+     * People: "People -> Active", "People -> Body parts", "People -> Children", "People -> Cosmetic & Makeup", "People -> Couples", "People -> Diversity", "People -> Expressions", "People -> Families", "People -> Men", "People -> Nudes", "People -> Portraits", "People -> Seniors", "People -> Teens", "People -> Women", "People -> Workers"
+     * Technology: "Technology -> Computers", "Technology -> Connections", "Technology -> Electronics", "Technology -> Other", "Technology -> Retro", "Technology -> Science", "Technology -> Telecommunications"
+     * Travel: "Travel -> Africa", "Travel -> America", "Travel -> Antarctica", "Travel -> Arts & Architecture", "Travel -> Asia", "Travel -> Australasian", "Travel -> Cruise", "Travel -> Cuisine", "Travel -> Currencies", "Travel -> Destination scenics", "Travel -> Europe", "Travel -> Flags", "Travel -> Resorts", "Travel -> Tropical"
+     * Web Design Graphics: "Web Design Graphics -> Banners", "Web Design Graphics -> Buttons", "Web Design Graphics -> Web Backgrounds & Textures", "Web Design Graphics -> Web Icons"
 
 7. "suggested_prompt":
    - A descriptive AI generation prompt string (used for Freepik generative metadata).
@@ -69,8 +78,8 @@ Example:
   "ranked_keywords": ["solar panel", "photovoltaic", "solar energy", "renewable energy", "green power", "electricity", "clean energy", "sustainable", "industrial", "technology", "rooftop", "aerial view", "sunrise", "commercial building", "power generation", "modern", "blue", "sunlight", "alternative energy"],
   "category_adobe": 19,
   "category_shutterstock": ["Technology", "Industrial"],
-  "dreamstime_category_1": 105,
-  "dreamstime_category_2": 97,
+  "dreamstime_category_1": "Technology -> Computers",
+  "dreamstime_category_2": "Industries -> Power and energy",
   "suggested_prompt": "aerial photograph of modern photovoltaic solar panel installation on rooftop, sunrise golden hour, hyper-detailed commercial photo"
 }`;
 
@@ -125,17 +134,50 @@ const GENERIC_AI_BOILERPLATE = new Set([
   'featuring',
   'depicting',
   'variety',
+  'midjourney',
+  'dalle',
+  'flux',
+  'ideogram',
+  'leonardo',
+  'stablediffusion',
+  'sdxl',
+  'firefly',
+  'mystic',
 ]);
 
 export function cleanFilenameHint(filename: string): string {
   if (!filename) return '';
-  const cleaned = filename
+
+  // ── HYBRID NAMING: Split on double underscore ────────────────────────────
+  // Filenames in hybrid format (e.g. "B01_001__midjourney_coffee_cup.jpg")
+  // must ONLY use the right-hand side of __ so the AI never sees batch
+  // prefixes like "B01" or "001" which would corrupt the prompt context.
+  let rawBase = filename;
+  if (filename.includes('__')) {
+    const doubleUnderscoreIdx = filename.indexOf('__');
+    rawBase = filename.slice(doubleUnderscoreIdx + 2);
+  }
+
+  let cleaned = rawBase
     // strip common image/video extensions
-    .replace(/\.(jpe?g|png|webp|eps|ai|svg|mov|mp4|tiff?)$/i, '')
+    .replace(/\.(jpe?g|png|webp|eps|ai|svg|mov|mp4|tiff?|mkv|webm|avi)$/i, '')
+    // strip Midjourney / Stable Diffusion UUIDs
+    .replace(/[-_]?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '')
+    // strip upscaler/AI tool suffixes (e.g. _upscayl, _remini, _topaz)
+    .replace(/[-_\s]*(?:upscayl(?:ed)?|upscale|remini|topaz|gigapixel|magnific)[^._\s]*/gi, '');
+
+  // Strip generic MD5-style hex hashes, trailing unique IDs, and version numbers
+  // (e.g., _33dc072c, _a9608e40, _9710797b_1, -33dc072c-v2)
+  while (/[-_][0-9a-f]{6,16}(?:[-_]\d+|[-_]v\d+)?$/i.test(cleaned) || /[-_\s]+\d{1,4}\s*$/i.test(cleaned)) {
+    cleaned = cleaned
+      .replace(/[-_][0-9a-f]{6,16}(?:[-_]\d+|[-_]v\d+)?$/i, '')
+      .replace(/[-_\s]+\d{1,4}\s*$/i, '')
+      .trim();
+  }
+
+  cleaned = cleaned
     // strip leading zero-padded or sequential counters e.g. "001_", "02-", "001 "
     .replace(/^\s*\d{1,4}[-_\s]+/i, '')
-    // strip trailing duplicate counters e.g. "_01", "-02", "_1"
-    .replace(/[-_\s]+\d{1,4}\s*$/i, '')
     // replace underscores and hyphens with spaces FIRST so word boundaries match clean words
     .replace(/[-_]+/g, ' ')
     // strip trailing or embedded timestamp strings like 20261015121812
@@ -149,10 +191,17 @@ export function cleanFilenameHint(filename: string): string {
     .trim();
 
   // Filter out generic boilerplate command words while preserving word casing
+  // Also filter out any leftover hex hash tokens (6-16 chars containing digits & hex letters)
   const tokens = cleaned
     .split(/\s+/)
     .map((w) => w.trim())
-    .filter((w) => w.length >= 2 && !/^\d+$/.test(w) && !GENERIC_AI_BOILERPLATE.has(w.toLowerCase()));
+    .filter((w) => {
+      if (w.length < 2) return false;
+      if (/^\d+$/.test(w)) return false;
+      if (GENERIC_AI_BOILERPLATE.has(w.toLowerCase())) return false;
+      if (/^[0-9a-f]{6,16}$/i.test(w) && /\d/.test(w) && /[a-f]/i.test(w)) return false;
+      return true;
+    });
 
   // If at least 1 meaningful subject word remains (e.g. "Helmet", "Lion", "Car"), return it!
   if (tokens.length < 1) {
@@ -168,7 +217,10 @@ export function buildVisionPrompt(
   mediaType?: 'image' | 'video' | 'vector',
   keywordPhrasing: 'single' | 'double' | 'mixed' = 'mixed',
   titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal',
-  hasRealPreview?: boolean
+  hasRealPreview?: boolean,
+  videoResolution?: string,
+  videoWidth?: number,
+  videoHeight?: number
 ): string {
   let prompt = 'Analyze this stock asset and output the requested microstock metadata JSON object according to all guidelines.';
 
@@ -197,7 +249,36 @@ export function buildVisionPrompt(
   }
 
   if (mediaType === 'video') {
-    prompt += '\nCRITICAL MEDIA TYPE: VIDEO FOOTAGE. The input image is a 4-frame chronological storyboard (F1, F2, F3, F4) of a stock video clip. Analyze both visual subject and temporal motion progression. Include video/motion tags (footage, video clip, motion, 4k, slow motion, loop, aerial, panning, camera movement). NEVER include photography/static terms (still life, photo, photograph, illustration, picture).';
+    const is4K = Boolean(
+      (videoWidth && videoWidth >= 3840) ||
+      (videoHeight && videoHeight >= 2160) ||
+      (videoResolution && /4k|uhd|3840|2160/i.test(videoResolution))
+    );
+    const is1080p = !is4K && Boolean(
+      (videoWidth && videoWidth >= 1920) ||
+      (videoHeight && videoHeight >= 1080) ||
+      (videoResolution && /1080|fhd/i.test(videoResolution))
+    );
+    const is720p = !is4K && !is1080p && Boolean(
+      (videoWidth && videoWidth >= 1280) ||
+      (videoHeight && videoHeight >= 720) ||
+      (videoResolution && /720|hd/i.test(videoResolution))
+    );
+
+    const dimStr = videoWidth && videoHeight ? `${videoWidth}x${videoHeight}` : (videoResolution || 'standard video');
+
+    prompt += '\nCRITICAL MEDIA TYPE: VIDEO FOOTAGE. The input image is a 4-frame chronological storyboard (F1, F2, F3, F4) of a stock video clip. Analyze both visual subject and temporal motion progression. Include video/motion tags (footage, video clip, motion, slow motion, loop, aerial, panning, camera movement). NEVER include photography/static terms (still life, photo, photograph, illustration, picture).';
+    prompt += '\nSHUTTERSTOCK VIDEO CATEGORIES: Choose strictly from the 19 valid Shutterstock Video categories (Animals/Wildlife, Arts, Backgrounds/Textures, Buildings/Landmarks, Business/Finance, Education, Food and drink, Healthcare/Medical, Holidays, Industrial, Nature, Objects, People, Religion, Science, Signs/Symbols, Sports/Recreation, Technology, Transportation). DO NOT output Abstract, Beauty/Fashion, Celebrities, Interiors, Miscellaneous, Parks/Outdoor, or Vintage for video.';
+
+    if (is4K) {
+      prompt += `\n🎯 CONFIRMED RESOLUTION: 4K ULTRA HD (${dimStr}). This footage is genuine 4K UHD. Confidently include accurate resolution keywords: "4k", "4k footage", "4k video", "uhd", "ultra hd".`;
+    } else {
+      const resLabel = is1080p ? '1080p Full HD (FHD)' : is720p ? '720p HD' : dimStr;
+      prompt += `\n🚨 CRITICAL RESOLUTION RESTRICTION: This video is strictly ${resLabel} (${dimStr}), NOT 4K or UHD.
+ABSOLUTE RULE: DO NOT output "4k", "4k footage", "4k video", "uhd", "ultra hd", "8k", or "quad hd" in the keywords, title, or description!
+Stock agencies strictly reject submissions with inaccurate resolution tags.
+${is1080p ? 'You may include "1080p", "full hd", "fhd".' : is720p ? 'You may include "720p", "hd".' : ''}`;
+    }
   } else if (mediaType === 'vector') {
     if (hasRealPreview === false) {
       prompt += `\n🚨 CRITICAL VECTOR SUBJECT OVERRIDE:

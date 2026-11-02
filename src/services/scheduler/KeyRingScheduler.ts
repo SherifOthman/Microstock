@@ -1,6 +1,7 @@
 import { ApiKeyRecord, AppSettings, ProviderType } from '../../types';
-import { db, getAllApiKeys, getAppSettings, updateApiKey } from '../../db';
+import { db, getAllApiKeys, getAppSettings, updateApiKey, migratePlaintextApiKeys } from '../../db';
 import { getProviderAdapter } from '../providers';
+import { decryptSecret } from '../desktop/secureStorage';
 
 export interface KeyRingStateListener {
   (keys: ApiKeyRecord[]): void;
@@ -35,6 +36,7 @@ export class KeyRingScheduler {
    */
   public async init(): Promise<void> {
     if (this.isInitialized) return;
+    await migratePlaintextApiKeys();
     await this.refreshKeys();
     this.isInitialized = true;
   }
@@ -185,13 +187,24 @@ export class KeyRingScheduler {
       let minWaitMs = Infinity;
 
       // 1. Filter all non-disabled candidate keys
-      const candidateKeys = Array.from(this.keysCache.values()).filter((k) => {
+      let candidateKeys = Array.from(this.keysCache.values()).filter((k) => {
         if (k.status === 'disabled') return false;
         if (requestedProvider && k.providerId !== requestedProvider) return false;
         if (excludeKeyIds.includes(k.id)) return false;
         if (excludeProviders.includes(k.providerId)) return false;
         return true;
       });
+
+      // Fallback: If all available keys were excluded by per-item retry history (e.g. during a network outage),
+      // allow retrying candidate keys so the underlying network error is reported rather than a misleading "No keys" error
+      if (candidateKeys.length === 0 && excludeKeyIds.length > 0) {
+        candidateKeys = Array.from(this.keysCache.values()).filter((k) => {
+          if (k.status === 'disabled') return false;
+          if (requestedProvider && k.providerId !== requestedProvider) return false;
+          if (excludeProviders.includes(k.providerId)) return false;
+          return true;
+        });
+      }
 
       if (candidateKeys.length === 0) {
         throw new Error(
@@ -329,8 +342,14 @@ export class KeyRingScheduler {
 
           this.notifyListeners();
 
+          const plainKey = await decryptSecret(selected.key);
+          const leasedRecord: ApiKeyRecord = {
+            ...selected,
+            key: plainKey,
+          };
+
           return {
-            keyRecord: selected,
+            keyRecord: leasedRecord,
             release: async (success: boolean, error?: any, latencyMs?: number) => {
               await this.releaseKey(selected.id, success, error, latencyMs);
             },
@@ -480,7 +499,8 @@ export class KeyRingScheduler {
 
     const promises = keys.map(async (keyRecord) => {
       const adapter = getProviderAdapter(keyRecord.providerId);
-      const testRes = await adapter.testKey(keyRecord.key, keyRecord.modelId);
+      const plainKey = await decryptSecret(keyRecord.key);
+      const testRes = await adapter.testKey(plainKey, keyRecord.modelId);
 
       const updatedStatus = testRes.success
         ? 'healthy'

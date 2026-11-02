@@ -10,64 +10,19 @@ import {
   transformFor123rf,
   transformForAdobeStock,
   transformForDreamstime,
+  transformForDreamstimeVideos,
   transformForFreepik,
   transformForShutterstock,
   transformForVecteezy,
 } from '../rules/platformTransformers';
 
-export type SupportedPlatform =
-  | 'adobe'
-  | 'freepik'
-  | 'shutterstock'
-  | 'vecteezy'
-  | 'dreamstime'
-  | '123rf';
-
-export interface ExportPlatformConfig {
-  id: SupportedPlatform;
-  name: string;
-  filenameSuffix: string;
-  delimiter: string;
-}
-
-export const PLATFORMS_CONFIG: Record<SupportedPlatform, ExportPlatformConfig> = {
-  adobe: {
-    id: 'adobe',
-    name: 'Adobe Stock',
-    filenameSuffix: 'adobe_stock.csv',
-    delimiter: ',',
-  },
-  freepik: {
-    id: 'freepik',
-    name: 'Freepik',
-    filenameSuffix: 'freepik.csv',
-    delimiter: ';', // Freepik standard semicolon
-  },
-  shutterstock: {
-    id: 'shutterstock',
-    name: 'Shutterstock',
-    filenameSuffix: 'shutterstock.csv',
-    delimiter: ',',
-  },
-  vecteezy: {
-    id: 'vecteezy',
-    name: 'Vecteezy',
-    filenameSuffix: 'vecteezy.csv',
-    delimiter: ',',
-  },
-  dreamstime: {
-    id: 'dreamstime',
-    name: 'Dreamstime',
-    filenameSuffix: 'dreamstime.csv',
-    delimiter: ',',
-  },
-  '123rf': {
-    id: '123rf',
-    name: '123RF',
-    filenameSuffix: '123rf.csv',
-    delimiter: ',',
-  },
-};
+import {
+  SupportedPlatform,
+  ExportPlatformConfig,
+  PLATFORMS_CONFIG,
+} from '../../constants/platforms';
+export type { SupportedPlatform, ExportPlatformConfig };
+export { PLATFORMS_CONFIG };
 
 /**
  * Deterministically generates CSV strings for selected platforms from the single Master Metadata records
@@ -80,7 +35,7 @@ export function generatePlatformCsv(
 ): PlatformExportResult {
   const config = PLATFORMS_CONFIG[platformId];
   const cleanBatchName = (batchName ?? '').replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
-  const filename = `${cleanBatchName}_${config.filenameSuffix}`;
+  let filename = `${cleanBatchName}_${config.filenameSuffix}`;
 
   if (records.length === 0) {
     return {
@@ -95,6 +50,7 @@ export function generatePlatformCsv(
   let rows: any[] = [];
   let isBlocked = false;
   let blockedReason: string | undefined;
+  const additionalResults: PlatformExportResult[] = [];
 
   switch (platformId) {
     case 'adobe':
@@ -117,9 +73,46 @@ export function generatePlatformCsv(
       rows = transformForVecteezy(records, options?.vecteezy);
       break;
 
-    case 'dreamstime':
-      rows = transformForDreamstime(records, options?.dreamstime);
+    case 'dreamstime': {
+      // Split export: Dreamstime strictly requires different schemas for Images vs Videos
+      // Images (.jpg, .png, .eps): 15-column schema (includes Free, W-EL, P-EL, SR-EL) with 'Image Name'
+      // Videos (.mp4, .mov): 13-column schema (NO Free, NO P-EL) with 'Video Name'
+      const isVideoRec = (r: MasterMetadataRecord) =>
+        r.mediaType === 'video' || /\.(mp4|mov|webm|mkv|m4v)$/i.test(r.filename ?? '');
+
+      const imageRecords = records.filter((r) => !isVideoRec(r));
+      const videoRecords = records.filter((r) => isVideoRec(r));
+
+      if (imageRecords.length === 0 && videoRecords.length > 0) {
+        // Pure video batch
+        rows = transformForDreamstimeVideos(videoRecords, options?.dreamstime);
+        filename = `${cleanBatchName}_dreamstime_videos.csv`;
+      } else if (videoRecords.length === 0) {
+        // Pure image / vector batch
+        rows = transformForDreamstime(imageRecords, options?.dreamstime);
+        filename = `${cleanBatchName}_dreamstime_images.csv`;
+      } else {
+        // Mixed media batch: Primary is Images, Additional is Videos
+        rows = transformForDreamstime(imageRecords, options?.dreamstime);
+        filename = `${cleanBatchName}_dreamstime_images.csv`;
+
+        const videoRows = transformForDreamstimeVideos(videoRecords, options?.dreamstime);
+        const videoCsv = Papa.unparse(videoRows, {
+          delimiter: config.delimiter,
+          newline: '\n',
+        });
+        const finalVideoCsv = videoCsv.endsWith('\n') ? videoCsv : `${videoCsv}\n`;
+
+        additionalResults.push({
+          platformId: 'dreamstime',
+          platformName: `${config.name} (Videos)`,
+          filename: `${cleanBatchName}_dreamstime_videos.csv`,
+          csvString: finalVideoCsv,
+          rowCount: videoRows.length,
+        });
+      }
       break;
+    }
 
     case '123rf':
       rows = transformFor123rf(records, options?.['123rf']);
@@ -159,6 +152,7 @@ export function generatePlatformCsv(
     filename,
     csvString: cleanCsv,
     rowCount: rows.length,
+    additionalResults: additionalResults.length > 0 ? additionalResults : undefined,
   };
 }
 
@@ -171,9 +165,21 @@ export function downloadSingleCsv(result: PlatformExportResult): void {
     throw new Error(result.blockedReason || 'Export blocked for this platform');
   }
 
-  // Pure UTF-8 without BOM: Adobe Stock strictly rejects/ignores the Filename column if a BOM is present
-  const blob = new Blob([result.csvString], { type: 'text/csv;charset=utf-8' });
-  saveAs(blob, result.filename);
+  // Primary CSV download
+  if (result.csvString && result.rowCount > 0) {
+    const blob = new Blob([result.csvString], { type: 'text/csv;charset=utf-8' });
+    saveAs(blob, result.filename);
+  }
+
+  // Any additional split CSVs (e.g. Dreamstime Videos alongside Images)
+  if (result.additionalResults && result.additionalResults.length > 0) {
+    for (const addRes of result.additionalResults) {
+      if (!addRes.isBlocked && addRes.csvString && addRes.rowCount > 0) {
+        const blob = new Blob([addRes.csvString], { type: 'text/csv;charset=utf-8' });
+        saveAs(blob, addRes.filename);
+      }
+    }
+  }
 }
 
 /**
@@ -195,9 +201,17 @@ export async function downloadAllCsvsAsZip(
       blockedCount++;
       continue;
     }
-    if (res.csvString) {
+    if (res.csvString && res.rowCount > 0) {
       zip.file(res.filename, res.csvString);
       downloadedCount++;
+    }
+    if (res.additionalResults && res.additionalResults.length > 0) {
+      for (const addRes of res.additionalResults) {
+        if (!addRes.isBlocked && addRes.csvString && addRes.rowCount > 0) {
+          zip.file(addRes.filename, addRes.csvString);
+          downloadedCount++;
+        }
+      }
     }
   }
 
@@ -220,12 +234,25 @@ export async function saveCsvToDirectory(
   folderName = '_Metadata_CSVs',
   onProgress?: (done: number, total: number) => void
 ): Promise<{ success: boolean; savedCount: number; error?: string; canceled?: boolean }> {
-  const valid = results.filter((r) => !r.isBlocked && r.csvString);
-  if (valid.length === 0) {
+  const allResults: PlatformExportResult[] = [];
+  for (const r of results) {
+    if (!r.isBlocked && r.csvString && r.rowCount > 0) {
+      allResults.push(r);
+    }
+    if (r.additionalResults && r.additionalResults.length > 0) {
+      for (const ar of r.additionalResults) {
+        if (!ar.isBlocked && ar.csvString && ar.rowCount > 0) {
+          allResults.push(ar);
+        }
+      }
+    }
+  }
+
+  if (allResults.length === 0) {
     throw new Error('No valid CSV files to save.');
   }
 
-  const filesToSave: FileToSave[] = valid.map((r) => ({
+  const filesToSave: FileToSave[] = allResults.map((r) => ({
     name: r.filename,
     data: r.csvString,
   }));

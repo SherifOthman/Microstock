@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ApiKeyRecord } from '../../../types';
 import { getProviderAdapter } from '../../../services/providers';
 import { updateApiKey, removeApiKey } from '../../../db';
 import { keyRingScheduler } from '../../../services/scheduler/KeyRingScheduler';
+import { decryptSecret } from '../../../services/desktop/secureStorage';
 import { ConfirmDialog } from '../../../components/ui/alert-dialog';
 import {
   Check,
@@ -27,10 +28,22 @@ export const KeyRow: React.FC<Props> = ({ keyRecord, index }) => {
   const [isTesting, setIsTesting] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [testResult, setTestResult] = useState<{ success?: boolean; msg?: string } | null>(null);
+  const [plainKey, setPlainKey] = useState<string>('');
 
-  const handleCopy = (e: React.MouseEvent) => {
+  useEffect(() => {
+    let active = true;
+    decryptSecret(keyRecord.key).then((decrypted) => {
+      if (active) setPlainKey(decrypted);
+    });
+    return () => {
+      active = false;
+    };
+  }, [keyRecord.key]);
+
+  const handleCopy = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    navigator.clipboard.writeText(keyRecord.key);
+    const rawToCopy = plainKey || (await decryptSecret(keyRecord.key));
+    navigator.clipboard.writeText(rawToCopy);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -42,7 +55,8 @@ export const KeyRow: React.FC<Props> = ({ keyRecord, index }) => {
 
     try {
       const adapter = getProviderAdapter(keyRecord.providerId);
-      const res = await adapter.testKey(keyRecord.key, keyRecord.modelId);
+      const rawSecret = plainKey || (await decryptSecret(keyRecord.key));
+      const res = await adapter.testKey(rawSecret, keyRecord.modelId);
 
       const newStatus = res.success
         ? 'healthy'
@@ -83,27 +97,36 @@ export const KeyRow: React.FC<Props> = ({ keyRecord, index }) => {
     await keyRingScheduler.refreshKeys();
   };
 
-  const maskedKey = keyRecord.key.includes(':')
-    ? (() => {
-        const [acc, tok] = keyRecord.key.split(':');
-        const maskedAcc = acc.length > 8 ? `${acc.slice(0, 4)}...${acc.slice(-4)}` : acc;
-        const maskedTok = tok.length > 10 ? `${tok.slice(0, 5)}•••${tok.slice(-4)}` : '••••••••';
-        return `Account: ${maskedAcc} • Token: ${maskedTok}`;
-      })()
-    : keyRecord.key.length > 10
-    ? `${keyRecord.key.slice(0, 7)}•••${keyRecord.key.slice(-4)}`
+  const targetDisplayKey = plainKey || (keyRecord.key.startsWith('enc:') ? '' : keyRecord.key);
+
+  const maskedKey = targetDisplayKey
+    ? targetDisplayKey.includes(':')
+      ? (() => {
+          const [acc, tok] = targetDisplayKey.split(':');
+          const maskedAcc = acc.length > 8 ? `${acc.slice(0, 4)}...${acc.slice(-4)}` : acc;
+          const maskedTok = tok.length > 8 ? `${tok.slice(0, 4)}••••${tok.slice(-4)}` : '••••••••';
+          return `Account: ${maskedAcc} • Token: ${maskedTok}`;
+        })()
+      : targetDisplayKey.length > 8
+      ? `${targetDisplayKey.slice(0, 4)}••••${targetDisplayKey.slice(-4)}`
+      : '••••••••'
     : '••••••••';
 
   return (
     <>
       <div dir="ltr" className="h-9 px-2.5 rounded-md hover:bg-secondary/60 flex items-center justify-between text-xs transition-colors group text-left">
-        {/* Left: Key Index + Monospace Masked Key */}
+        {/* Left: Key Index + Label + Monospace Masked Key */}
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-[11px] font-mono text-muted-foreground font-medium shrink-0">
             #{index + 1}
           </span>
-          <span className="font-mono text-xs text-foreground truncate">
-            {showKey ? keyRecord.key : maskedKey}
+          {keyRecord.label && (
+            <span className="text-[11px] font-medium text-foreground/90 truncate max-w-[120px] sm:max-w-[160px] bg-secondary/50 px-1.5 py-0.5 rounded border border-border/50">
+              {keyRecord.label}
+            </span>
+          )}
+          <span className="font-mono text-xs text-muted-foreground truncate" title={showKey ? plainKey : undefined}>
+            {showKey ? plainKey : maskedKey}
           </span>
         </div>
 

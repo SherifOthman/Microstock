@@ -1,17 +1,18 @@
 import { MasterMetadataRecord } from '../../types';
-import { DREAMSTIME_CATEGORIES, mapToDreamstimeCategories } from '../../constants/categories';
+import { DREAMSTIME_CATEGORIES, mapToDreamstimeCategories, findDreamstimeCategoryId } from '../../constants/categories';
+import { cleanFilenameHint } from './masterPrompt';
 
 export const SHUTTERSTOCK_OFFICIAL_CATEGORIES = [
   'Abstract',
   'Animals/Wildlife',
-  'The Arts',
+  'Arts',
   'Backgrounds/Textures',
   'Beauty/Fashion',
   'Buildings/Landmarks',
   'Business/Finance',
   'Celebrities',
   'Education',
-  'Food and Drink',
+  'Food and drink',
   'Healthcare/Medical',
   'Holidays',
   'Industrial',
@@ -30,14 +31,36 @@ export const SHUTTERSTOCK_OFFICIAL_CATEGORIES = [
   'Vintage',
 ];
 
+export const SHUTTERSTOCK_VIDEO_CATEGORIES = new Set([
+  'Animals/Wildlife',
+  'Arts',
+  'Backgrounds/Textures',
+  'Buildings/Landmarks',
+  'Business/Finance',
+  'Education',
+  'Food and drink',
+  'Healthcare/Medical',
+  'Holidays',
+  'Industrial',
+  'Nature',
+  'Objects',
+  'People',
+  'Religion',
+  'Science',
+  'Signs/Symbols',
+  'Sports/Recreation',
+  'Technology',
+  'Transportation',
+]);
+
 export interface RawAiOutput {
   base_title?: string;
   detailed_description?: string;
   ranked_keywords?: string[] | string;
   category_adobe?: number;
   category_shutterstock?: string[] | string;
-  dreamstime_category_1?: number;
-  dreamstime_category_2?: number;
+  dreamstime_category_1?: string | number;
+  dreamstime_category_2?: string | number;
   suggested_prompt?: string;
 }
 
@@ -122,7 +145,11 @@ export function parseAndNormalizeAiMetadata(
   batchId: string,
   isAiGenerated: boolean,
   defaultAiModel = 'Midjourney v6',
-  keywordPhrasing: KeywordPhrasing = 'mixed'
+  keywordPhrasing: KeywordPhrasing = 'mixed',
+  mediaType?: 'image' | 'video' | 'vector',
+  videoResolution?: string,
+  videoWidth?: number,
+  videoHeight?: number
 ): MasterMetadataRecord {
   let parsed: RawAiOutput = {};
 
@@ -149,9 +176,21 @@ export function parseAndNormalizeAiMetadata(
   // 2. Normalize Title
   let baseTitle = (parsed.base_title || '').trim();
   if (!baseTitle) {
-    baseTitle = (filename ?? '').replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+    const hint = cleanFilenameHint(filename ?? '');
+    baseTitle = hint || (filename ?? '').replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ').trim();
     baseTitle = baseTitle.charAt(0).toUpperCase() + baseTitle.slice(1);
   }
+
+  // Sanitize any trailing or embedded hex hashes or IDs (e.g. 33dc072c, _a9608e40, _9710797b_1) leaking into title
+  baseTitle = baseTitle
+    .replace(/\b[0-9a-f]{6,16}(?:[-_]\d+)?\b/gi, (match) => {
+      // Only strip if it contains both a digit and a hex letter (true random hash/ID)
+      return (/\d/.test(match) && /[a-f]/i.test(match)) ? '' : match;
+    })
+    .replace(/[-_\s]+[0-9a-f]{6,16}(?:[-_\s]+\d+)?$/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
   if (baseTitle.length > 200) baseTitle = baseTitle.substring(0, 197) + '...';
 
   // 3. Normalize Description (Dreamstime Rule: Must be strictly longer than Title & complete sentence)
@@ -251,6 +290,33 @@ export function parseAndNormalizeAiMetadata(
     }
   }
 
+  // Programmatic Resolution Guardrail for Video Keywords:
+  const isVideoMedia = mediaType === 'video' || /\.(mp4|mov|webm|avi|mkv)$/i.test(filename ?? '');
+  if (isVideoMedia) {
+    const is4K = Boolean(
+      (videoWidth && videoWidth >= 3840) ||
+      (videoHeight && videoHeight >= 2160) ||
+      (videoResolution && /4k|uhd|3840|2160/i.test(videoResolution)) ||
+      (!videoWidth && !videoResolution && /4k|uhd|3840|2160/i.test(filename ?? ''))
+    );
+
+    if (!is4K) {
+      // Strictly purge false 4K / 8K / UHD resolution tags
+      const forbiddenRegex = /\b(?:4k|8k|uhd|ultra\s*hd|quad\s*hd|2160p|4320p)\b/i;
+      finalKeywords = finalKeywords.filter((kw) => !forbiddenRegex.test(kw));
+    } else {
+      // For genuine 4K, ensure '4k' is present
+      const has4k = finalKeywords.some((kw) => /\b4k\b/i.test(kw));
+      if (!has4k && finalKeywords.length > 0) {
+        finalKeywords.splice(Math.min(8, finalKeywords.length), 0, '4k');
+      }
+    }
+  } else {
+    // Photos & vectors should not contain video resolution tags
+    const allResRegex = /\b(?:4k|8k|1080p?|720p?|2160p?|uhd|fhd|hd|ultra\s*hd|full\s*hd)\b/i;
+    finalKeywords = finalKeywords.filter((kw) => !allResRegex.test(kw));
+  }
+
   // Apply Top 10 Keyword Priority rebalancing (ensuring at least 7 single words, max 2-3 compound phrases in top 10)
   const rebalancedKeywords = keywordPhrasing === 'single'
     ? finalKeywords
@@ -273,36 +339,64 @@ export function parseAndNormalizeAiMetadata(
     adobeCat = 8; // Default: Graphic Resources
   }
 
-  // 6. Normalize Shutterstock Categories (Up to 2 matching official names)
-  let shutterCats: [string, string?] = ['Miscellaneous'];
+  // 6. Normalize Shutterstock Categories (Up to 2 matching official names, differentiated for video vs image)
+  const isVideo = mediaType === 'video' || /\.(mp4|mov|webm|avi|mkv)$/i.test(filename);
+  let shutterCats: [string, string?] = [isVideo ? 'Objects' : 'Miscellaneous'];
   if (Array.isArray(parsed.category_shutterstock) && parsed.category_shutterstock.length > 0) {
     const valid = parsed.category_shutterstock
-      .map((c) => findClosestCategory(String(c ?? '').trim()))
+      .map((c) => findClosestCategory(String(c ?? '').trim(), isVideo))
       .filter(Boolean) as string[];
     if (valid.length > 0) {
       shutterCats = [valid[0], valid[1]];
     }
   } else if (typeof parsed.category_shutterstock === 'string') {
-    const cat = findClosestCategory((parsed.category_shutterstock ?? '').trim());
+    const cat = findClosestCategory((parsed.category_shutterstock ?? '').trim(), isVideo);
     if (cat) shutterCats = [cat];
   }
 
-  // 7. Dreamstime Categories (Deterministic mapping & official validation)
-  let dtCat1 = Number(parsed.dreamstime_category_1);
-  let dtCat2 = Number(parsed.dreamstime_category_2);
+  // 7. Dreamstime Categories (Strict validation of string categories with deterministic fallback)
+  let dtCat1 = findDreamstimeCategoryId(parsed.dreamstime_category_1);
+  let dtCat2 = findDreamstimeCategoryId(parsed.dreamstime_category_2);
 
-  const fallbackDt = mapToDreamstimeCategories(adobeCat, shutterCats, isAiGenerated);
+  const fallbackDt = mapToDreamstimeCategories(adobeCat, shutterCats, isAiGenerated, baseTitle);
 
-  // Validate that the IDs exist in official Dreamstime categories table
-  if (isNaN(dtCat1) || !DREAMSTIME_CATEGORIES[dtCat1] || dtCat1 === 114) {
+  if (!dtCat1 || dtCat1 === 114) {
     dtCat1 = fallbackDt.cat1;
-    dtCat2 = fallbackDt.cat2;
-  } else if (isNaN(dtCat2) || !DREAMSTIME_CATEGORIES[dtCat2] || dtCat2 === 114) {
-    dtCat2 = fallbackDt.cat2;
+  }
+  if (!dtCat2 || dtCat2 === 114 || dtCat2 === dtCat1) {
+    dtCat2 = (fallbackDt.cat2 !== dtCat1) ? fallbackDt.cat2 : (fallbackDt.cat1 !== dtCat1 ? fallbackDt.cat1 : 141);
   }
 
-  // Strict domain sanity: food/produce images must NEVER map to People (115/120) or Technology Retro (107)
-  const isFoodImage = adobeCat === 7 || shutterCats.some((c) => (c ?? '').toLowerCase().includes('food'));
+  // Strict domain sanity: Bicycle / Transportation / Vehicle / Exhaust images must NEVER map to Food & Beverages (28, 63, 127, 137)
+  const FOOD_CATEGORY_IDS = new Set([28, 63, 127, 137]);
+  const isTransport =
+    adobeCat === 20 ||
+    /bike|bicycle|cycle|cycling|cyclist|transport|car|vehicle|motorcycle|auto|train|airplane|plane|aviation|exhaust|tailpipe|automotive|engine|supercar/i.test(
+      baseTitle + ' ' + filename
+    );
+  if (isTransport) {
+    if (FOOD_CATEGORY_IDS.has(dtCat1)) {
+      dtCat1 = 98; // Industries -> Transportation
+    }
+    if (FOOD_CATEGORY_IDS.has(dtCat2) || dtCat2 === dtCat1) {
+      dtCat2 = 156; // Objects -> Sports
+    }
+  }
+
+  // Strict domain sanity: Deep Space / Asteroid / Planetarium must map to Science or Planetarium
+  const isSpace = /space|asteroid|planet|meteor|cosmos|universe|galaxy|astronomy|solar system|orbit/i.test(
+    baseTitle + ' ' + filename
+  );
+  if (isSpace) {
+    if (dtCat1 === 105 || FOOD_CATEGORY_IDS.has(dtCat1)) dtCat1 = 165; // Abstract -> Planetarium
+    if (dtCat2 === 105 || FOOD_CATEGORY_IDS.has(dtCat2) || dtCat2 === dtCat1) dtCat2 = 209; // Technology -> Science
+  }
+
+  // Strict domain sanity: Food/Produce images must NEVER map to People (115/120) or Technology Retro (107)
+  const isFoodImage =
+    adobeCat === 7 ||
+    shutterCats.some((c) => (c ?? '').toLowerCase().includes('food')) ||
+    /food|fruit|vegetable|produce|meal|dish|snack|dessert|cooking/i.test(baseTitle);
   if (isFoodImage && (dtCat1 === 107 || dtCat1 === 115 || dtCat1 === 120 || dtCat1 === 75 || dtCat1 === 78)) {
     dtCat1 = fallbackDt.cat1;
     dtCat2 = fallbackDt.cat2;
@@ -319,6 +413,12 @@ export function parseAndNormalizeAiMetadata(
     baseTitle,
     detailedDescription,
     rankedKeywords: uniqueKeywords.slice(0, 50),
+    mediaType,
+    videoMeta: (videoResolution || videoWidth || videoHeight) ? {
+      resolution: videoResolution,
+      width: videoWidth,
+      height: videoHeight,
+    } : undefined,
     categories: {
       adobeCategoryId: adobeCat,
       shutterstockCategories: shutterCats,
@@ -439,18 +539,48 @@ export function rebalanceTopKeywords(keywords: string[]): string[] {
   return [...top10, ...remaining];
 }
 
-function findClosestCategory(input: string): string | null {
+export function findClosestCategory(input: string, isVideo = false): string | null {
   if (!input) return null;
-  const normalized = (input ?? '').toLowerCase();
-  for (const official of SHUTTERSTOCK_OFFICIAL_CATEGORIES) {
-    if (official.toLowerCase() === normalized) return official;
+  const normalized = (input ?? '').toLowerCase().trim();
+
+  // Alias support
+  if (normalized === 'the arts' || normalized === 'arts') {
+    return 'Arts';
   }
+  if (normalized === 'food and drink' || normalized === 'food & drink') {
+    return 'Food and drink';
+  }
+
+  let match: string | null = null;
   for (const official of SHUTTERSTOCK_OFFICIAL_CATEGORIES) {
-    if (official.toLowerCase().includes(normalized) || normalized.includes(official.toLowerCase())) {
-      return official;
+    if (official.toLowerCase() === normalized) {
+      match = official;
+      break;
     }
   }
-  return null;
+  if (!match) {
+    for (const official of SHUTTERSTOCK_OFFICIAL_CATEGORIES) {
+      if (official.toLowerCase().includes(normalized) || normalized.includes(official.toLowerCase())) {
+        match = official;
+        break;
+      }
+    }
+  }
+
+  if (match && isVideo && !SHUTTERSTOCK_VIDEO_CATEGORIES.has(match)) {
+    // Map image-only category to closest valid video category from Shutterstock
+    const lower = match.toLowerCase();
+    if (lower === 'abstract') return 'Backgrounds/Textures';
+    if (lower === 'beauty/fashion') return 'Objects';
+    if (lower === 'interiors') return 'Buildings/Landmarks';
+    if (lower === 'parks/outdoor') return 'Nature';
+    if (lower === 'vintage') return 'Arts';
+    if (lower === 'celebrities') return 'People';
+    if (lower === 'miscellaneous') return 'Objects';
+    return 'Objects';
+  }
+
+  return match;
 }
 
 function extractFallbackRegex(text: string): RawAiOutput {

@@ -40,6 +40,9 @@ export async function processImageFile(
   maxDim = 512,
   quality = 0.75
 ): Promise<ExtractedMediaInfo> {
+  if (!file || file.size === 0) {
+    throw new Error(`Image file "${file?.name || 'unknown'}" is corrupted or empty (0 bytes)`);
+  }
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Failed to read image file'));
@@ -117,6 +120,9 @@ export async function processVideoFile(
   maxDim = 512,
   quality = 0.75
 ): Promise<ExtractedMediaInfo> {
+  if (!file || file.size === 0) {
+    throw new Error(`Video file "${file?.name || 'unknown'}" is corrupted or empty (0 bytes)`);
+  }
   // First try 2x2 frame extractor with 8000ms hard timeout
   try {
     const storyboard = await extractVideoStoryboard(file, 768, 432, quality);
@@ -264,12 +270,16 @@ export async function processVectorFile(
   maxDim = 512,
   quality = 0.75
 ): Promise<ExtractedMediaInfo> {
+  if (!file || file.size === 0) {
+    throw new Error(`Vector file "${file?.name || 'unknown'}" is corrupted or empty (0 bytes)`);
+  }
   if (companionImageFile) {
     const res = await processImageFile(companionImageFile, maxDim, quality);
     return {
       ...res,
       mediaType: 'vector',
       originalSizeBytes: file.size,
+      hasRealPreview: true,
     };
   }
 
@@ -356,6 +366,9 @@ export async function extractMediaInfo(
   maxDim = 512,
   quality = 0.75
 ): Promise<ExtractedMediaInfo> {
+  if (!file || file.size === 0) {
+    throw new Error(`Media file "${file?.name || 'unknown'}" is corrupted or empty (0 bytes)`);
+  }
   const type = getMediaTypeFromFilename(file.name);
   if (type === 'video') {
     return await processVideoFile(file, maxDim, quality);
