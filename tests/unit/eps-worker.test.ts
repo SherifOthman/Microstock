@@ -4,6 +4,7 @@ import {
   terminateEpsWorker,
   isWorkerSupported,
   setWorkerFactoryForTesting,
+  setMaxEpsConcurrencyForTesting,
 } from '../../src/services/eps/epsWorkerClient';
 
 describe('EPS Web Worker Background Engine (epsWorkerClient.ts)', () => {
@@ -30,18 +31,20 @@ describe('EPS Web Worker Background Engine (epsWorkerClient.ts)', () => {
     };
 
     setWorkerFactoryForTesting(() => mockWorkerInstance);
+    setMaxEpsConcurrencyForTesting(2); // Strict limit of 2 for testing
   });
 
   afterEach(() => {
     terminateEpsWorker();
     setWorkerFactoryForTesting(null);
+    setMaxEpsConcurrencyForTesting(2);
   });
 
   it('detects worker availability accurately', () => {
     expect(isWorkerSupported()).toBe(true);
   });
 
-  it('dispatches EPS buffer to worker off the main thread with transferable ArrayBuffer', async () => {
+  it('dispatches EPS buffer to worker off the main thread with transferable ArrayBuffer and creates objectUrl', async () => {
     const epsBuffer = new Uint8Array([1, 2, 3, 4, 5]).buffer;
     const epsFile = new File([epsBuffer], 'test_artwork.eps', { type: 'application/postscript' });
 
@@ -61,12 +64,12 @@ describe('EPS Web Worker Background Engine (epsWorkerClient.ts)', () => {
     // Verify transferable buffer was passed for zero-copy memory transfer
     expect(transferredObjects.length).toBeGreaterThan(0);
 
-    // Simulate worker success response
+    // Simulate worker returning raw Blob without heavy main-thread base64
+    const mockBlob = new Blob(['mock-binary-jpeg'], { type: 'image/jpeg' });
     const mockResult = {
       width: 512,
       height: 512,
-      dataUrl: 'data:image/jpeg;base64,mockWorkerData',
-      blob: new Blob(['mock'], { type: 'image/jpeg' }),
+      blob: mockBlob,
       sourceTier: 'binary_preview' as const,
       pathOpCount: 150,
     };
@@ -82,9 +85,94 @@ describe('EPS Web Worker Background Engine (epsWorkerClient.ts)', () => {
     const result = await promise;
     expect(result.width).toBe(512);
     expect(result.height).toBe(512);
-    expect(result.dataUrl).toBe('data:image/jpeg;base64,mockWorkerData');
+    expect(result.blob).toBe(mockBlob);
+    // Instantaneous non-blocking objectUrl should be present
+    expect(result.objectUrl || result.dataUrl).toBeTruthy();
     expect(result.sourceTier).toBe('binary_preview');
     expect(result.pathOpCount).toBe(150);
+  });
+
+  it('strictly limits worker concurrency to prevent CPU starvation and queues remaining tasks', async () => {
+    setMaxEpsConcurrencyForTesting(2);
+
+    const f1 = new File(['eps1'], 'f1.eps');
+    const f2 = new File(['eps2'], 'f2.eps');
+    const f3 = new File(['eps3'], 'f3.eps');
+    const f4 = new File(['eps4'], 'f4.eps');
+
+    // Launch 4 tasks simultaneously
+    const p1 = rasterizeEpsWithWorker(f1);
+    const p2 = rasterizeEpsWithWorker(f2);
+    const p3 = rasterizeEpsWithWorker(f3);
+    const p4 = rasterizeEpsWithWorker(f4);
+
+    // Wait until initial batch posts
+    await vi.waitFor(() => expect(mockWorkerInstance.postMessage).toHaveBeenCalledTimes(2));
+
+    // Exactly 2 tasks should have been posted, while 2 wait in queue
+    expect(postedMessages).toHaveLength(2);
+    expect(postedMessages.map((m) => m.filename)).toEqual(['f1.eps', 'f2.eps']);
+
+    // Complete the first task
+    const msg1 = postedMessages[0];
+    mockWorkerInstance.onmessage({
+      data: {
+        id: msg1.id,
+        success: true,
+        result: {
+          width: 500,
+          height: 500,
+          blob: new Blob(['done']),
+          sourceTier: 'vector',
+        },
+      },
+    });
+
+    await p1;
+
+    // Resolving task 1 should immediately pump the queue and dispatch task 3
+    await vi.waitFor(() => expect(mockWorkerInstance.postMessage).toHaveBeenCalledTimes(3));
+    expect(postedMessages[2].filename).toBe('f3.eps');
+
+    // Complete task 2
+    const msg2 = postedMessages[1];
+    mockWorkerInstance.onmessage({
+      data: {
+        id: msg2.id,
+        success: true,
+        result: {
+          width: 500,
+          height: 500,
+          blob: new Blob(['done2']),
+          sourceTier: 'vector',
+        },
+      },
+    });
+
+    await p2;
+
+    // Resolving task 2 should immediately pump task 4
+    await vi.waitFor(() => expect(mockWorkerInstance.postMessage).toHaveBeenCalledTimes(4));
+    expect(postedMessages[3].filename).toBe('f4.eps');
+
+    // Complete 3 & 4
+    mockWorkerInstance.onmessage({
+      data: {
+        id: postedMessages[2].id,
+        success: true,
+        result: { width: 500, height: 500, blob: new Blob(['d3']), sourceTier: 'vector' },
+      },
+    });
+    mockWorkerInstance.onmessage({
+      data: {
+        id: postedMessages[3].id,
+        success: true,
+        result: { width: 500, height: 500, blob: new Blob(['d4']), sourceTier: 'vector' },
+      },
+    });
+
+    await Promise.all([p3, p4]);
+    expect(mockWorkerInstance.postMessage).toHaveBeenCalledTimes(4);
   });
 
   it('handles worker errors gracefully and rejects the promise with worker error message', async () => {

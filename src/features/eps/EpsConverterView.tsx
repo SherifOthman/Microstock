@@ -1,27 +1,17 @@
-import React, { useRef, useState, useMemo } from 'react';
+import React, { useRef, useState, useMemo, useCallback, useEffect } from 'react';
 import { rasterizeEpsFile, EpsRenderResult } from '../../services/eps/epsEngine';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
-import { Card, CardContent } from '../../components/ui/card';
+import { Card } from '../../components/ui/card';
 import {
-  ArrowRight,
-  ArrowLeft,
-  Check,
   CheckCircle2,
-  Download,
-  FileCheck,
   FolderDown,
-  Image as ImageIcon,
   Layers,
   Loader2,
-  Plus,
   RefreshCw,
-  SlidersHorizontal,
-  Sparkles,
   Trash2,
   UploadCloud,
   Wand2,
-  ZoomIn,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
 import { saveFilesToLocalDirectory, FileToSave } from '../../services/desktop/desktopFs';
@@ -42,14 +32,128 @@ interface EpsConverterViewProps {
   onSendToStudio?: (files: File[]) => void;
 }
 
+interface EpsItemCardProps {
+  item: EpsConvertItem;
+  onRenderSingle: (item: EpsConvertItem) => void;
+  onSaveSingleJpg: (item: EpsConvertItem) => void;
+}
+
+/**
+ * Isolated, React.memo protected card component.
+ * Prevents full-grid render thrashing when individual EPS items change state.
+ */
+const EpsItemCard: React.FC<EpsItemCardProps> = React.memo(
+  ({ item, onRenderSingle, onSaveSingleJpg }) => {
+    const previewSrc = item.result?.objectUrl || item.result?.dataUrl;
+
+    return (
+      <Card className="overflow-hidden flex flex-col justify-between border-border bg-card">
+        <div className="p-3 space-y-2.5">
+          {/* Thumbnail Preview Area with Async Zero-Copy Rendering */}
+          <div className="aspect-square rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex items-center justify-center overflow-hidden relative">
+            {previewSrc ? (
+              <img
+                src={previewSrc}
+                alt={item.outputJpgName}
+                loading="lazy"
+                decoding="async"
+                className="w-full h-full object-contain bg-white"
+              />
+            ) : item.status === 'rendering' ? (
+              <div className="flex flex-col items-center gap-1.5 text-blue-400">
+                <Loader2 className="w-6 h-6 animate-spin" />
+                <span className="text-[10px] font-mono">Rasterizing...</span>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-1 text-muted-foreground">
+                <Layers className="w-8 h-8 text-blue-500/50" />
+                <span className="text-[10px] font-mono uppercase">EPS Vector</span>
+              </div>
+            )}
+
+            {item.result && (
+              <Badge
+                variant="outline"
+                className="absolute bottom-1.5 right-1.5 bg-black/80 text-white text-[9px] font-mono border-zinc-700 py-0"
+              >
+                {item.result.width} × {item.result.height}
+              </Badge>
+            )}
+          </div>
+
+          {/* Filenames */}
+          <div className="space-y-0.5">
+            <p className="text-xs font-semibold text-foreground truncate" title={item.originalName}>
+              {item.originalName}
+            </p>
+            <p className="text-[11px] text-muted-foreground font-mono truncate" title={item.outputJpgName}>
+              &rarr; {item.outputJpgName}
+            </p>
+          </div>
+        </div>
+
+        {/* Card Footer Actions */}
+        <div className="p-3 pt-0 flex items-center justify-between border-t border-border/50 mt-2">
+          <span className="text-[10px] text-muted-foreground font-mono">
+            {(item.size / 1024).toFixed(0)} KB
+          </span>
+
+          <div className="flex items-center gap-1">
+            {item.status === 'completed' ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onSaveSingleJpg(item)}
+                className="h-7 text-xs px-2 gap-1 text-emerald-500 border-emerald-500/30"
+              >
+                <FolderDown className="w-3 h-3" /> Save
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onRenderSingle(item)}
+                disabled={item.status === 'rendering'}
+                className="h-7 text-xs px-2 gap-1"
+              >
+                {item.status === 'rendering' ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-3 h-3" />
+                )}
+                Convert
+              </Button>
+            )}
+          </div>
+        </div>
+      </Card>
+    );
+  }
+);
+EpsItemCard.displayName = 'EpsItemCard';
+
 export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStudio }) => {
-  const { t, language, isRtl } = useLanguage();
+  const { language } = useLanguage();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
 
   const [items, setItems] = useState<EpsConvertItem[]>([]);
   const [isConvertingBatch, setIsConvertingBatch] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Revoke object URLs on unmount to ensure 0 memory leaks
+  useEffect(() => {
+    return () => {
+      items.forEach((item) => {
+        if (item.result?.objectUrl) {
+          try {
+            URL.revokeObjectURL(item.result.objectUrl);
+          } catch {
+            // ignore
+          }
+        }
+      });
+    };
+  }, [items]);
 
   // Natural alphanumeric sorting matching Windows File Explorer
   const sortedItems = useMemo(() => {
@@ -58,7 +162,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
     );
   }, [items]);
 
-  const handleAddFiles = (newFiles: File[]) => {
+  const handleAddFiles = useCallback((newFiles: File[]) => {
     const epsFiles = newFiles.filter((f) => {
       const ext = f.name.split('.').pop()?.toLowerCase();
       return ext === 'eps' || ext === 'ai';
@@ -90,9 +194,9 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
     });
 
     setStatusMessage(null);
-  };
+  }, [language]);
 
-  const handleRenderSingle = async (item: EpsConvertItem) => {
+  const handleRenderSingle = useCallback(async (item: EpsConvertItem) => {
     setItems((prev) =>
       prev.map((i) => (i.id === item.id ? { ...i, status: 'rendering', progressMsg: 'Rasterizing vector...' } : i))
     );
@@ -111,25 +215,26 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
         )
       );
     }
-  };
+  }, []);
 
-  const handleConvertAll = async () => {
+  const handleConvertAll = useCallback(async () => {
     setIsConvertingBatch(true);
     setStatusMessage(null);
 
     const pending = sortedItems.filter((i) => i.status !== 'completed');
-    for (const item of pending) {
-      await handleRenderSingle(item);
-    }
+    
+    // Concurrency is strictly bounded by the Web Worker Concurrency Pool (max 2-3 workers).
+    // Dispatching via Promise.all processes tasks through the queue with 0 CPU starvation.
+    await Promise.all(pending.map((item) => handleRenderSingle(item)));
 
     setIsConvertingBatch(false);
     setStatusMessage({
       type: 'success',
       text: language === 'ar' ? 'اكتمل تحويل جميع ملفات الـ EPS بنجاح!' : 'All EPS files converted successfully!',
     });
-  };
+  }, [sortedItems, handleRenderSingle, language]);
 
-  const handleSaveSingleJpg = async (item: EpsConvertItem) => {
+  const handleSaveSingleJpg = useCallback(async (item: EpsConvertItem) => {
     if (!item.result?.blob) return;
     try {
       const res = await saveFilesToLocalDirectory([
@@ -147,9 +252,9 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
         text: err.message || 'Failed to save',
       });
     }
-  };
+  }, [language]);
 
-  const handleSaveToDirectory = async () => {
+  const handleSaveToDirectory = useCallback(async () => {
     const completed = items.filter((i) => i.result?.blob);
     if (completed.length === 0) return;
 
@@ -182,9 +287,9 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
         });
       }
     }
-  };
+  }, [items, language]);
 
-  const handleSendToStudio = () => {
+  const handleSendToStudio = useCallback(() => {
     if (!onSendToStudio) return;
     const completed = items.filter((i) => i.result?.blob);
     if (completed.length === 0) return;
@@ -194,9 +299,9 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
     );
 
     onSendToStudio(filesToSend);
-  };
+  }, [items, onSendToStudio]);
 
-  const completedCount = items.filter((i) => i.status === 'completed').length;
+  const completedCount = useMemo(() => items.filter((i) => i.status === 'completed').length, [items]);
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto py-2">
@@ -317,7 +422,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
                     variant="secondary"
                     size="sm"
                     onClick={handleSendToStudio}
-                    className="gap-1.5 text-blue-400 hover:text-blue-300"
+                    className="gap-1.5 text-blue-400 hover:text-blue-300 cursor-pointer"
                   >
                     <Wand2 className="w-3.5 h-3.5" />
                     {language === 'ar' ? 'إرسال إلى استوديو الـ Metadata' : 'Send to Metadata Studio'}
@@ -330,7 +435,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
               variant="ghost"
               size="sm"
               onClick={() => setItems([])}
-              className="text-muted-foreground hover:text-destructive h-8 px-2"
+              className="text-muted-foreground hover:text-destructive h-8 px-2 cursor-pointer"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </Button>
@@ -338,88 +443,16 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
         </div>
       )}
 
-      {/* Items Grid */}
+      {/* Items Grid with React.memo protected cards */}
       {sortedItems.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {sortedItems.map((item) => (
-            <Card key={item.id} className="overflow-hidden flex flex-col justify-between border-border bg-card">
-              <div className="p-3 space-y-2.5">
-                {/* Thumbnail Preview Area */}
-                <div className="aspect-square rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex items-center justify-center overflow-hidden relative">
-                  {item.result?.dataUrl ? (
-                    <img
-                      src={item.result.dataUrl}
-                      alt={item.outputJpgName}
-                      className="w-full h-full object-contain bg-white"
-                    />
-                  ) : item.status === 'rendering' ? (
-                    <div className="flex flex-col items-center gap-1.5 text-blue-400">
-                      <Loader2 className="w-6 h-6 animate-spin" />
-                      <span className="text-[10px] font-mono">Rasterizing...</span>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center gap-1 text-muted-foreground">
-                      <Layers className="w-8 h-8 text-blue-500/50" />
-                      <span className="text-[10px] font-mono uppercase">EPS Vector</span>
-                    </div>
-                  )}
-
-                  {item.result && (
-                    <Badge
-                      variant="outline"
-                      className="absolute bottom-1.5 right-1.5 bg-black/80 text-white text-[9px] font-mono border-zinc-700 py-0"
-                    >
-                      {item.result.width} × {item.result.height}
-                    </Badge>
-                  )}
-                </div>
-
-                {/* Filenames */}
-                <div className="space-y-0.5">
-                  <p className="text-xs font-semibold text-foreground truncate" title={item.originalName}>
-                    {item.originalName}
-                  </p>
-                  <p className="text-[11px] text-muted-foreground font-mono truncate" title={item.outputJpgName}>
-                    &rarr; {item.outputJpgName}
-                  </p>
-                </div>
-              </div>
-
-              {/* Card Footer Actions */}
-              <div className="p-3 pt-0 flex items-center justify-between border-t border-border/50 mt-2">
-                <span className="text-[10px] text-muted-foreground font-mono">
-                  {(item.size / 1024).toFixed(0)} KB
-                </span>
-
-                <div className="flex items-center gap-1">
-                  {item.status === 'completed' ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleSaveSingleJpg(item)}
-                      className="h-7 text-xs px-2 gap-1 text-emerald-500 border-emerald-500/30"
-                    >
-                      <FolderDown className="w-3 h-3" /> Save
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleRenderSingle(item)}
-                      disabled={item.status === 'rendering'}
-                      className="h-7 text-xs px-2 gap-1"
-                    >
-                      {item.status === 'rendering' ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      ) : (
-                        <RefreshCw className="w-3 h-3" />
-                      )}
-                      Convert
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </Card>
+            <EpsItemCard
+              key={item.id}
+              item={item}
+              onRenderSingle={handleRenderSingle}
+              onSaveSingleJpg={handleSaveSingleJpg}
+            />
           ))}
         </div>
       )}

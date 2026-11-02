@@ -20,6 +20,7 @@ export interface EpsRenderResult {
   height: number;
   canvas?: HTMLCanvasElement | OffscreenCanvas;
   dataUrl: string;
+  objectUrl?: string;
   blob: Blob;
   sourceTier: 'vector' | 'xmp' | 'binary_preview' | 'ascii_preview';
   boundingBox?: EpsBoundingBox;
@@ -50,23 +51,23 @@ export function createUniversalCanvas(width: number, height: number): HTMLCanvas
 export async function canvasToBlobAndDataUrl(
   canvas: HTMLCanvasElement | OffscreenCanvas,
   quality = 0.98
-): Promise<{ blob: Blob; dataUrl: string }> {
+): Promise<{ blob: Blob; dataUrl: string; objectUrl?: string }> {
   if ('convertToBlob' in canvas && typeof (canvas as OffscreenCanvas).convertToBlob === 'function') {
     const blob = await (canvas as OffscreenCanvas).convertToBlob({ type: 'image/jpeg', quality });
-    const buffer = await blob.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i += 8192) {
-      binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, len)) as any);
-    }
-    const dataUrl = `data:image/jpeg;base64,${btoa(binary)}`;
-    return { blob, dataUrl };
+    return { blob, dataUrl: '' };
   } else {
     const htmlCanvas = canvas as HTMLCanvasElement;
     const dataUrl = htmlCanvas.toDataURL('image/jpeg', quality);
     const blob = await new Promise<Blob>((resolve) => htmlCanvas.toBlob((b) => resolve(b!), 'image/jpeg', quality));
-    return { blob, dataUrl };
+    let objectUrl = '';
+    try {
+      if (typeof URL !== 'undefined' && URL.createObjectURL) {
+        objectUrl = URL.createObjectURL(blob);
+      }
+    } catch {
+      // ignore
+    }
+    return { blob, dataUrl, objectUrl };
   }
 }
 
