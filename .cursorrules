@@ -1,0 +1,32 @@
+# AI Coding Assistant Instructions
+
+You are working on **Stock Assistant**, a high-performance, enterprise-grade desktop microstock application.
+
+## MANDATORY RULES FOR ALL FUTURE AI SESSIONS:
+
+1. **Always Read `/docs` First:**
+   Before modifying any code or proposing solutions, read the relevant documents in `/docs/`:
+   - `docs/01-ARCHITECTURE_AND_STATE.md` (Architecture, Web Workers, Native FS, Dexie)
+   - `docs/02-CORE_PIPELINES.md` (6-Track Segregation, Video Muter, Alphanumeric Sorting)
+   - `docs/03-AI_AND_METADATA_RULES.md` (Vision Prompts, 1-2 Word Keyword Engine, Title Truncation)
+   - `docs/04-CSV_EXPORT_SPECS.md` (6 Platform Schemas, Dreamstime Split, No-BOM rule)
+   - `docs/05-TESTING_MANDATE.md` (TDD, Integration, Chaos tests)
+
+2. **Strict Continuous TDD Mandate:**
+   - You are STRICTLY FORBIDDEN from adding features, editing logic, or fixing bugs without writing or updating corresponding automated tests in the exact same commit.
+   - Always run `npm test` and ensure 100% of tests pass before finishing.
+
+3. **Never Block the Main Thread:**
+   - Any heavy PostScript, binary decoding, canvas rasterization, or video processing must be offloaded to Web Workers or background processes. The React UI must remain responsive at 60fps.
+
+4. **Never Use JSZip or In-Memory ZIP Downloads:**
+   - This is a native desktop application. All file saves and CSV exports must write directly to disk paths via the Native Desktop FS Bridge (`desktopFs.ts`).
+
+5. **Never Concatenate Keywords:**
+   - Every keyword must be 1 to 2 words separated by spaces (e.g. "business meeting", NOT "businessmeeting"). Never concatenate words into unspaced strings.
+
+6. **Do NOT Modify the Existing Deduplication Algorithm:**
+   - The current deduplication algorithm is established and must be left exactly as it is.
+
+7. **Natural Alphanumeric Sorting Parity:**
+   - All lists and queues must maintain Natural Alphanumeric Sorting (`localeCompare(..., { numeric: true })`) matching Windows File Explorer, preserving sequential prefix stability (`001_`, `002_`).

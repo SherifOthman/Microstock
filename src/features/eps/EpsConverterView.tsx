@@ -51,6 +51,13 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
   const [isConvertingBatch, setIsConvertingBatch] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Natural alphanumeric sorting matching Windows File Explorer
+  const sortedItems = useMemo(() => {
+    return [...items].sort((a, b) =>
+      a.originalName.localeCompare(b.originalName, undefined, { numeric: true, sensitivity: 'base' })
+    );
+  }, [items]);
+
   const handleAddFiles = (newFiles: File[]) => {
     const epsFiles = newFiles.filter((f) => {
       const ext = f.name.split('.').pop()?.toLowerCase();
@@ -110,7 +117,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
     setIsConvertingBatch(true);
     setStatusMessage(null);
 
-    const pending = items.filter((i) => i.status !== 'completed');
+    const pending = sortedItems.filter((i) => i.status !== 'completed');
     for (const item of pending) {
       await handleRenderSingle(item);
     }
@@ -332,9 +339,9 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
       )}
 
       {/* Items Grid */}
-      {items.length > 0 && (
+      {sortedItems.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          {items.map((item) => (
+          {sortedItems.map((item) => (
             <Card key={item.id} className="overflow-hidden flex flex-col justify-between border-border bg-card">
               <div className="p-3 space-y-2.5">
                 {/* Thumbnail Preview Area */}

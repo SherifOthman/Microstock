@@ -6,6 +6,7 @@ import {
   NEEDS_FIXING_FOLDER,
 } from '../../src/services/cleaner/fileCleanerEngine';
 import { BatchQueueService, QueueItem } from '../../src/services/queue/BatchQueueService';
+import { sortUnifiedAssets, UnifiedAssetItem } from '../../src/hooks/useUnifiedAssets';
 import * as mediaExtractorModule from '../../src/utils/mediaExtractor';
 
 vi.mock('../../src/utils/mediaExtractor', async (importOriginal) => {
@@ -257,6 +258,24 @@ describe('End-to-End (E2E) Mixed Media Resilient Pipeline', () => {
     expect(dbFilenames.some((fn) => fn.includes('B01_AI_PH_001_'))).toBe(true);
     expect(dbFilenames.some((fn) => fn.includes('B01_AI_VD_001_'))).toBe(true);
     expect(dbFilenames.some((fn) => fn.includes('B01_AI_VC_001_'))).toBe(true);
+
+    // Verify natural alphanumeric sort order across the pipeline matching OS explorer
+    const unifiedRows: UnifiedAssetItem[] = persistedRecords.map((r) => ({
+      id: r.id,
+      filename: r.filename,
+      thumbnailUrl: '',
+      status: 'queued' as const,
+      createdAt: r.createdAt || Date.now(),
+    }));
+    const sorted = sortUnifiedAssets(unifiedRows);
+    for (let i = 0; i < sorted.length - 1; i++) {
+      expect(
+        sorted[i].filename.localeCompare(sorted[i + 1].filename, undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        })
+      ).toBeLessThanOrEqual(0);
+    }
 
     // =========================================================================
     // STEP 3: VIDEO MUTER TRANSITION & 100% EXPORT PRESERVATION

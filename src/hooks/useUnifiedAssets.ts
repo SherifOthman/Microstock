@@ -24,28 +24,29 @@ export interface UnifiedAssetsResult {
 }
 
 /**
- * Strict deterministic sorting algorithm:
- * 1. Primary: createdAt ascending (strictly chronological)
- * 2. Secondary fallback: Natural alphanumeric filename sorting ({ numeric: true, sensitivity: 'base' })
- *    This ensures that 001_, 002_, and item_2 precede item_10 without lexicographical jumping.
+ * Strict deterministic sorting algorithm (matching Windows File Explorer):
+ * 1. Primary: Natural sequential alphanumeric sort by filename ({ numeric: true, sensitivity: 'base' })
+ *    This ensures that 001_, 002_, and item_2 precede item_10 without lexicographical jumping,
+ *    and prevents items from shifting position when file dates or modified times update.
+ * 2. Secondary fallback: createdAt ascending
  * 3. Tertiary fallback: Deterministic ID string comparison to guarantee 100% immutability and position stability.
  */
 export function sortUnifiedAssets(rows: UnifiedAssetRow[]): UnifiedAssetRow[] {
   return [...rows].sort((a, b) => {
-    // 1. Primary: strictly chronological by createdAt ascending
-    const timeA = a.createdAt || 0;
-    const timeB = b.createdAt || 0;
-    if (timeA !== timeB) {
-      return timeA - timeB;
-    }
-
-    // 2. Secondary fallback: Natural sequential alphanumeric sort on filename
+    // 1. Primary: Natural sequential alphanumeric sort on filename (matching Windows File Explorer)
     const nameDiff = a.filename.localeCompare(b.filename, undefined, {
       numeric: true,
       sensitivity: 'base',
     });
     if (nameDiff !== 0) {
       return nameDiff;
+    }
+
+    // 2. Secondary fallback: strictly chronological by createdAt ascending
+    const timeA = a.createdAt || 0;
+    const timeB = b.createdAt || 0;
+    if (timeA !== timeB) {
+      return timeA - timeB;
     }
 
     // 3. Tertiary fallback: Deterministic ID comparison to guarantee 100% stability

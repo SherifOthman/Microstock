@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useMemo } from 'react';
 import {
   VideoInspectionResult,
   inspectVideoAudioTrack,
@@ -38,6 +38,13 @@ export const VideoMuterView: React.FC = () => {
   const [progressMsg, setProgressMsg] = useState<string | null>(null);
   const [selectedPreviewVideo, setSelectedPreviewVideo] = useState<{ url: string; name: string } | null>(null);
   const [statusNotification, setStatusNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Natural alphanumeric sorting matching Windows File Explorer
+  const sortedVideos: VideoInspectionResult[] = useMemo(() => {
+    return [...videos].sort((a: VideoInspectionResult, b: VideoInspectionResult) =>
+      a.originalName.localeCompare(b.originalName, undefined, { numeric: true, sensitivity: 'base' })
+    );
+  }, [videos]);
 
 
   const handleAddVideos = async (files: File[]) => {
@@ -136,7 +143,7 @@ export const VideoMuterView: React.FC = () => {
   };
 
   const handleMuteAll = async () => {
-    const needsMuting = videos.filter((v) => v.hasAudio || v.status === 'ready');
+    const needsMuting = sortedVideos.filter((v) => v.hasAudio || v.status === 'ready');
     if (needsMuting.length === 0) return;
 
     setIsProcessingAll(true);
@@ -450,7 +457,7 @@ export const VideoMuterView: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/60">
-                  {videos.map((item, idx) => {
+                  {sortedVideos.map((item, idx) => {
                     const isMuted = item.status === 'muted';
                     const isAlreadySilent = item.status === 'already_silent';
                     const isAnalyzing = item.status === 'analyzing';
