@@ -150,6 +150,44 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
   const [videoObjectUrl, setVideoObjectUrl] = useState<string | null>(null);
   const [dynamicImageUrl, setDynamicImageUrl] = useState<string | null>(null);
 
+  // Cache object URLs created during the lightbox session to prevent memory leaks and eliminate small-to-large flickering
+  const objectUrlCacheRef = React.useRef<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    if (!open) {
+      objectUrlCacheRef.current.forEach((url) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {}
+      });
+      objectUrlCacheRef.current.clear();
+    }
+  }, [open]);
+
+  const currentAsset = resolveAssetFields(assets[currentIndex] || null);
+
+  // Synchronously compute the full-resolution image URL on frame 1 so images NEVER render the 256px thumbnail first
+  const synchronousImageSrc = React.useMemo(() => {
+    if (!currentAsset || !open) return '';
+    if (currentAsset.mediaType === 'image') {
+      if (currentAsset.nativePath) {
+        return `stockflow://local?path=${encodeURIComponent(currentAsset.nativePath)}`;
+      }
+      if (currentAsset.file && currentAsset.file.size > 0 && typeof URL.createObjectURL === 'function') {
+        const cacheKey = `${currentAsset.file.name}-${currentAsset.file.size}-${currentAsset.file.lastModified}`;
+        let cached = objectUrlCacheRef.current.get(cacheKey);
+        if (!cached) {
+          try {
+            cached = URL.createObjectURL(currentAsset.file);
+            objectUrlCacheRef.current.set(cacheKey, cached);
+          } catch {}
+        }
+        if (cached) return cached;
+      }
+    }
+    return '';
+  }, [currentAsset?.id, currentAsset?.file, currentAsset?.nativePath, currentAsset?.mediaType, open]);
+
   const handleClose = () => {
     onClose?.();
     onOpenChange?.(false);
@@ -160,7 +198,7 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
     setZoomLevel(1);
   }, [initialIndex, initialAssetId, open, assets.length]);
 
-  const currentAsset = resolveAssetFields(assets[currentIndex] || null);
+
 
   useEffect(() => {
     let createdBlobUrl: string | null = null;
@@ -189,17 +227,28 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
         setVideoObjectUrl(currentAsset.fallbackPreviewUrl);
       }
     } else if (currentAsset.mediaType === 'vector') {
-      // EPS Vector: generate crisp 1280px preview for lightbox without artboard lag
+      // EPS Vector: generate balanced, crisp 2048px preview for lightbox so user sees real artwork
       if (currentAsset.file && currentAsset.file.size > 0) {
-        rasterizeEpsFile(currentAsset.file, 1280, 0.88)
+        rasterizeEpsFile(currentAsset.file, 2048, 0.90)
           .then((res) => {
             if (!isCancelled) {
               setDynamicImageUrl(res.dataUrl || res.objectUrl || null);
             }
           })
-          .catch(() => {
-            // ignore fallback gracefully
-          });
+          .catch(() => {});
+      } else if (currentAsset.nativePath && typeof window !== 'undefined' && (window as any).electronAPI?.rasterizeEpsNative) {
+        (window as any).electronAPI.rasterizeEpsNative({
+          filePath: currentAsset.nativePath,
+          maxDim: 2048,
+          quality: 0.90,
+        }).then((res: any) => {
+          if (!isCancelled && res.success && res.buffer) {
+            const blob = new Blob([res.buffer], { type: 'image/jpeg' });
+            const url = URL.createObjectURL(blob);
+            objectUrlCacheRef.current.set(currentAsset.id, url);
+            setDynamicImageUrl(url);
+          }
+        }).catch(() => {});
       }
     } else {
       // Photo / Image: ALWAYS load full native resolution directly from file or disk
@@ -269,7 +318,7 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
   const isVideo = currentAsset.mediaType === 'video';
   const isVector = currentAsset.mediaType === 'vector';
   const isAr = typeof document !== 'undefined' && document.documentElement.lang === 'ar';
-  const effectiveImageSrc = dynamicImageUrl || currentAsset.fallbackPreviewUrl || '';
+  const effectiveImageSrc = synchronousImageSrc || dynamicImageUrl || currentAsset.fallbackPreviewUrl || '';
 
   return (
     <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col justify-between select-none animate-in fade-in-0 duration-150">

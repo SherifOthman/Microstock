@@ -935,9 +935,44 @@ function setupIpcHandlers() {
       }
       const inputEpsPath = hasValidPath ? filePath : tempEps;
 
-      // Use lightweight 72 DPI when generating thumbnails (maxDim <= 1024), or 300 DPI for full conversion
-      const isThumbnailMode = typeof maxDim === 'number' && maxDim > 0 && maxDim <= 1024;
-      const targetDpi = isThumbnailMode ? 72 : 300;
+      // Read EPS Bounding Box from header (first 64KB) to calculate optimal, balanced DPI
+      let widthPt = 800;
+      let heightPt = 600;
+      try {
+        let headerText = '';
+        if (hasValidPath) {
+          const fd = fs.openSync(filePath, 'r');
+          const buf = Buffer.alloc(65536);
+          const bytesRead = fs.readSync(fd, buf, 0, 65536, 0);
+          fs.closeSync(fd);
+          headerText = buf.toString('latin1', 0, bytesRead);
+        } else if (fileBuffer) {
+          const sliceLen = Math.min(fileBuffer.length, 65536);
+          headerText = Buffer.from(fileBuffer.slice(0, sliceLen)).toString('latin1');
+        }
+        const bbMatch = headerText.match(/%%(?:HiRes)?BoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i);
+        if (bbMatch) {
+          const w = Math.abs(parseFloat(bbMatch[3]) - parseFloat(bbMatch[1]));
+          const h = Math.abs(parseFloat(bbMatch[4]) - parseFloat(bbMatch[2]));
+          if (w > 10 && h > 10) {
+            widthPt = w;
+            heightPt = h;
+          }
+        }
+      } catch (bbErr) {
+        // fallback to standard 800x600 pt
+      }
+
+      const longestPt = Math.max(widthPt, heightPt, 50);
+      const desiredLongestPx = typeof maxDim === 'number' && maxDim > 0 ? maxDim : 2048;
+
+      // Calculate DPI so the longest side matches desiredLongestPx (72 pt = 1 inch in PostScript)
+      // Clamped between 72 DPI and 300 DPI to avoid 12,000px monster renders and prevent UI freezing
+      let targetDpi = Math.max(72, Math.min(300, Math.round((desiredLongestPx / longestPt) * 72)));
+      if (desiredLongestPx <= 1024) {
+        targetDpi = Math.min(targetDpi, 96);
+      }
+      const isThumbnailMode = desiredLongestPx <= 1024;
       const targetJpegQ =
         typeof quality === 'number' && quality > 0 && quality <= 1
           ? Math.max(50, Math.min(100, Math.round(quality * 100)))

@@ -77,9 +77,14 @@ export function generatePlatformCsv(
       rows = transformForAdobeStock(completedRecords);
       break;
 
-    case 'freepik':
-      rows = transformForFreepik(completedRecords, options?.freepik);
+    case 'freepik': {
+      // Magnific (Freepik) strictly supports only photos and vector artwork (no video support)
+      const nonVideoRecords = completedRecords.filter(
+        (r) => r.mediaType !== 'video' && !r.videoMeta && !/\.(mp4|mov|webm|avi|mkv|m4v|flv|wmv)$/i.test(r.filename ?? '')
+      );
+      rows = transformForFreepik(nonVideoRecords, options?.freepik);
       break;
+    }
 
     case 'shutterstock': {
       const res = transformForShutterstock(completedRecords, options?.shutterstock);

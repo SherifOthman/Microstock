@@ -277,10 +277,11 @@ export function transformForFreepik(
   records: MasterMetadataRecord[],
   options?: FreepikTransformOptions
 ): PlatformExportRow[] {
-  // Gracefully filter out video files from Freepik image CSV export
+  // Magnific (Freepik) strictly does NOT support videos — filter out all video assets to prevent portal rejection
   const eligibleRecords = records.filter((rec) => {
     if (rec.mediaType === 'video') return false;
-    if (rec.filename && /\.(mp4|mov|webm|avi|mkv)$/i.test(rec.filename)) return false;
+    if (rec.videoMeta) return false;
+    if (rec.filename && /\.(mp4|mov|webm|avi|mkv|m4v|flv|wmv)$/i.test(rec.filename)) return false;
     return true;
   });
 
