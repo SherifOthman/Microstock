@@ -218,4 +218,118 @@ describe('EPS Web Worker Background Engine (epsWorkerClient.ts)', () => {
     expect(mockWorkerInstance.terminate).toHaveBeenCalled();
     await expect(promise).rejects.toThrow('EPS worker terminated');
   });
+
+  it('lazily allocates file.arrayBuffer() only when a concurrency slot is acquired (prevents OOM spike)', async () => {
+    setMaxEpsConcurrencyForTesting(2);
+
+    const createTrackedFile = (name: string) => {
+      const f = new File([`content-${name}`], name);
+      vi.spyOn(f, 'arrayBuffer');
+      return f;
+    };
+
+    const f1 = createTrackedFile('lazy1.eps');
+    const f2 = createTrackedFile('lazy2.eps');
+    const f3 = createTrackedFile('lazy3.eps');
+    const f4 = createTrackedFile('lazy4.eps');
+
+    const p1 = rasterizeEpsWithWorker(f1);
+    const p2 = rasterizeEpsWithWorker(f2);
+    const p3 = rasterizeEpsWithWorker(f3);
+    const p4 = rasterizeEpsWithWorker(f4);
+
+    await vi.waitFor(() => expect(mockWorkerInstance.postMessage).toHaveBeenCalledTimes(2));
+
+    // Only the 2 active files should have allocated an ArrayBuffer; queued files f3 and f4 must have 0 allocations
+    expect(f1.arrayBuffer).toHaveBeenCalledTimes(1);
+    expect(f2.arrayBuffer).toHaveBeenCalledTimes(1);
+    expect(f3.arrayBuffer).toHaveBeenCalledTimes(0);
+    expect(f4.arrayBuffer).toHaveBeenCalledTimes(0);
+
+    // Complete task 1 -> f3 should now allocate its buffer
+    mockWorkerInstance.onmessage({
+      data: {
+        id: postedMessages[0].id,
+        success: true,
+        result: { width: 100, height: 100, blob: new Blob(['1']), sourceTier: 'vector' },
+      },
+    });
+    await p1;
+
+    await vi.waitFor(() => expect(mockWorkerInstance.postMessage).toHaveBeenCalledTimes(3));
+    expect(f3.arrayBuffer).toHaveBeenCalledTimes(1);
+    expect(f4.arrayBuffer).toHaveBeenCalledTimes(0);
+
+    // Complete remaining tasks
+    mockWorkerInstance.onmessage({
+      data: {
+        id: postedMessages[1].id,
+        success: true,
+        result: { width: 100, height: 100, blob: new Blob(['2']), sourceTier: 'vector' },
+      },
+    });
+    await p2;
+
+    await vi.waitFor(() => expect(mockWorkerInstance.postMessage).toHaveBeenCalledTimes(4));
+    expect(f4.arrayBuffer).toHaveBeenCalledTimes(1);
+
+    mockWorkerInstance.onmessage({
+      data: {
+        id: postedMessages[2].id,
+        success: true,
+        result: { width: 100, height: 100, blob: new Blob(['3']), sourceTier: 'vector' },
+      },
+    });
+    mockWorkerInstance.onmessage({
+      data: {
+        id: postedMessages[3].id,
+        success: true,
+        result: { width: 100, height: 100, blob: new Blob(['4']), sourceTier: 'vector' },
+      },
+    });
+
+    await Promise.all([p3, p4]);
+  });
+
+  it('spawns distinct Worker instances up to maxEpsConcurrency and terminates all on cleanup', async () => {
+    setMaxEpsConcurrencyForTesting(2);
+    const createdWorkers: any[] = [];
+
+    setWorkerFactoryForTesting(() => {
+      const w: any = {
+        postMessage: vi.fn((msg: any) => {
+          postedMessages.push({ worker: w, msg });
+        }),
+        terminate: vi.fn(),
+        onmessage: null,
+        onerror: null,
+      };
+      createdWorkers.push(w);
+      return w;
+    });
+
+    const p1 = rasterizeEpsWithWorker(new File(['1'], 'w1.eps'));
+    const p2 = rasterizeEpsWithWorker(new File(['2'], 'w2.eps'));
+
+    await vi.waitFor(() => expect(postedMessages).toHaveLength(2));
+    expect(createdWorkers).toHaveLength(2);
+    expect(createdWorkers[0]).not.toBe(createdWorkers[1]);
+
+    // Respond on each respective worker
+    for (const entry of postedMessages) {
+      entry.worker.onmessage({
+        data: {
+          id: entry.msg.id,
+          success: true,
+          result: { width: 200, height: 200, blob: new Blob(['ok']), sourceTier: 'vector' },
+        },
+      });
+    }
+
+    await Promise.all([p1, p2]);
+
+    terminateEpsWorker();
+    expect(createdWorkers[0].terminate).toHaveBeenCalledTimes(1);
+    expect(createdWorkers[1].terminate).toHaveBeenCalledTimes(1);
+  });
 });

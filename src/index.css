@@ -1,8 +1,14 @@
 @import "tailwindcss";
 
-@custom-variant dark (&:where(.dark, .dark *));
+@custom-variant dark (&:is(.dark *));
 
-@theme {
+@theme inline {
+  --font-sans: 'Inter', 'Cairo', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cairo', ui-monospace, SFMono-Regular, monospace;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -25,78 +31,70 @@
 }
 
 :root {
-  /* Crisp Light Mode — Cool canvas so white cards pop clearly */
-  --background: #E8ECF2;
-  --foreground: #0F172A;
+  --radius: 0.5rem;
+  /* Light Mode — High-Contrast Cool Gray Canvas (#F3F4F6) with Pure White Cards (#FFFFFF) and Crisp Borders (#D1D5DB) */
+  --background: #F3F4F6;
+  --foreground: #09090B;
   --card: #FFFFFF;
-  --card-foreground: #0F172A;
+  --card-foreground: #09090B;
   --popover: #FFFFFF;
-  --popover-foreground: #0F172A;
+  --popover-foreground: #09090B;
   --primary: #2563EB;
   --primary-foreground: #FFFFFF;
-  --secondary: #F1F5F9;
-  --secondary-foreground: #0F172A;
-  --muted: #F1F5F9;
-  --muted-foreground: #64748B;
-  --accent: #F1F5F9;
-  --accent-foreground: #0F172A;
-  --destructive: #EF4444;
+  --secondary: #E5E7EB;
+  --secondary-foreground: #111827;
+  --muted: #EEF0F4;
+  --muted-foreground: #4B5563;
+  --accent: #E5E7EB;
+  --accent-foreground: #09090B;
+  --destructive: #DC2626;
   --destructive-foreground: #FFFFFF;
-  --border: #CBD5E1;
-  --input: #CBD5E1;
+  --border: #D1D5DB;
+  --input: #D1D5DB;
   --ring: #2563EB;
 }
 
 .dark {
-  /* Dark Mode — Elevated contrast, cards pop off carbon canvas */
+  /* Dark Mode — Deep Zinc Carbon (#09090B) with Precision Blue Accent (#3B82F6) */
   --background: #09090B;
-  --foreground: #EDEDED;
-  --card: #18181B;
-  --card-foreground: #EDEDED;
-  --popover: #18181B;
-  --popover-foreground: #EDEDED;
+  --foreground: #FAFAFA;
+  --card: #121215;
+  --card-foreground: #FAFAFA;
+  --popover: #121215;
+  --popover-foreground: #FAFAFA;
   --primary: #3B82F6;
   --primary-foreground: #FFFFFF;
-  --secondary: #1F1F22;
-  --secondary-foreground: #EDEDED;
-  --muted: #1F1F22;
+  --secondary: #18181B;
+  --secondary-foreground: #E4E4E7;
+  --muted: #18181B;
   --muted-foreground: #A1A1AA;
-  --accent: #1F1F22;
-  --accent-foreground: #EDEDED;
+  --accent: #1F1F23;
+  --accent-foreground: #FAFAFA;
   --destructive: #EF4444;
-  --destructive-foreground: #EDEDED;
-  --border: #2E2E33;
-  --input: #2E2E33;
+  --destructive-foreground: #FFFFFF;
+  --border: #27272A;
+  --input: #27272A;
   --ring: #3B82F6;
 }
 
 @layer base {
-  *, ::before, ::after {
-    border-color: var(--color-border);
-    box-sizing: border-box;
-  }
-  html, body, #root {
-    overflow-x: hidden;
-    max-width: 100vw;
-    width: 100%;
-    margin: 0;
-    padding: 0;
+  * {
+    @apply border-border outline-ring/50;
   }
   body {
-    background-color: var(--color-background);
-    color: var(--color-foreground);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    min-height: 100vh;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+    @apply bg-background text-foreground;
+    font-family: 'Inter', 'Cairo', system-ui, -apple-system, sans-serif;
   }
-
-  [dir="rtl"], [dir="rtl"] body {
-    font-family: 'IBM Plex Sans Arabic', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  html[dir="rtl"] body {
+    font-family: 'Cairo', 'Inter', system-ui, -apple-system, sans-serif;
+  }
+  html[dir="rtl"],
+  html[dir="rtl"] * {
+    letter-spacing: 0 !important;
   }
 }
 
-/* Sleek Custom Scrollbars (ChatGPT/VSCode modern UI style) */
+/* Custom Sleek Scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -107,37 +105,18 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(140, 140, 140, 0.25);
+  background: rgba(161, 161, 170, 0.25);
   border-radius: 9999px;
-  transition: background-color 0.2s ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(140, 140, 140, 0.45);
+  background: rgba(161, 161, 170, 0.45);
 }
 
-.dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
-}
-
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.28);
-}
-
-/* Firefox standard scrollbars */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(140, 140, 140, 0.25) transparent;
-}
-
-.dark * {
-  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
-}
-
-/* Hide scrollbar for clean horizontal tabs */
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;

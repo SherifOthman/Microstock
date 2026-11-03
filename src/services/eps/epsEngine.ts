@@ -2,8 +2,8 @@
  * EPS 10 Multi-Tier Vector Parser & High-Resolution Rasterizer Engine
  * 
  * High-performance facade supporting:
- * - Tier 0: Native Ghostscript bridge (if available via Electron desktop API)
- * - Tier 1 & 2: Background Web Worker execution offloading heavy PostScript parsing, CMYK math, and binary decoding
+ * - Tier 0: Native Ghostscript bridge (if available via Electron desktop API), throttled via runInEpsPool
+ * - Tier 1 & 2: Background Web Worker pool offloading heavy PostScript parsing, CMYK math, and binary decoding
  * - Tier 3: Direct resilient fallback engine ensuring 100% test compatibility and continuous operation
  */
 
@@ -25,6 +25,7 @@ import {
   rasterizeEpsWithWorker,
   terminateEpsWorker,
   isWorkerSupported,
+  runInEpsPool,
 } from './epsWorkerClient';
 
 export type { EpsBoundingBox, EpsRenderResult };
@@ -41,12 +42,13 @@ export {
   rasterizeEpsWithWorker,
   terminateEpsWorker,
   isWorkerSupported,
+  runInEpsPool,
 };
 
 /**
  * Primary Rasterizer Function:
- * Automatically delegates to native desktop Ghostscript (Tier 0) or background Web Worker (Tier 1-3).
- * Keeps the main React thread free at 60fps with zero UI freezing.
+ * Automatically delegates to native desktop Ghostscript (Tier 0) or background Web Worker Pool (Tier 1-3).
+ * Keeps the main React thread and Electron main process free at 60fps with zero UI freezing.
  */
 export async function rasterizeEpsFile(
   file: File | Blob,
@@ -60,29 +62,33 @@ export async function rasterizeEpsFile(
 
   // ==========================================
   // TIER 0: Native Ghostscript Rasterization (Exact Native Artboard Dimensions & Vector Fidelity)
-  // Bypasses browser Canvas limitations; renders gradients, meshes, clipping paths identically to Adobe Illustrator.
+  // Throttled through runInEpsPool so 50+ dropped files do not allocate 50 ArrayBuffers at once!
   // ==========================================
   if (typeof window !== 'undefined' && window.electronAPI?.rasterizeEpsNative) {
     try {
-      const buffer = await file.arrayBuffer();
-      const nativeRes = await window.electronAPI.rasterizeEpsNative(buffer, rawFileName);
-      if (nativeRes.success && nativeRes.buffer) {
-        const nativeBlob = new Blob([nativeRes.buffer], { type: 'image/jpeg' });
-        const nativeDataUrl = URL.createObjectURL(nativeBlob);
+      const nativeResult = await runInEpsPool(async () => {
+        const buffer = await file.arrayBuffer();
+        return await window.electronAPI!.rasterizeEpsNative!(buffer, rawFileName);
+      });
 
-        const canvas = createUniversalCanvas(nativeRes.width || 0, nativeRes.height || 0);
+      if (nativeResult.success && nativeResult.buffer) {
+        const nativeBlob = new Blob([nativeResult.buffer], { type: 'image/jpeg' });
+        const nativeObjectUrl =
+          typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'
+            ? URL.createObjectURL(nativeBlob)
+            : '';
 
         return {
-          width: nativeRes.width || 0,
-          height: nativeRes.height || 0,
-          canvas,
-          dataUrl: nativeDataUrl,
+          width: nativeResult.width || 0,
+          height: nativeResult.height || 0,
+          dataUrl: nativeObjectUrl,
+          objectUrl: nativeObjectUrl,
           blob: nativeBlob,
           sourceTier: 'vector',
           pathOpCount: 1000,
         };
       } else {
-        console.warn('[EpsEngine] Native Ghostscript rasterize warning:', nativeRes.error);
+        console.warn('[EpsEngine] Native Ghostscript rasterize warning:', nativeResult.error);
       }
     } catch (nativeErr) {
       console.warn('[EpsEngine] Native Ghostscript error, falling back to Web Worker engine:', nativeErr);
@@ -90,7 +96,7 @@ export async function rasterizeEpsFile(
   }
 
   // ==========================================
-  // TIER 1 - 3: Offloaded to Dedicated Web Worker Background Process
+  // TIER 1 - 3: Offloaded to Dedicated Web Worker Pool
   // ==========================================
   return await rasterizeEpsWithWorker(file, targetLongestSide, jpegQuality);
 }

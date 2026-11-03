@@ -1,612 +1,285 @@
-import React, { useRef, useState, useMemo } from 'react';
-import {
-  VideoInspectionResult,
-  inspectVideoAudioTrack,
-  saveMutedVideosToDirectory,
-  stripAudioTrackLossless,
-} from '../../services/video/videoMuterEngine';
+import React, { useRef } from 'react';
 import { Button } from '../../components/ui/button';
-import { Badge } from '../../components/ui/badge';
+import { Tooltip } from '../../components/ui/tooltip';
 import {
-  Check,
+  Archive,
   CheckCircle2,
-  Clock,
-  Download,
-  Film,
-  FolderDown,
   FolderUp,
   Loader2,
-  Play,
   Plus,
-  Save,
   Trash2,
   UploadCloud,
-  Volume2,
   VolumeX,
-  X,
-  Zap,
+  Wand2,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
+import { useVideoMuter, VideoMuteItem } from './hooks/useVideoMuter';
+import { VideoMuterTable } from './components/VideoMuterTable';
 
-export const VideoMuterView: React.FC = () => {
-  const { t, language } = useLanguage();
+export type { VideoMuteItem };
+
+export interface VideoMuterViewProps {
+  onSendToStudio?: (files: File[]) => void;
+}
+
+/**
+ * Lossless Video Audio Stripper
+ * Strictly preserves exact original filenames without renaming so sequence matching
+ * with File Cleaner and CSV exports remains 100% intact.
+ */
+export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }) => {
+  const { language, t } = useLanguage();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
-  const [videos, setVideos] = useState<VideoInspectionResult[]>([]);
-  const [isProcessingAll, setIsProcessingAll] = useState(false);
-  const [progressMsg, setProgressMsg] = useState<string | null>(null);
-  const [selectedPreviewVideo, setSelectedPreviewVideo] = useState<{ url: string; name: string } | null>(null);
-  const [statusNotification, setStatusNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const {
+    items,
+    isMutingBatch,
+    isExporting,
+    exportSuccessMessage,
+    handleAddFiles,
+    handleRemoveItem,
+    handleClearAll,
+    handleMuteSingle,
+    handleMuteAll,
+    handleDownloadSingle,
+    handleDownloadAllZip,
+    handleExportToFolder,
+    handleSendToStudio,
+  } = useVideoMuter(language, onSendToStudio);
 
-  // Natural alphanumeric sorting matching Windows File Explorer
-  const sortedVideos: VideoInspectionResult[] = useMemo(() => {
-    return [...videos].sort((a: VideoInspectionResult, b: VideoInspectionResult) =>
-      a.originalName.localeCompare(b.originalName, undefined, { numeric: true, sensitivity: 'base' })
-    );
-  }, [videos]);
-
-
-  const handleAddVideos = async (files: File[]) => {
-    const videoFiles = files.filter((f) => {
-      const ext = f.name.split('.').pop()?.toLowerCase();
-      return (
-        f.type.startsWith('video/') ||
-        ext === 'mp4' ||
-        ext === 'mov' ||
-        ext === 'webm' ||
-        ext === 'm4v'
-      );
-    });
-
-    if (videoFiles.length === 0) return;
-
-    // Initial item objects - strictly preserving original filename
-    const newItems: VideoInspectionResult[] = videoFiles.map((file, idx) => ({
-      id: `${file.name}-${file.size}-${Date.now()}-${idx}`,
-      file,
-      originalName: file.name,
-      outputName: file.name,
-      size: file.size,
-      hasAudio: false,
-      audioTrackCount: 0,
-      videoTrackCount: 1,
-      status: 'analyzing',
-    }));
-
-    setVideos((prev) => [...prev, ...newItems]);
-
-    // Inspect each video in parallel
-    for (const item of newItems) {
-      try {
-        const info = await inspectVideoAudioTrack(item.file);
-        setVideos((prev) =>
-          prev.map((v) =>
-            v.id === item.id
-              ? {
-                  ...v,
-                  hasAudio: info.hasAudio,
-                  audioTrackCount: info.audioTrackCount,
-                  videoTrackCount: info.videoTrackCount,
-                  durationSeconds: info.durationSeconds,
-                  status: info.hasAudio ? 'ready' : 'already_silent',
-                }
-              : v
-          )
-        );
-      } catch (err) {
-        setVideos((prev) =>
-          prev.map((v) =>
-            v.id === item.id
-              ? { ...v, status: 'error', errorMessage: 'Could not read video metadata' }
-              : v
-          )
-        );
-      }
-    }
-  };
-
-  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      handleAddVideos(Array.from(e.target.files));
+  const onFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      handleAddFiles(Array.from(e.target.files));
       e.target.value = '';
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleAddVideos(Array.from(e.dataTransfer.files));
+    if (e.dataTransfer.files) {
+      handleAddFiles(Array.from(e.dataTransfer.files));
     }
   };
 
-  const handleMuteSingle = async (id: string) => {
-    const target = videos.find((v) => v.id === id);
-    if (!target) return;
-
-    setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, status: 'muting' } : v)));
-
-    try {
-      const mutedBlob = await stripAudioTrackLossless(target.file);
-      setVideos((prev) =>
-        prev.map((v) =>
-          v.id === id ? { ...v, status: 'muted', mutedBlob, hasAudio: false } : v
-        )
-      );
-    } catch (err: any) {
-      setVideos((prev) =>
-        prev.map((v) =>
-          v.id === id ? { ...v, status: 'error', errorMessage: err.message || 'Muting failed' } : v
-        )
-      );
-    }
-  };
-
-  const handleMuteAll = async () => {
-    const needsMuting = sortedVideos.filter((v) => v.hasAudio || v.status === 'ready');
-    if (needsMuting.length === 0) return;
-
-    setIsProcessingAll(true);
-    setProgressMsg(`Losslessly stripping audio from ${needsMuting.length} videos...`);
-    setStatusNotification(null);
-
-    let completed = 0;
-    for (const v of needsMuting) {
-      try {
-        setVideos((prev) => prev.map((item) => (item.id === v.id ? { ...item, status: 'muting' } : item)));
-        const mutedBlob = await stripAudioTrackLossless(v.file);
-        setVideos((prev) =>
-          prev.map((item) =>
-            item.id === v.id ? { ...item, status: 'muted', mutedBlob, hasAudio: false } : item
-          )
-        );
-        completed++;
-        setProgressMsg(`Processed ${completed} of ${needsMuting.length} videos...`);
-      } catch (err: any) {
-        setVideos((prev) =>
-          prev.map((item) =>
-            item.id === v.id ? { ...item, status: 'error', errorMessage: err.message } : item
-          )
-        );
-      }
-    }
-
-    setIsProcessingAll(false);
-    setProgressMsg(null);
-    setStatusNotification({
-      type: 'success',
-      message: `Completed! Losslessly stripped audio from ${completed} videos (0% re-encoding quality loss).`,
-    });
-  };
-
-  const handleSaveToDirectory = async () => {
-    if (videos.length === 0) return;
-    setIsProcessingAll(true);
-    setProgressMsg('Saving videos to folder...');
-    setStatusNotification(null);
-
-    const res = await saveMutedVideosToDirectory(videos, '_Muted_Videos', (done, total) => {
-      setProgressMsg(`Saved ${done} of ${total} videos...`);
-    });
-
-    setIsProcessingAll(false);
-    setProgressMsg(null);
-
-    if (res.success) {
-      setStatusNotification({
-        type: 'success',
-        message: `Successfully saved ${res.savedCount} videos into folder "_Muted_Videos"!`,
-      });
-    } else if (res.error && !res.error.includes('cancelled')) {
-      setStatusNotification({ type: 'error', message: res.error });
-    }
-  };
-
-  const handleClearAll = () => {
-    setVideos([]);
-    setStatusNotification(null);
-  };
-
-  const handleRemoveSingle = (id: string) => {
-    setVideos((prev) => prev.filter((v) => v.id !== id));
-  };
-
-  const handlePreview = (item: VideoInspectionResult) => {
-    const blobToPlay = item.mutedBlob || item.file;
-    const url = URL.createObjectURL(blobToPlay);
-    setSelectedPreviewVideo({ url, name: item.originalName });
-  };
-
-  const pendingMuteCount = videos.filter((v) => v.hasAudio && v.status !== 'muted').length;
-  const mutedCount = videos.filter((v) => v.status === 'muted' || v.status === 'already_silent').length;
+  const completedCount = items.filter((i) => i.status === 'completed').length;
+  const readyForStudioCount = items.filter((i) => i.status === 'completed' || i.hasAudio === false).length;
 
   return (
-    <div className="space-y-5 max-w-6xl mx-auto py-2 px-1">
-      {/* Hidden File Inputs */}
+    <div className="max-w-6xl mx-auto space-y-4">
       <input
         ref={fileInputRef}
         type="file"
         multiple
-        accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v"
-        onChange={handleFileInput}
+        accept="video/mp4,video/quicktime,.mp4,.mov"
+        onChange={onFileInputChange}
         className="hidden"
       />
       <input
         ref={folderInputRef}
         type="file"
-        // @ts-expect-error webkitdirectory folder upload
-        webkitdirectory=""
-        directory=""
         multiple
-        onChange={handleFileInput}
+        {...({ webkitdirectory: '', directory: '' } as any)}
+        onChange={onFileInputChange}
         className="hidden"
       />
 
-      {/* Header & Title */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 flex items-center justify-center">
-              <VolumeX className="w-4 h-4" />
-            </div>
-            <h1 className="text-lg font-bold text-foreground">
-              {language === 'ar' ? 'حذف الصوت من الفيديوهات بدون إعادة ترميز' : 'Lossless Video Audio Remover (Video Muter)'}
-            </h1>
-            <Badge variant="secondary" className="text-[11px] font-mono">
-              0% Quality Loss
-            </Badge>
+      {/* Header Bar (No Filename Renaming Checkbox) */}
+      <div className="p-4 rounded-xl border border-border bg-card flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-secondary text-primary border border-border">
+            <VolumeX className="w-4 h-4" />
           </div>
-          <p className="text-xs text-muted-foreground mt-1">
-            {language === 'ar'
-              ? 'إزالة المسار الصوتي فورياً بدون إعادة ضغط الفيديو مع الحفاظ على الدقة ومعدل الإطارات 100% كما تطلب وكالات الستوك.'
-              : 'Strips audio streams instantly in the browser without re-encoding frames. Preserves 100% original visual quality.'}
-          </p>
+          <div className="text-start">
+            <h1 className="text-sm sm:text-base font-semibold text-foreground tracking-tight">
+              {language === 'ar' ? 'حذف صوت الفيديو بدون إعادة ترميز' : 'Lossless Video Audio Stripper'}
+            </h1>
+            <p className="text-xs text-muted-foreground">
+              {language === 'ar'
+                ? 'إزالة مسارات الصوت من ملفات MP4 و MOV مع الحفاظ على الاسم الأصلي ودقة الفيديو 100%.'
+                : 'Strip audio tracks from MP4 and MOV containers while preserving exact original filenames.'}
+            </p>
+          </div>
         </div>
 
-        {videos.length > 0 && (
-          <div className="flex items-center gap-2 shrink-0">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleClearAll}
-              className="h-8 text-xs text-muted-foreground hover:text-destructive gap-1"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>{t.clearAll || 'Clear All'}</span>
-            </Button>
-          </div>
-        )}
+        <span className="text-[11px] font-mono text-muted-foreground shrink-0">
+          {language === 'ar' ? 'MP4 · MOV · بدون إعادة ترميز' : 'MP4 · MOV · Zero Re-encode'}
+        </span>
       </div>
 
-      {/* Notification banner */}
-      {statusNotification && (
-        <div
-          className={`p-3 rounded-xl border text-xs flex items-center justify-between gap-2 ${
-            statusNotification.type === 'success'
-              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-              : 'border-destructive/30 bg-destructive/10 text-destructive'
-          }`}
-        >
+      {/* Success Banner */}
+      {exportSuccessMessage && (
+        <div className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            {statusNotification.type === 'success' ? (
-              <CheckCircle2 className="w-4 h-4 shrink-0" />
-            ) : (
-              <X className="w-4 h-4 shrink-0" />
-            )}
-            <span>{statusNotification.message}</span>
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            <span>{exportSuccessMessage}</span>
           </div>
-          <button
-            type="button"
-            onClick={() => setStatusNotification(null)}
-            className="text-muted-foreground hover:text-foreground cursor-pointer"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
+          {onSendToStudio && items.length > 0 && (
+            <Button
+              size="sm"
+              onClick={handleSendToStudio}
+              className="gap-1.5 text-xs font-semibold shrink-0 cursor-pointer"
+            >
+              <Wand2 className="w-3.5 h-3.5" />
+              <span>
+                {language === 'ar'
+                  ? `إرسال إلى استوديو Metadata (${readyForStudioCount || items.length})`
+                  : `Send to Metadata Studio (${readyForStudioCount || items.length})`}
+              </span>
+            </Button>
+          )}
         </div>
       )}
 
-      {/* Drop Zone Area (Always visible at top) */}
-      {videos.length === 0 ? (
+      {/* Main Content */}
+      {items.length === 0 ? (
         <div
           onDragOver={(e) => e.preventDefault()}
-          onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-          className="border-2 border-dashed border-border hover:border-foreground/40 bg-card/50 hover:bg-card/80 rounded-2xl p-10 text-center transition space-y-3 cursor-pointer"
+          onDrop={onDrop}
+          className="border-2 border-dashed border-border hover:border-primary/50 bg-card rounded-xl p-10 text-center transition space-y-3"
         >
-          <div className="w-12 h-12 rounded-xl bg-secondary text-foreground flex items-center justify-center mx-auto border border-border">
-            <Film className="w-6 h-6 text-emerald-500" />
+          <div className="w-11 h-11 rounded-xl bg-secondary text-primary flex items-center justify-center mx-auto border border-border">
+            <UploadCloud className="w-5 h-5" />
           </div>
           <div className="space-y-1">
             <h3 className="text-sm font-semibold text-foreground">
-              {language === 'ar' ? 'اسحب ملفات الفيديو (.mp4 / .mov) هنا' : 'Drop .mp4 / .mov video files here'}
+              {language === 'ar' ? 'اسحب مقاطع الفيديو هنا (MP4 / MOV)' : 'Drop MP4 or MOV video files here'}
             </h3>
-            <p className="text-xs text-muted-foreground max-w-md mx-auto">
+            <p className="text-xs text-muted-foreground">
               {language === 'ar'
-                ? 'يدعم MP4 و MOV. فحص سريع للصوت وإزالة مسار الصوت فورياً بدون أي إعادة ضغط (فقدان 0% في الجودة).'
-                : 'Supports .mp4 and .mov files. Fast audio stream detection and instant zero-loss audio stripping.'}
+                ? 'فحص تلقائي لوجود الصوت وحذفه في أجزاء من الثانية.'
+                : 'Automatic audio track detection and sub-second stream stripping.'}
             </p>
           </div>
-          <div className="flex items-center justify-center gap-2 pt-2" onClick={(e) => e.stopPropagation()}>
-            <Button size="sm" onClick={() => fileInputRef.current?.click()} className="gap-1.5 text-xs">
+          <div className="flex items-center justify-center gap-2 pt-1">
+            <Button size="sm" onClick={() => fileInputRef.current?.click()} className="gap-1.5 text-xs font-semibold cursor-pointer">
               <Plus className="w-3.5 h-3.5" />
-              <span>{language === 'ar' ? 'اختيار ملفات' : 'Select Files'}</span>
+              <span>{t.selectFiles}</span>
             </Button>
             <Button
               variant="outline"
               size="sm"
               onClick={() => folderInputRef.current?.click()}
-              className="gap-1.5 text-xs"
+              className="gap-1.5 text-xs cursor-pointer"
             >
               <FolderUp className="w-3.5 h-3.5" />
-              <span>{t.selectFolder || 'Select Folder'}</span>
+              <span>{t.selectFolder}</span>
             </Button>
           </div>
         </div>
       ) : (
-        <div
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-          className="border-2 border-dashed border-border hover:border-foreground/40 bg-card/40 hover:bg-card/80 rounded-xl p-4 text-center transition flex flex-col sm:flex-row items-center justify-between gap-3 cursor-pointer"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 flex items-center justify-center shrink-0">
-              <Film className="w-4 h-4" />
-            </div>
-            <div className="text-left">
-              <p className="text-xs font-semibold text-foreground">
-                {language === 'ar' ? 'إضافة المزيد من الفيديوهات' : 'Drop more .mp4 / .mov files here'}
-              </p>
-              <p className="text-[11px] text-muted-foreground">
-                {language === 'ar' ? 'اسحب ملفات إضافية أو انقر للاختيار' : 'Drag additional videos or click to browse'}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => fileInputRef.current?.click()}
-              className="h-7 text-xs gap-1"
-            >
-              <Plus className="w-3 h-3" />
-              <span>Add Files</span>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => folderInputRef.current?.click()}
-              className="h-7 text-xs gap-1"
-            >
-              <FolderUp className="w-3 h-3" />
-              <span>Add Folder</span>
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* List Display (Below the Dropzone) */}
-      {videos.length > 0 && (
         <div className="space-y-3">
-          {/* Action Toolbar */}
-          <div className="p-3 bg-card rounded-xl border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-            <div className="flex items-center gap-2 text-xs font-medium text-foreground">
-              <span className="font-semibold">{videos.length} videos loaded</span>
-              <span className="text-muted-foreground">•</span>
-              <span className="text-muted-foreground">{pendingMuteCount} with audio</span>
-              <span className="text-muted-foreground">•</span>
-              <span className="text-muted-foreground">{mutedCount} silent</span>
+          {/* Action Toolbar with Both "Add Files" and "Add Folder" */}
+          <div className="p-3 bg-card rounded-xl border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-xs font-mono tabular-nums">
+              <span className="font-semibold text-foreground">
+                {items.length} {language === 'ar' ? 'فيديو' : 'videos'}
+              </span>
+              <span className="text-muted-foreground">·</span>
+              <span className="text-muted-foreground">
+                {completedCount}/{items.length} {language === 'ar' ? 'صامت' : 'muted'}
+              </span>
             </div>
 
-            {/* Primary Actions: Mute All & Save to Folder */}
-            <div className="flex items-center gap-2 flex-wrap justify-between sm:justify-end">
+            <div className="flex items-center gap-2 flex-wrap">
               <Button
+                variant="outline"
                 size="sm"
-                onClick={handleMuteAll}
-                disabled={isProcessingAll || pendingMuteCount === 0}
-                className="gap-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50"
+                onClick={() => fileInputRef.current?.click()}
+                className="gap-1.5 text-xs cursor-pointer"
               >
-                {isProcessingAll ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <VolumeX className="w-3.5 h-3.5" />
-                )}
-                <span>
-                  {language === 'ar'
-                    ? `كتم الكل (${pendingMuteCount})`
-                    : `Mute All${pendingMuteCount > 0 ? ` (${pendingMuteCount})` : ''}`}
-                </span>
+                <Plus className="w-3.5 h-3.5" />
+                <span>{t.selectFiles}</span>
               </Button>
 
               <Button
+                variant="outline"
                 size="sm"
-                onClick={handleSaveToDirectory}
-                disabled={isProcessingAll || videos.length === 0}
-                className="gap-1.5 text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
+                onClick={() => folderInputRef.current?.click()}
+                className="gap-1.5 text-xs cursor-pointer"
               >
-                <FolderDown className="w-3.5 h-3.5" />
+                <FolderUp className="w-3.5 h-3.5" />
+                <span>{t.selectFolder}</span>
+              </Button>
+
+              {completedCount < items.length && (
+                <Button
+                  size="sm"
+                  onClick={handleMuteAll}
+                  disabled={isMutingBatch}
+                  className="gap-1.5 text-xs font-semibold cursor-pointer"
+                >
+                  {isMutingBatch ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <VolumeX className="w-3.5 h-3.5" />
+                  )}
+                  <span>{language === 'ar' ? 'كتم صوت الكل' : 'Mute All Videos'}</span>
+                </Button>
+              )}
+
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleExportToFolder}
+                disabled={isExporting}
+                className="gap-1.5 text-xs font-semibold cursor-pointer"
+              >
+                {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FolderUp className="w-3.5 h-3.5" />}
                 <span>{language === 'ar' ? 'حفظ في مجلد' : 'Save to Folder'}</span>
               </Button>
-            </div>
-          </div>
 
-          {/* Progress message */}
-          {progressMsg && (
-            <div className="p-2.5 rounded-lg bg-secondary/50 border border-border text-xs flex items-center gap-2 font-mono text-muted-foreground">
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-500" />
-              <span>{progressMsg}</span>
-            </div>
-          )}
-
-          {/* Video List Table */}
-          <div className="border border-border rounded-xl bg-card overflow-hidden shadow-xs">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-secondary/40 border-b border-border text-muted-foreground font-mono text-[11px]">
-                  <tr>
-                    <th className="py-2.5 px-3 w-12 text-center">#</th>
-                    <th className="py-2.5 px-3 min-w-[280px]">
-                      {language === 'ar' ? 'اسم الملف والمواصفات' : 'Filename & Details'}
-                    </th>
-                    <th className="py-2.5 px-3 min-w-[180px]">
-                      {language === 'ar' ? 'حالة الصوت' : 'Audio Status'}
-                    </th>
-                    <th className="py-2.5 px-3 w-28 text-center">
-                      {language === 'ar' ? 'الإجراء' : 'Action'}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border/60">
-                  {sortedVideos.map((item, idx) => {
-                    const isMuted = item.status === 'muted';
-                    const isAlreadySilent = item.status === 'already_silent';
-                    const isAnalyzing = item.status === 'analyzing';
-                    const isMuting = item.status === 'muting';
-
-                    return (
-                      <tr key={item.id} className="hover:bg-secondary/20 transition">
-                        <td className="py-2.5 px-3 text-center text-muted-foreground font-mono text-[11px]">
-                          {idx + 1}
-                        </td>
-                        <td className="py-2.5 px-3 min-w-0">
-                          <p className="font-semibold text-foreground truncate max-w-xs" title={item.originalName}>
-                            {item.originalName}
-                          </p>
-                          <span className="text-[10px] text-muted-foreground font-mono">
-                            {(item.size / (1024 * 1024)).toFixed(1)} MB
-                            {item.durationSeconds ? ` • ${item.durationSeconds}s` : ''}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3 min-w-0">
-                          {isAnalyzing && (
-                            <Badge variant="outline" className="gap-1 text-[11px] py-0.5 text-muted-foreground font-mono">
-                              <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                              <span>Scanning...</span>
-                            </Badge>
-                          )}
-                          {isAlreadySilent && (
-                            <Badge
-                              variant="outline"
-                              className="gap-1 text-[11px] py-0.5 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 font-medium"
-                            >
-                              <span>Silent 🔇</span>
-                            </Badge>
-                          )}
-                          {isMuted && (
-                            <Badge
-                              variant="outline"
-                              className="gap-1 text-[11px] py-0.5 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 font-medium"
-                            >
-                              <Check className="w-3 h-3" />
-                              <span>Silent 🔇 (Muted)</span>
-                            </Badge>
-                          )}
-                          {!isAnalyzing && !isAlreadySilent && !isMuted && item.hasAudio && (
-                            <Badge
-                              variant="outline"
-                              className="gap-1 text-[11px] py-0.5 border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/10 font-medium"
-                            >
-                              <Volume2 className="w-3 h-3" />
-                              <span>Has Audio 🔊</span>
-                            </Badge>
-                          )}
-                          {item.status === 'error' && (
-                            <Badge
-                              variant="outline"
-                              className="gap-1 text-[11px] py-0.5 border-zinc-500/30 text-muted-foreground bg-secondary font-medium"
-                              title={item.errorMessage || 'Inspection error'}
-                            >
-                              <span>Silent 🔇 (Original)</span>
-                            </Badge>
-                          )}
-                        </td>
-                        <td className="py-2.5 px-3 text-center">
-                          <div className="flex items-center justify-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => handlePreview(item)}
-                              className="p-1 rounded text-muted-foreground hover:text-foreground cursor-pointer transition"
-                              title="Preview Video"
-                            >
-                              <Play className="w-3.5 h-3.5" />
-                            </button>
-
-                            {item.hasAudio && item.status !== 'muted' && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleMuteSingle(item.id)}
-                                disabled={isMuting}
-                                className="h-6 text-[10px] px-2 gap-1 cursor-pointer"
-                              >
-                                {isMuting ? (
-                                  <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                                ) : (
-                                  <VolumeX className="w-2.5 h-2.5" />
-                                )}
-                                <span>Mute</span>
-                              </Button>
-                            )}
-
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveSingle(item.id)}
-                              className="p-1 rounded text-muted-foreground hover:text-destructive cursor-pointer transition"
-                              title="Remove video"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Video Preview Modal */}
-      {selectedPreviewVideo && (
-        <div
-          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-xs"
-          onClick={() => {
-            URL.revokeObjectURL(selectedPreviewVideo.url);
-            setSelectedPreviewVideo(null);
-          }}
-        >
-          <div
-            className="bg-card border border-border rounded-2xl p-4 max-w-2xl w-full space-y-3 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-foreground truncate max-w-md">
-                {selectedPreviewVideo.name}
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  URL.revokeObjectURL(selectedPreviewVideo.url);
-                  setSelectedPreviewVideo(null);
-                }}
-                className="text-muted-foreground hover:text-foreground cursor-pointer"
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleDownloadAllZip}
+                disabled={isExporting}
+                className="gap-1.5 text-xs cursor-pointer"
               >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="rounded-xl overflow-hidden bg-black aspect-video flex items-center justify-center">
-              <video
-                src={selectedPreviewVideo.url}
-                controls
-                autoPlay
-                className="w-full h-full object-contain"
-              />
+                <Archive className="w-3.5 h-3.5" />
+                <span>{language === 'ar' ? 'تصدير ZIP' : 'Export ZIP'}</span>
+              </Button>
+
+              {onSendToStudio && readyForStudioCount > 0 && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleSendToStudio}
+                  className="gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 cursor-pointer"
+                >
+                  <Wand2 className="w-3.5 h-3.5" />
+                  <span>
+                    {language === 'ar'
+                      ? `إرسال إلى استوديو Metadata (${readyForStudioCount})`
+                      : `Send to Metadata Studio (${readyForStudioCount})`}
+                  </span>
+                </Button>
+              )}
+
+              <Tooltip content={language === 'ar' ? 'مسح القائمة' : 'Clear All'}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleClearAll}
+                  className="h-8 w-8 text-muted-foreground hover:text-destructive cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              </Tooltip>
             </div>
           </div>
+
+          {/* TanStack Virtualized Videos Table */}
+          <VideoMuterTable
+            items={items}
+            language={language}
+            onMuteSingle={handleMuteSingle}
+            onDownloadSingle={handleDownloadSingle}
+            onRemoveItem={handleRemoveItem}
+          />
         </div>
       )}
     </div>
   );
 };
+

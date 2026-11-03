@@ -189,6 +189,8 @@ describe('EPS 10 Vector Parser & Rendering Fallbacks (epsEngine.ts & mediaExtrac
       expect(info.mediaType).toBe('vector');
       expect(info.hasRealPreview).toBe(true); // Artwork present from companion JPG!
       expect(info.thumbnailBase64).toBeTruthy();
+      expect(info.thumbnailDataUrl.startsWith('data:image/jpeg;base64,')).toBe(true);
+      expect(info.thumbnailBase64.startsWith('blob:')).toBe(false);
     });
   });
 });

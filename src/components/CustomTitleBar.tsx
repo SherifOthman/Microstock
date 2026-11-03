@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Minus, Square, X, Copy } from 'lucide-react';
 import { AppLogo } from './icons/AppLogo';
+import { Tooltip } from './ui/tooltip';
 
 export const CustomTitleBar: React.FC = () => {
   const [isMax, setIsMax] = useState(false);
@@ -45,20 +46,15 @@ export const CustomTitleBar: React.FC = () => {
   return (
     <div
       dir="ltr"
-      className="h-9 w-full bg-zinc-950 text-zinc-300 select-none flex items-center justify-between border-b border-zinc-800/80 z-50 text-xs ltr"
+      className="h-8 w-full bg-card text-foreground select-none flex items-center justify-between border-b border-border z-50 text-xs"
       style={{ WebkitAppRegion: 'drag', direction: 'ltr' } as React.CSSProperties}
     >
-      {/* Left: App Logo & Title */}
+      {/* Left: App Icon & Standardized StockFlow Wordmark */}
       <div className="flex items-center gap-2 px-3">
-        <AppLogo className="w-4 h-4 text-blue-500" />
-        <span className="font-semibold text-zinc-200 tracking-wide text-[11px]">
-          Microstock Studio
+        <AppLogo size={16} className="shrink-0" />
+        <span className="font-semibold text-foreground tracking-tight text-[11px]">
+          StockFlow
         </span>
-      </div>
-
-      {/* Middle: Subtle Window Drag Zone Title */}
-      <div className="text-[11px] text-zinc-500 font-medium truncate pointer-events-none">
-        Native Desktop Client
       </div>
 
       {/* Right: Window Control Action Buttons */}
@@ -66,32 +62,38 @@ export const CustomTitleBar: React.FC = () => {
         className="flex items-center h-full"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
-        <button
-          type="button"
-          onClick={handleMinimize}
-          className="h-full px-3.5 flex items-center justify-center hover:bg-zinc-800 hover:text-white transition-colors cursor-pointer"
-          title="Minimize"
-        >
-          <Minus className="w-3.5 h-3.5" />
-        </button>
+        <Tooltip content="Minimize" side="bottom">
+          <button
+            type="button"
+            onClick={handleMinimize}
+            aria-label="Minimize window"
+            className="h-8 px-3.5 flex items-center justify-center text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors cursor-pointer"
+          >
+            <Minus className="w-3.5 h-3.5" />
+          </button>
+        </Tooltip>
 
-        <button
-          type="button"
-          onClick={handleMaximize}
-          className="h-full px-3.5 flex items-center justify-center hover:bg-zinc-800 hover:text-white transition-colors cursor-pointer"
-          title={isMax ? 'Restore' : 'Maximize'}
-        >
-          {isMax ? <Copy className="w-3 h-3 rotate-180" /> : <Square className="w-3 h-3" />}
-        </button>
+        <Tooltip content={isMax ? 'Restore' : 'Maximize'} side="bottom">
+          <button
+            type="button"
+            onClick={handleMaximize}
+            aria-label={isMax ? 'Restore window' : 'Maximize window'}
+            className="h-8 px-3.5 flex items-center justify-center text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors cursor-pointer"
+          >
+            {isMax ? <Copy className="w-3 h-3 rotate-180" /> : <Square className="w-3 h-3" />}
+          </button>
+        </Tooltip>
 
-        <button
-          type="button"
-          onClick={handleClose}
-          className="h-full px-3.5 flex items-center justify-center hover:bg-red-600 hover:text-white transition-colors cursor-pointer"
-          title="Close"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
+        <Tooltip content="Close" side="bottom">
+          <button
+            type="button"
+            onClick={handleClose}
+            aria-label="Close window"
+            className="h-8 px-3.5 flex items-center justify-center text-muted-foreground hover:bg-destructive hover:text-destructive-foreground transition-colors cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </Tooltip>
       </div>
     </div>
   );

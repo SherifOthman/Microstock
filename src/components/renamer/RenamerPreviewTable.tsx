@@ -2,7 +2,7 @@ import React from 'react';
 import { RenamerFileItem, AssetBatchType } from '../../types/renamer';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
-import { Check, AlertTriangle, ArrowRight, Folder, RefreshCw, Loader2, Sparkles, Camera } from 'lucide-react';
+import { Check, AlertTriangle, ArrowRight, Folder, Loader2, Sparkles, Camera } from 'lucide-react';
 
 export interface RenamerPreviewTableProps {
   items: RenamerFileItem[];
@@ -32,15 +32,11 @@ export const RenamerPreviewTable: React.FC<RenamerPreviewTableProps> = ({
   return (
     <div className="space-y-4">
       {/* Header Summary & Mode */}
-      <div className="p-4 rounded-xl border border-border bg-card flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+      <div className="p-3.5 rounded-xl border border-border bg-card flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
           <Badge
             variant="outline"
-            className={`px-2.5 py-1 text-xs font-semibold gap-1.5 ${
-              batchType === 'AI'
-                ? 'border-purple-500/40 text-purple-600 dark:text-purple-400 bg-purple-500/10'
-                : 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10'
-            }`}
+            className="px-2.5 py-1 text-xs font-semibold gap-1.5 border-primary/40 text-primary bg-primary/10"
           >
             {batchType === 'AI' ? <Sparkles className="w-3.5 h-3.5" /> : <Camera className="w-3.5 h-3.5" />}
             <span>{batchType === 'AI' ? 'AI-Generated Track' : 'Native / Standard Track'}</span>
@@ -59,26 +55,26 @@ export const RenamerPreviewTable: React.FC<RenamerPreviewTableProps> = ({
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <Badge variant="outline" className="font-mono text-[11px]">
+        <div className="flex flex-wrap items-center gap-2 text-xs font-mono tabular-nums">
+          <Badge variant="outline" className="text-[11px]">
             Total: {stats.total}
           </Badge>
-          <Badge variant="outline" className="font-mono text-[11px] text-emerald-600 border-emerald-500/30 bg-emerald-500/10">
+          <Badge variant="outline" className="text-[11px] text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/10">
             Ready: {stats.ready}
           </Badge>
           {stats.needsFixing > 0 && (
-            <Badge variant="destructive" className="font-mono text-[11px] gap-1">
+            <Badge variant="destructive" className="text-[11px] gap-1">
               <AlertTriangle className="w-3 h-3" />
               Needs Fixing: {stats.needsFixing}
             </Badge>
           )}
           {stats.alreadyFormatted > 0 && (
-            <Badge variant="secondary" className="font-mono text-[11px]">
+            <Badge variant="secondary" className="text-[11px]">
               Already Formatted: {stats.alreadyFormatted}
             </Badge>
           )}
           {stats.vectorPairs > 0 && (
-            <Badge variant="outline" className="font-mono text-[11px] text-sky-600 border-sky-500/30">
+            <Badge variant="outline" className="text-[11px] text-primary border-primary/30">
               Vector Pairs: {stats.vectorPairs}
             </Badge>
           )}
@@ -89,7 +85,7 @@ export const RenamerPreviewTable: React.FC<RenamerPreviewTableProps> = ({
       <div className="rounded-xl border border-border bg-card overflow-hidden">
         <div className="overflow-x-auto max-h-[500px]">
           <table className="w-full text-left text-xs border-collapse">
-            <thead className="bg-secondary/40 sticky top-0 z-10 border-b border-border text-muted-foreground font-mono">
+            <thead className="bg-secondary sticky top-0 z-10 border-b border-border text-muted-foreground font-mono">
               <tr>
                 <th className="p-3">#</th>
                 <th className="p-3">Original Filename</th>
@@ -100,11 +96,11 @@ export const RenamerPreviewTable: React.FC<RenamerPreviewTableProps> = ({
             </thead>
             <tbody className="divide-y divide-border/60">
               {items.map((item, idx) => (
-                <tr key={item.id || idx} className="hover:bg-secondary/20 transition-colors">
-                  <td className="p-3 text-muted-foreground font-mono text-[11px]">
+                <tr key={item.id || idx} className="hover:bg-secondary/30 transition-colors">
+                  <td className="p-3 text-muted-foreground font-mono tabular-nums text-[11px]">
                     {idx + 1}
                   </td>
-                  <td className="p-3 font-mono max-w-[220px] truncate" title={item.originalName || item.originalFilename}>
+                  <td className="p-3 font-mono max-w-[220px] truncate">
                     {item.originalName || item.originalFilename}
                   </td>
                   <td className="p-3">
@@ -113,7 +109,7 @@ export const RenamerPreviewTable: React.FC<RenamerPreviewTableProps> = ({
                       {item.targetFolder}/
                     </span>
                   </td>
-                  <td className="p-3 font-mono font-medium max-w-[320px] truncate" title={item.proposedFilename || item.newFilename}>
+                  <td className="p-3 font-mono font-medium max-w-[320px] truncate">
                     {item.proposedFilename || item.newFilename}
                   </td>
                   <td className="p-3 text-right">
@@ -127,7 +123,7 @@ export const RenamerPreviewTable: React.FC<RenamerPreviewTableProps> = ({
                         Skipped
                       </Badge>
                     ) : (
-                      <Badge variant="outline" className="text-[10px] text-emerald-600 border-emerald-500/30 bg-emerald-500/10 font-mono gap-1">
+                      <Badge variant="outline" className="text-[10px] text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/10 font-mono gap-1">
                         <Check className="w-2.5 h-2.5" />
                         Ready
                       </Badge>
@@ -149,7 +145,7 @@ export const RenamerPreviewTable: React.FC<RenamerPreviewTableProps> = ({
           size="sm"
           onClick={onExecute}
           disabled={isRenaming || stats.ready === 0}
-          className="gap-2 bg-foreground text-background hover:opacity-90 font-semibold cursor-pointer"
+          className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 font-semibold cursor-pointer"
         >
           {isRenaming ? (
             <>

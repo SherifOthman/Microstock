@@ -23,7 +23,7 @@ export const AssetKeywordsManager: React.FC<AssetKeywordsManagerProps> = React.m
   onCopyKeywords,
   onUpdateKeywords,
 }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [isEditingKws, setIsEditingKws] = useState(false);
   const [rawKwsInput, setRawKwsInput] = useState('');
   const [isAddingTag, setIsAddingTag] = useState(false);
@@ -58,7 +58,6 @@ export const AssetKeywordsManager: React.FC<AssetKeywordsManagerProps> = React.m
       .split(',')
       .map((k) => (k ?? '').trim())
       .filter((k) => k.length > 0);
-    // Deduplicate
     const unique = Array.from(new Set(cleanKws.map((k) => k.toLowerCase()))).map(
       (k) => cleanKws.find((orig) => orig.toLowerCase() === k) || k
     );
@@ -95,14 +94,14 @@ export const AssetKeywordsManager: React.FC<AssetKeywordsManagerProps> = React.m
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between text-xs">
-        <div className="flex items-center gap-1.5 font-semibold text-zinc-900 dark:text-zinc-100">
-          <Tag className="w-3.5 h-3.5 text-blue-500" />
+        <div className="flex items-center gap-1.5 font-semibold text-foreground">
+          <Tag className="w-3.5 h-3.5 text-primary" />
           <span>{t.keywords}</span>
-          <span className="text-[11px] font-mono font-normal text-muted-foreground">
+          <span className="text-[11px] font-mono tabular-nums font-normal text-muted-foreground">
             ({keywords.length})
           </span>
           <span className="text-[10px] text-muted-foreground font-normal hidden sm:inline">
-            • {t.dragToReorderTags}
+            · {t.dragToReorderTags}
           </span>
         </div>
         <div className="flex items-center gap-1.5">
@@ -116,7 +115,7 @@ export const AssetKeywordsManager: React.FC<AssetKeywordsManagerProps> = React.m
                 setIsEditingKws(true);
               }
             }}
-            className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-zinc-100 dark:hover:bg-zinc-800 transition cursor-pointer"
+            className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition cursor-pointer"
           >
             <Edit3 className="w-3 h-3 text-muted-foreground" />
             <span>{isEditingKws ? t.cancel : t.edit}</span>
@@ -125,7 +124,7 @@ export const AssetKeywordsManager: React.FC<AssetKeywordsManagerProps> = React.m
             type="button"
             onClick={() => onCopyKeywords(keywords.join(', '), `${assetId}_kws`)}
             disabled={keywords.length === 0}
-            className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-zinc-100 dark:hover:bg-zinc-800 transition cursor-pointer disabled:opacity-40"
+            className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition cursor-pointer disabled:opacity-40"
           >
             {copiedKey === `${assetId}_kws` ? (
               <>
@@ -145,24 +144,30 @@ export const AssetKeywordsManager: React.FC<AssetKeywordsManagerProps> = React.m
       {isEditingKws ? (
         <div className="space-y-2">
           <Textarea
-            dir="ltr"
+            dir={rawKwsInput ? 'ltr' : language === 'ar' ? 'rtl' : 'ltr'}
             value={rawKwsInput}
             onChange={(e) => setRawKwsInput(e.target.value)}
-            placeholder="Type or paste keywords separated by commas..."
-            className="text-xs min-h-[70px] bg-zinc-100/90 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 font-mono text-left shadow-2xs"
+            placeholder={
+              language === 'ar'
+                ? 'اكتب أو الصق الكلمات المفتاحية مفصولة بفاصلة...'
+                : 'Type or paste keywords separated by commas...'
+            }
+            className={`text-xs min-h-[70px] bg-secondary/70 border border-border text-foreground font-mono ${
+              rawKwsInput ? 'text-left' : 'text-start'
+            }`}
           />
           <div className="flex justify-end gap-2">
-            <Button size="sm" onClick={handleSaveRawKeywords} className="h-7 text-xs bg-blue-600 hover:bg-blue-500 text-white">
+            <Button size="sm" onClick={handleSaveRawKeywords} className="h-7 text-xs bg-primary hover:bg-primary/90 text-primary-foreground cursor-pointer">
               {t.saveKeywords}
             </Button>
           </div>
         </div>
       ) : (
         <div
-          dir="ltr"
-          className={`p-2.5 sm:p-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-100/90 dark:bg-zinc-900/90 flex flex-wrap gap-1.5 text-left touch-pan-y ${
-            isCompact ? 'overflow-visible' : 'max-h-56 overflow-y-auto'
-          }`}
+          dir={keywords.length === 0 && language === 'ar' ? 'rtl' : 'ltr'}
+          className={`p-2.5 rounded-xl border border-border bg-secondary/50 flex flex-wrap items-center gap-1.5 touch-pan-y ${
+            keywords.length === 0 && language === 'ar' ? 'text-start' : 'text-left'
+          } ${isCompact ? 'overflow-visible' : 'max-h-52 overflow-y-auto'}`}
         >
           {displayKws.map((kw, i) => {
             const isTop10 = i < 10;
@@ -203,28 +208,34 @@ export const AssetKeywordsManager: React.FC<AssetKeywordsManagerProps> = React.m
                   canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
                 } ${
                   isDragging
-                    ? 'opacity-40 scale-95 border-dashed border-blue-500 bg-blue-500/10'
+                    ? 'opacity-40 scale-95 border-dashed border-primary bg-primary/10'
                     : isOver
-                    ? 'border-blue-500 ring-2 ring-blue-500/30 scale-105'
+                    ? 'border-primary ring-2 ring-primary/30 scale-105'
                     : isTop10
-                    ? 'border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300 font-semibold'
-                    : 'border-zinc-300 dark:border-zinc-700 bg-card text-muted-foreground'
+                    ? 'border-primary/40 bg-primary/10 text-primary font-semibold'
+                    : 'border-border bg-card text-muted-foreground'
                 }`}
               >
                 {canDrag && <GripVertical className="w-2.5 h-2.5 opacity-40 shrink-0" />}
-                <span className="text-[9px] opacity-50 select-none">{i + 1}</span>
+                <span className="text-[9px] opacity-50 select-none tabular-nums">{i + 1}</span>
                 <span>{kw}</span>
                 <button
                   type="button"
+                  aria-label={`Remove ${kw}`}
                   onClick={() => handleRemoveKeyword(kw)}
-                  className="opacity-40 hover:opacity-100 hover:text-destructive transition ml-0.5"
-                  title="Remove keyword"
+                  className="opacity-40 hover:opacity-100 hover:text-destructive transition ml-0.5 cursor-pointer"
                 >
                   <X className="w-2.5 h-2.5" />
                 </button>
               </Badge>
             );
           })}
+
+          {keywords.length === 0 && !isAddingTag && (
+            <span className="text-[11px] text-muted-foreground italic me-1">
+              {language === 'ar' ? 'لا توجد كلمات مفتاحية بعد' : 'No keywords yet'}
+            </span>
+          )}
 
           {/* Add Tag Inline */}
           {isAddingTag ? (
@@ -239,8 +250,8 @@ export const AssetKeywordsManager: React.FC<AssetKeywordsManagerProps> = React.m
                   if (e.key === 'Escape') setIsAddingTag(false);
                 }}
                 onBlur={handleAddTagSubmit}
-                placeholder="tag1, tag2..."
-                className="h-6 text-[10px] w-28 px-1.5 py-0 font-mono bg-card"
+                placeholder={language === 'ar' ? 'tag1, tag2...' : 'tag1, tag2...'}
+                className="h-6 text-[10px] w-28 px-1.5 py-0 font-mono bg-card text-left"
               />
             </div>
           ) : (
@@ -249,7 +260,7 @@ export const AssetKeywordsManager: React.FC<AssetKeywordsManagerProps> = React.m
               variant="outline"
               size="sm"
               onClick={() => setIsAddingTag(true)}
-              className="h-6 text-[10px] px-2 gap-1 text-muted-foreground hover:text-foreground font-mono"
+              className="h-6 text-[10px] px-2 gap-1 text-muted-foreground hover:text-foreground font-mono cursor-pointer"
             >
               <Plus className="w-2.5 h-2.5" />
               <span>{t.addTag}</span>
@@ -263,17 +274,17 @@ export const AssetKeywordsManager: React.FC<AssetKeywordsManagerProps> = React.m
               variant="ghost"
               size="sm"
               onClick={() => setIsTagsExpanded(!isTagsExpanded)}
-              className="h-6 text-[10px] px-2 gap-0.5 text-blue-600 dark:text-blue-400 font-medium ml-auto"
+              className="h-6 text-[10px] px-2 gap-0.5 text-primary font-medium ml-auto tabular-nums cursor-pointer"
             >
               {isTagsExpanded ? (
                 <>
                   <ChevronUp className="w-3 h-3" />
-                  <span>{t.showLessTags || 'Show Less'}</span>
+                  <span>{t.showLessTags}</span>
                 </>
               ) : (
                 <>
                   <ChevronDown className="w-3 h-3" />
-                  <span>+{keywords.length - 10} {t.showMoreTags || 'more'}</span>
+                  <span>+{keywords.length - 10} {t.showMoreTags}</span>
                 </>
               )}
             </Button>

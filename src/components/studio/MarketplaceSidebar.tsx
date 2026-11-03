@@ -3,17 +3,17 @@ import { SupportedPlatform } from '../../types';
 import { PLATFORMS_CONFIG } from '../../constants/platforms';
 import { useLanguage } from '../../context/LanguageContext';
 import { Button } from '../../components/ui/button';
-import { Badge } from '../../components/ui/badge';
 import { Textarea } from '../../components/ui/textarea';
 import { Tooltip } from '../../components/ui/tooltip';
 import {
-  Info,
   Check,
   ChevronDown,
   ChevronUp,
   SlidersHorizontal,
-  Sparkles,
+  FileText,
   BookOpen,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 import { getPlatformLogo } from '../icons/StockLogos';
 import { useStudioMarketplaceSettings } from '../../hooks/useStudioMarketplaceSettings';
@@ -65,11 +65,30 @@ export interface MarketplaceSidebarProps {
   onOpenTemplates: () => void;
 }
 
+const PLATFORM_LIMIT_SUMMARY: Record<string, { en: string; ar: string }> = {
+  adobe: { en: '199c · 49 tags', ar: '199 حرف · 49 كلمة' },
+  shutterstock: { en: '200c · 50 tags', ar: '200 حرف · 50 كلمة' },
+  freepik: { en: '100c · 50 tags', ar: '100 حرف · 50 كلمة' },
+  vecteezy: { en: '199c · 49 tags', ar: '199 حرف · 49 كلمة' },
+  dreamstime: { en: '70c · Dual CSV', ar: '70 حرف · ملفان CSV' },
+  '123rf': { en: '200c · 50 tags', ar: '200 حرف · 50 كلمة' },
+};
+
 export const MarketplaceSidebar: React.FC<MarketplaceSidebarProps> = (props) => {
   const { t, language } = useLanguage();
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const [isDesktopCollapsed, setIsDesktopCollapsed] = useState<boolean>(() => {
+    return localStorage.getItem('stock_studio_inspector_collapsed') === 'true';
+  });
 
-  // Normalize settings object from either direct settings prop or individual props
+  const toggleDesktopCollapse = () => {
+    setIsDesktopCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem('stock_studio_inspector_collapsed', String(next));
+      return next;
+    });
+  };
+
   const s = props.settings || {
     selectedPlatforms: props.selectedPlatforms || [],
     togglePlatform: props.onTogglePlatform || (() => {}),
@@ -119,9 +138,9 @@ export const MarketplaceSidebar: React.FC<MarketplaceSidebarProps> = (props) => 
         <div className="flex items-center gap-2">
           <SlidersHorizontal className="w-4 h-4 text-foreground" />
           <span className="font-semibold text-xs text-foreground">{t.marketplacesAndSettings}</span>
-          <Badge variant="outline" className="text-[10px] py-0 font-mono">
-            {(t.activeCount || '{count} active').replace('{count}', String(selectedPlatforms.length))}
-          </Badge>
+          <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
+            ({selectedPlatforms.length}/6)
+          </span>
         </div>
         <Button
           variant="ghost"
@@ -134,59 +153,135 @@ export const MarketplaceSidebar: React.FC<MarketplaceSidebarProps> = (props) => 
         </Button>
       </div>
 
-      {/* Main Sidebar */}
+      {/* Collapsed Desktop Inspector Strip */}
+      {isDesktopCollapsed && (
+        <aside className="hidden lg:flex flex-col items-center gap-2 p-2 bg-card rounded-xl border border-border shrink-0 h-full">
+          <Tooltip content={language === 'ar' ? 'توسيع إعدادات المنصات' : 'Expand Inspector'} side={language === 'ar' ? 'left' : 'right'}>
+            <button
+              type="button"
+              onClick={toggleDesktopCollapse}
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition cursor-pointer"
+            >
+              <PanelLeftOpen className="w-4 h-4 rtl:rotate-180" />
+            </button>
+          </Tooltip>
+          <div className="w-6 border-t border-border" />
+          <div className="flex flex-col items-center gap-1.5">
+            {Object.values(PLATFORMS_CONFIG).map((p: any) => {
+              const isSelected = selectedPlatforms.includes(p.id);
+              return (
+                <Tooltip
+                  key={p.id}
+                  content={`${p.name} (${
+                    isSelected
+                      ? language === 'ar'
+                        ? 'مفعّل'
+                        : 'Active'
+                      : language === 'ar'
+                      ? 'متوقف'
+                      : 'Off'
+                  })`}
+                  side={language === 'ar' ? 'left' : 'right'}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onTogglePlatform(p.id)}
+                    className={`w-8 h-8 rounded-lg flex items-center justify-center border transition cursor-pointer ${
+                      isSelected
+                        ? 'bg-secondary border-primary/50 opacity-100'
+                        : 'border-transparent opacity-40 hover:opacity-80'
+                    }`}
+                  >
+                    {getPlatformLogo(p.id, 18)}
+                  </button>
+                </Tooltip>
+              );
+            })}
+          </div>
+        </aside>
+      )}
+
+      {/* Main Inspector Sidebar */}
       <aside
-        className={`w-full lg:w-76 shrink-0 space-y-4 lg:h-full lg:overflow-y-auto lg:pr-1 ${
-          isMobileOpen ? 'block' : 'hidden lg:block'
+        className={`w-full lg:w-72 shrink-0 space-y-3 lg:h-full lg:overflow-y-auto lg:pe-1 ${
+          isMobileOpen ? 'block' : isDesktopCollapsed ? 'hidden' : 'hidden lg:block'
         }`}
       >
-        {/* Marketplaces Card */}
-        <div className="p-3.5 bg-card rounded-xl border border-border space-y-3">
+        {/* Target Agencies Panel */}
+        <div className="p-3 bg-card rounded-xl border border-border space-y-2.5">
           <div className="flex items-center justify-between pb-2 border-b border-border">
+            <span className="font-semibold text-xs text-foreground">{t.marketplaces}</span>
             <div className="flex items-center gap-1.5">
-              <span className="font-semibold text-xs text-foreground">{t.marketplaces}</span>
-              <Tooltip content="Choose target stock agencies. Data formats are automatically adapted on-the-fly.">
-                <Info className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground cursor-pointer" />
+              <span dir="ltr" className="text-[11px] text-muted-foreground font-mono tabular-nums">
+                {selectedPlatforms.length}/6
+              </span>
+              <Tooltip content={language === 'ar' ? 'طي اللوحة' : 'Collapse Inspector'} side={language === 'ar' ? 'right' : 'left'}>
+                <button
+                  type="button"
+                  onClick={toggleDesktopCollapse}
+                  className="hidden lg:flex w-6 h-6 rounded-md items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition cursor-pointer"
+                >
+                  <PanelLeftClose className="w-3.5 h-3.5 rtl:rotate-180" />
+                </button>
               </Tooltip>
             </div>
-            <span className="text-[10px] text-muted-foreground font-mono">{selectedPlatforms.length}/6</span>
           </div>
 
           <div className="space-y-1.5">
             {Object.values(PLATFORMS_CONFIG).map((p: any) => {
               const isSelected = selectedPlatforms.includes(p.id);
+              const limitObj = PLATFORM_LIMIT_SUMMARY[p.id];
+              const limitText = limitObj ? (language === 'ar' ? limitObj.ar : limitObj.en) : '';
               return (
-                <div key={p.id} className="space-y-1">
+                <div
+                  key={p.id}
+                  className={`rounded-lg border transition-colors ${
+                    isSelected
+                      ? 'border-border bg-secondary/50'
+                      : 'border-transparent hover:bg-secondary/30'
+                  }`}
+                >
                   <button
                     type="button"
                     onClick={() => onTogglePlatform(p.id)}
-                    className={`w-full p-2 rounded-lg border text-left transition cursor-pointer flex items-center justify-between ${
-                      isSelected
-                        ? 'border-border bg-secondary/60 text-foreground font-medium'
-                        : 'border-transparent bg-transparent text-muted-foreground hover:bg-secondary/30'
-                    }`}
+                    className="w-full px-2.5 py-2 text-start flex items-center justify-between gap-2 cursor-pointer"
                   >
-                    <div className="flex items-center gap-2.5">
-                      <div className="shrink-0">{getPlatformLogo(p.id, 18)}</div>
-                      <span className="text-xs">{p.name}</span>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className={`shrink-0 transition-opacity ${isSelected ? 'opacity-100' : 'opacity-55'}`}>
+                        {getPlatformLogo(p.id, 18)}
+                      </div>
+                      <div className="min-w-0">
+                        <div className={`text-xs truncate ${isSelected ? 'font-semibold text-foreground' : 'text-muted-foreground'}`}>
+                          {p.name}
+                        </div>
+                        <div
+                          dir={language === 'ar' ? 'rtl' : 'ltr'}
+                          className="text-[10px] font-mono text-muted-foreground/80 tabular-nums text-start"
+                        >
+                          {limitText}
+                        </div>
+                      </div>
                     </div>
                     <div
-                      className={`w-4 h-4 rounded flex items-center justify-center border transition ${
-                        isSelected ? 'bg-foreground text-background border-foreground' : 'border-border bg-card'
+                      className={`w-4 h-4 rounded flex items-center justify-center border transition shrink-0 ${
+                        isSelected
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'border-border bg-background'
                       }`}
                     >
                       {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
                     </div>
                   </button>
 
-                  {/* Contextual Platform Options */}
                   {isSelected && (
-                    <PlatformConfigSection
-                      platformId={p.id}
-                      settings={s}
-                      onUnlockDt={props.onUnlockDt}
-                      onUnlockShutter={props.onUnlockShutter}
-                    />
+                    <div className="px-2.5 pb-2.5">
+                      <PlatformConfigSection
+                        platformId={p.id}
+                        settings={s}
+                        onUnlockDt={props.onUnlockDt}
+                        onUnlockShutter={props.onUnlockShutter}
+                      />
+                    </div>
                   )}
                 </div>
               );
@@ -194,14 +289,12 @@ export const MarketplaceSidebar: React.FC<MarketplaceSidebarProps> = (props) => 
           </div>
         </div>
 
-        {/* AI Context Hint Prompt */}
-        <div className="p-3.5 bg-card rounded-xl border border-border space-y-2.5">
-          <div className="flex items-center justify-between pb-1.5 border-b border-border">
+        {/* Context Hint (No AI buzzword in header) */}
+        <div className="p-3 bg-card rounded-xl border border-border space-y-2">
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-blue-500" />
-              <span className="font-semibold text-xs text-foreground">
-                {language === 'ar' ? 'توجيه إضافي للذكاء الاصطناعي' : 'AI Context Hint / Prompt'}
-              </span>
+              <FileText className="w-3.5 h-3.5 text-primary" />
+              <span className="font-semibold text-xs text-foreground">{t.aiContextHint}</span>
             </div>
             {s.userCustomPrompt && (
               <button
@@ -209,7 +302,7 @@ export const MarketplaceSidebar: React.FC<MarketplaceSidebarProps> = (props) => 
                 onClick={() => s.setUserCustomPrompt('')}
                 className="text-[10px] text-muted-foreground hover:text-foreground cursor-pointer"
               >
-                {language === 'ar' ? 'مسح' : 'Clear'}
+                {t.clear}
               </button>
             )}
           </div>
@@ -217,42 +310,41 @@ export const MarketplaceSidebar: React.FC<MarketplaceSidebarProps> = (props) => 
             rows={2}
             value={s.userCustomPrompt}
             onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => s.setUserCustomPrompt(e.target.value)}
-            placeholder={t.contextHintPlaceholder || "e.g. '3D glass texture, minimalist, studio lighting'..."}
-            className="text-xs bg-zinc-100/90 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 resize-none w-full shadow-2xs"
+            placeholder={t.contextHintPlaceholder}
+            className="text-xs bg-secondary/60 border border-border text-foreground resize-none w-full text-start"
           />
-          <p className="text-[10px] text-muted-foreground leading-normal">
-            {language === 'ar'
-              ? 'يُضاف هذا التوجيه تلقائياً إلى موجه التحليل البصري لجميع الملفات في هذه الجلسة.'
-              : 'This hint is automatically appended to the vision prompt for all assets.'}
-          </p>
         </div>
 
-        {/* API Keys Status Widget */}
-        <div className="p-3.5 bg-card rounded-xl border border-border flex items-center justify-between text-xs">
-          <div className="space-y-0.5">
-            <span className="font-semibold text-foreground">{t.apiKeysWidget}</span>
-            <p className="text-[11px] text-muted-foreground font-mono">
-              {props.healthyKeysCount > 0
-                ? (t.readyRpm || '{count} Ready ({rpm} RPM)').replace('{count}', String(props.healthyKeysCount)).replace('{rpm}', String(props.combinedRpm))
-                : t.noActiveKeys}
-            </p>
+        {/* API KeyRing & CSV Specs Footer */}
+        <div className="p-3 bg-card rounded-xl border border-border space-y-2.5 text-xs">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="font-semibold text-foreground block">{t.apiKeysWidget}</span>
+              <span className="text-[11px] text-muted-foreground font-mono tabular-nums">
+                {props.healthyKeysCount > 0
+                  ? t.readyRpm
+                      .replace('{count}', String(props.healthyKeysCount))
+                      .replace('{rpm}', String(props.combinedRpm))
+                  : t.noActiveKeys}
+              </span>
+            </div>
+            <Button variant="outline" size="sm" onClick={props.onOpenKeyRing} className="h-7 text-xs font-semibold cursor-pointer">
+              {t.manageKeys}
+            </Button>
           </div>
-          <Button variant="outline" size="sm" onClick={props.onOpenKeyRing} className="h-7 text-xs font-semibold">
-            {t.manageKeys}
-          </Button>
-        </div>
 
-        {/* Utilities Card */}
-        <div className="p-3.5 bg-card rounded-xl border border-border space-y-2 text-xs">
-          <span className="font-semibold text-foreground block pb-1 border-b border-border">{t.utilities}</span>
-          <button
-            type="button"
-            onClick={props.onOpenTemplates}
-            className="w-full p-1.5 rounded-md text-left text-muted-foreground hover:text-foreground hover:bg-secondary/40 flex items-center gap-2 cursor-pointer transition"
-          >
-            <BookOpen className="w-3.5 h-3.5 shrink-0" />
-            <span className="truncate">{t.csvSpecsSamples}</span>
-          </button>
+          <div className="pt-2 border-t border-border">
+            <button
+              type="button"
+              onClick={props.onOpenTemplates}
+              className="w-full py-1.5 px-2 rounded-md text-start text-muted-foreground hover:text-foreground hover:bg-secondary flex items-center justify-between gap-2 cursor-pointer transition"
+            >
+              <span className="flex items-center gap-2 truncate">
+                <BookOpen className="w-3.5 h-3.5 shrink-0 text-primary" />
+                <span className="truncate">{t.csvSpecsSamples}</span>
+              </span>
+            </button>
+          </div>
         </div>
       </aside>
     </>

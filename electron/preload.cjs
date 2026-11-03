@@ -35,4 +35,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return file.path || '';
     }
   },
+  db: {
+    invoke: (method, ...args) => ipcRenderer.invoke('db:invoke', method, ...args),
+  },
 });

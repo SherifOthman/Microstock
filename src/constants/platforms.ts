@@ -22,9 +22,9 @@ export const PLATFORMS_CONFIG: Record<SupportedPlatform, ExportPlatformConfig> =
   },
   freepik: {
     id: 'freepik',
-    name: 'Freepik',
+    name: 'Magnific',
     filenameSuffix: 'freepik.csv',
-    delimiter: ';', // Freepik standard semicolon
+    delimiter: ';', // Magnific (Freepik) standard semicolon
   },
   shutterstock: {
     id: 'shutterstock',

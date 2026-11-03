@@ -149,12 +149,11 @@ describe('UI Regeneration State and Strict Export Lockout', () => {
     unsub();
   });
 
-  it('renders all 3 Dreamstime categories in card preview', () => {
+  it('renders all 3 Dreamstime categories in card preview when drawer is expanded', () => {
     renderWithProviders(
       <AssetCard
         asset={mockCompletedAsset}
         rec={mockMasterRecord}
-        viewMode="detailed"
         copiedKey={null}
         onCopyText={vi.fn()}
         onCopyAll={vi.fn()}
@@ -162,6 +161,9 @@ describe('UI Regeneration State and Strict Export Lockout', () => {
         onRegenerate={vi.fn()}
       />
     );
+
+    const expandBtn = screen.getByRole('button', { name: /expand details/i });
+    fireEvent.click(expandBtn);
 
     // Categories preview footer contains all 3 Dreamstime categories
     const dtBadge = screen.getByText(/Dreamstime:/i);

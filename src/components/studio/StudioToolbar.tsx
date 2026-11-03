@@ -2,8 +2,6 @@ import React from 'react';
 import {
   Search,
   X,
-  LayoutGrid,
-  List,
   Play,
   Pause,
   RotateCcw,
@@ -18,8 +16,8 @@ import { Tooltip } from '../ui/tooltip';
 interface StudioToolbarProps {
   searchQuery: string;
   onSearchChange: (q: string) => void;
-  cardViewMode: 'compact' | 'detailed';
-  onViewModeChange: (mode: 'compact' | 'detailed') => void;
+  cardViewMode?: 'compact' | 'detailed';
+  onViewModeChange?: (mode: 'compact' | 'detailed') => void;
   totalAssetsCount: number;
   completedCount: number;
   pendingCount: number;
@@ -43,11 +41,8 @@ interface StudioToolbarProps {
 export const StudioToolbar: React.FC<StudioToolbarProps> = ({
   searchQuery,
   onSearchChange,
-  cardViewMode,
-  onViewModeChange,
   totalAssetsCount,
   completedCount,
-  pendingCount,
   brandNewPendingCount,
   failedCount,
   isRunning,
@@ -66,19 +61,20 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
 }) => {
   const activeT = t || {};
   return (
-    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3 bg-card rounded-xl border border-border">
-      {/* Left: Search & View Toggle */}
+    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-2.5 bg-card rounded-xl border border-border">
+      {/* Left: Search Filter Input */}
       <div className="flex items-center gap-2 flex-1 min-w-0">
         <div className="relative flex-1 min-w-0 max-w-md">
           <Search className="w-3.5 h-3.5 absolute start-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
           <Input
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder={activeT.searchInStudio || 'Search filename, title, keyword...'}
-            className="ps-8 pe-7 h-8 text-xs bg-background/50"
+            placeholder={activeT.searchInStudio || 'Filter by filename, title, or keyword...'}
+            className="ps-8 pe-7 h-8 text-xs bg-background text-start"
           />
           {searchQuery && (
             <button
+              type="button"
               onClick={() => onSearchChange('')}
               className="absolute end-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
             >
@@ -86,45 +82,26 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
             </button>
           )}
         </div>
-
-        {/* View Mode Switcher */}
-        <div className="flex items-center border border-border rounded-lg p-0.5 bg-muted/40 shrink-0">
-          <Button
-            size="sm"
-            variant={cardViewMode === 'compact' ? 'default' : 'ghost'}
-            className="h-7 px-2 text-xs gap-1 cursor-pointer"
-            onClick={() => onViewModeChange('compact')}
-            title="Compact Rows View"
-          >
-            <List className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">Compact</span>
-          </Button>
-          <Button
-            size="sm"
-            variant={cardViewMode === 'detailed' ? 'default' : 'ghost'}
-            className="h-7 px-2 text-xs gap-1 cursor-pointer"
-            onClick={() => onViewModeChange('detailed')}
-            title="Detailed Studio Cards"
-          >
-            <LayoutGrid className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">Detailed</span>
-          </Button>
-        </div>
       </div>
 
-      {/* Right: Actions */}
+      {/* Right: Queue & Batch Actions */}
       <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap justify-between sm:justify-end min-w-0">
-        {/* Start Generation Button */}
         {isRunning || isPaused || !hasHealthyKeys || brandNewPendingCount === 0 ? (
           <Tooltip
             content={
               isRunning
-                ? (language === 'ar' ? 'المعالجة جارية حالياً' : 'Queue processing is currently active')
+                ? language === 'ar'
+                  ? 'المعالجة جارية حالياً'
+                  : 'Queue processing is active'
                 : isPaused
-                ? (language === 'ar' ? 'المعالجة متوقفة مؤقتاً' : 'Queue is paused')
+                ? language === 'ar'
+                  ? 'المعالجة متوقفة مؤقتاً'
+                  : 'Queue is paused'
                 : !hasHealthyKeys
-                ? (activeT.noActiveKeysTooltip || 'Add at least one active API key to start generating metadata')
-                : (language === 'ar' ? 'لا توجد وسائط جديدة غير مولدة' : 'No new unqueued media to generate')
+                ? activeT.noActiveKeysTooltip || 'Add at least one active API key to generate metadata'
+                : language === 'ar'
+                ? 'لا توجد ملفات جديدة في الانتظار'
+                : 'No new queued files'
             }
           >
             <div
@@ -136,7 +113,7 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
               <Button
                 size="sm"
                 disabled
-                className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center opacity-40 cursor-not-allowed bg-secondary text-muted-foreground border border-border"
+                className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center opacity-40 cursor-not-allowed bg-secondary text-muted-foreground border border-border tabular-nums"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
                 <span className="truncate">
@@ -152,7 +129,7 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
           <Button
             size="sm"
             onClick={onStartQueue}
-            className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center bg-blue-600 hover:bg-blue-500 text-white shadow-md ring-2 ring-blue-500/20 cursor-pointer animate-pulse"
+            className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center bg-primary hover:bg-primary/90 text-primary-foreground shadow-xs cursor-pointer tabular-nums"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
             <span className="truncate">
@@ -164,13 +141,12 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
           </Button>
         )}
 
-        {/* Pause & Resume */}
         {isRunning && (
           <Button
             size="sm"
             variant="secondary"
             onClick={onPauseQueue}
-            className="gap-1.5 text-xs w-full sm:w-auto justify-center cursor-pointer shadow-xs"
+            className="gap-1.5 text-xs w-full sm:w-auto justify-center cursor-pointer"
           >
             <Pause className="w-3.5 h-3.5" />
             <span>{activeT.pause || 'Pause'}</span>
@@ -182,14 +158,13 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
             size="sm"
             variant="default"
             onClick={onResumeQueue}
-            className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center bg-amber-600 hover:bg-amber-500 text-white shadow-md cursor-pointer"
+            className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center bg-primary hover:bg-primary/90 text-primary-foreground cursor-pointer"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
             <span>{activeT.resume || 'Resume'}</span>
           </Button>
         )}
 
-        {/* Retry Failed */}
         {failedCount > 0 && (
           <Button
             type="button"
@@ -197,44 +172,45 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
             variant="destructive"
             disabled={isRunning}
             onClick={onRetryFailed}
-            className={`gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center shadow-sm ${
+            className={`gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center tabular-nums ${
               isRunning ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:opacity-95'
             }`}
           >
             <RotateCcw className={`w-3.5 h-3.5 ${isRunning ? 'animate-spin' : ''}`} />
             <span>
-              {language === 'ar' ? `إعادة محاولة ${failedCount} فاشلة` : `Retry ${failedCount} Failed`}
+              {language === 'ar' ? `إعادة محاولة (${failedCount})` : `Retry ${failedCount} Failed`}
             </span>
           </Button>
         )}
 
-        {/* Global Regenerate All */}
         {completedCount > 0 && !isPaused && (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={isRunning || !hasHealthyKeys}
-            onClick={onRegenerateAll}
-            className={`gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center transition-all ${
-              isRunning || !hasHealthyKeys
-                ? 'opacity-40 cursor-not-allowed border-zinc-200 dark:border-zinc-800'
-                : 'cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border-zinc-300 dark:border-zinc-700 shadow-2xs'
-            }`}
-            title={
+          <Tooltip
+            content={
               language === 'ar'
-                ? 'إعادة توليد الميتاداتا لجميع العناصر المكتملة'
+                ? 'إعادة توليد الـ Metadata لجميع العناصر المكتملة'
                 : 'Regenerate metadata for all completed assets'
             }
           >
-            <RefreshCw className={`w-3.5 h-3.5 text-muted-foreground ${isRunning ? 'animate-spin' : ''}`} />
-            <span className="truncate">
-              {(activeT.regenerateAll || 'Regenerate All ({count})').replace('{count}', String(completedCount))}
-            </span>
-          </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={isRunning || !hasHealthyKeys}
+              onClick={onRegenerateAll}
+              className={`gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center transition-all tabular-nums ${
+                isRunning || !hasHealthyKeys
+                  ? 'opacity-40 cursor-not-allowed border-border'
+                  : 'cursor-pointer hover:bg-secondary text-foreground border-border'
+              }`}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-muted-foreground ${isRunning ? 'animate-spin' : ''}`} />
+              <span className="truncate">
+                {(activeT.regenerateAll || 'Regenerate All ({count})').replace('{count}', String(completedCount))}
+              </span>
+            </Button>
+          </Tooltip>
         )}
 
-        {/* Export All CSVs (.ZIP): Strict Lockout when isRunning is true */}
         <Button
           size="sm"
           variant={
@@ -247,12 +223,12 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
             onExportCsvs();
           }}
           disabled={completedCount === 0 || isRunning}
-          className={`gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center transition-all ${
+          className={`gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center transition-all tabular-nums ${
             completedCount > 0 && brandNewPendingCount === 0 && failedCount === 0 && !isRunning
-              ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md cursor-pointer ring-2 ring-emerald-500/20'
+              ? 'bg-primary hover:bg-primary/90 text-primary-foreground cursor-pointer'
               : completedCount > 0 && !isRunning
-              ? 'cursor-pointer border-zinc-300 dark:border-zinc-700 bg-white dark:bg-card hover:bg-zinc-50 dark:hover:bg-accent text-zinc-900 dark:text-zinc-100'
-              : 'opacity-40 cursor-not-allowed border-zinc-200 dark:border-zinc-800'
+              ? 'cursor-pointer border-border bg-card hover:bg-secondary text-foreground'
+              : 'opacity-40 cursor-not-allowed border-border'
           }`}
         >
           <Download className="w-3.5 h-3.5" />
@@ -262,15 +238,17 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
         </Button>
 
         {totalAssetsCount > 0 && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onClearAll}
-            className="h-8 w-8 text-muted-foreground hover:text-destructive cursor-pointer shrink-0"
-            title={activeT.clearAll || 'Clear All'}
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </Button>
+          <Tooltip content={activeT.clearAll || 'Clear Workspace'}>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onClearAll}
+              aria-label={activeT.clearAll || 'Clear All'}
+              className="h-8 w-8 text-muted-foreground hover:text-destructive cursor-pointer shrink-0"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </Button>
+          </Tooltip>
         )}
       </div>
     </div>

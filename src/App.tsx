@@ -1,18 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { HomeHubView } from './features/home/HomeHubView';
 import { StudioView } from './features/studio/StudioView';
-import { TrackerView } from './features/tracker/TrackerView';
 import { FileCleanerView } from './features/cleaner/FileCleanerView';
 import { VideoMuterView } from './features/video/VideoMuterView';
 import { EpsConverterView } from './features/eps/EpsConverterView';
 import { batchQueueService } from './services/queue/BatchQueueService';
 import { keyRingScheduler } from './services/scheduler/KeyRingScheduler';
-import { db, getAllApiKeys, updateApiKey } from './db';
+import { db, getAllApiKeys, updateApiKey, useSqliteQuery } from './db';
 import { ApiKeyRecord } from './types';
-import { Badge } from './components/ui/badge';
 import {
-  ShieldCheck,
   Wand2,
   Layers,
   KeyRound,
@@ -21,21 +17,24 @@ import {
   LayoutGrid,
   Sparkles,
   VolumeX,
+  PanelLeftClose,
+  PanelLeftOpen,
+  FileSpreadsheet,
   Languages,
 } from 'lucide-react';
 import { Dialog } from './components/ui/dialog';
+import { Tooltip } from './components/ui/tooltip';
 import { KeyRingView } from './features/keyring/components/KeyRingView';
+import { StockTemplatesModal } from './features/tools/StockTemplatesModal';
 import { AppLogo } from './components/icons/AppLogo';
 import { useLanguage } from './context/LanguageContext';
-
 import { CustomTitleBar } from './components/CustomTitleBar';
 
-export type AppTab = 'home' | 'studio' | 'tracker' | 'cleaner' | 'muter' | 'eps';
+export type AppTab = 'home' | 'studio' | 'cleaner' | 'muter' | 'eps';
 
 const TAB_TO_PATH: Record<AppTab, string> = {
   home: '/',
   studio: '/metadata',
-  tracker: '/tracker',
   cleaner: '/file-cleaner',
   muter: '/video-muter',
   eps: '/eps-converter',
@@ -44,7 +43,6 @@ const TAB_TO_PATH: Record<AppTab, string> = {
 const PATH_TO_TAB: Record<string, AppTab> = {
   '/': 'home',
   '/metadata': 'studio',
-  '/tracker': 'tracker',
   '/file-cleaner': 'cleaner',
   '/video-muter': 'muter',
   '/eps-converter': 'eps',
@@ -69,17 +67,14 @@ export function App() {
 
   if (!isElectron) {
     return (
-      <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center p-8 text-center font-sans">
-        <div className="max-w-md p-6 bg-zinc-900 border border-red-500/30 rounded-2xl shadow-2xl space-y-4">
-          <div className="w-12 h-12 mx-auto rounded-full bg-red-500/10 flex items-center justify-center text-red-500 text-2xl font-bold">
+      <div className="h-screen w-screen bg-background text-foreground flex flex-col items-center justify-center p-8 text-center font-sans overflow-hidden">
+        <div className="max-w-md p-6 bg-card border border-destructive/30 rounded-xl shadow-lg space-y-4">
+          <div className="w-12 h-12 mx-auto rounded-full bg-destructive/10 flex items-center justify-center text-destructive text-2xl font-bold">
             !
           </div>
-          <h1 className="text-xl font-bold text-red-400">Desktop Client Required</h1>
-          <p className="text-sm text-zinc-400 leading-relaxed">
-            Microstock Studio is a native desktop application. Direct browser access via localhost is disabled to protect file system integrity.
-          </p>
-          <p className="text-xs text-zinc-500 border-t border-zinc-800 pt-3">
-            Please run the app through the desktop launcher or <code className="text-zinc-300 bg-zinc-800 px-1.5 py-0.5 rounded">npm run electron:dev</code>.
+          <h1 className="text-xl font-bold text-destructive">Desktop Client Required</h1>
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            StockFlow is a native desktop application. Please launch it via the desktop runtime.
           </p>
         </div>
       </div>
@@ -87,17 +82,20 @@ export function App() {
   }
 
   const { language, setLanguage, t } = useLanguage();
-  const [, setKeys] = useState<ApiKeyRecord[]>([]);
+  const [keys, setKeys] = useState<ApiKeyRecord[]>([]);
   const [activeTab, setActiveTab] = useState<AppTab>(getInitialTab);
+  const [isRailCollapsed, setIsRailCollapsed] = useState<boolean>(() => {
+    return localStorage.getItem('stock_rail_collapsed') === 'true';
+  });
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('stock_theme');
     if (saved === 'light' || saved === 'dark') return saved;
-    return 'dark'; // Dark mode is default
+    return 'dark';
   });
   const [isKeyRingOpen, setIsKeyRingOpen] = useState(false);
+  const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
 
-  const trackerCount = useLiveQuery(() => db.trackerRecords.count(), []) || 0;
-  const masterCount = useLiveQuery(() => db.masterRecords.count(), []) || 0;
+  const masterCount = useSqliteQuery(() => db.masterRecords.count(), [], 0) || 0;
 
   useEffect(() => {
     if (theme === 'dark') {
@@ -108,7 +106,10 @@ export function App() {
     localStorage.setItem('stock_theme', theme);
   }, [theme]);
 
-  // Handle browser popstate (Back/Forward navigation)
+  useEffect(() => {
+    localStorage.setItem('stock_rail_collapsed', String(isRailCollapsed));
+  }, [isRailCollapsed]);
+
   useEffect(() => {
     const handlePopState = () => {
       const pathname = window.location.pathname.toLowerCase().replace(/\/$/, '') || '/';
@@ -134,7 +135,6 @@ export function App() {
     const unsub = keyRingScheduler.subscribe((updated) => setKeys([...updated]));
     keyRingScheduler.init();
 
-    // Auto-migrate any legacy/deprecated models to active gemini-3.1-flash-lite
     getAllApiKeys().then(async (allKeys) => {
       let migrated = false;
       for (const k of allKeys) {
@@ -158,131 +158,315 @@ export function App() {
     return () => unsub();
   }, []);
 
+  const navItems: Array<{
+    id: AppTab;
+    label: string;
+    icon: React.FC<{ className?: string }>;
+    badge?: number;
+  }> = [
+    {
+      id: 'home',
+      label: t.allTools,
+      icon: LayoutGrid,
+    },
+    {
+      id: 'studio',
+      label: t.metadataStudio,
+      icon: Wand2,
+      badge: masterCount > 0 ? masterCount : undefined,
+    },
+    {
+      id: 'cleaner',
+      label: t.fileCleaner,
+      icon: Sparkles,
+    },
+    {
+      id: 'eps',
+      label: t.epsConverter,
+      icon: Layers,
+    },
+    {
+      id: 'muter',
+      label: t.videoMuter,
+      icon: VolumeX,
+    },
+  ];
+
+  const healthyKeysCount = keys.filter((k) => k.status === 'healthy').length;
+
   return (
     <div className="h-screen w-screen bg-background text-foreground flex flex-col antialiased overflow-hidden select-none">
-      {/* Frameless Window Custom Titlebar - strictly fixed at the absolute top */}
+      {/* Ultra-Clean Top Header: App Icon, StockFlow Name, and Window Controls Only */}
       <div className="shrink-0 z-50">
         <CustomTitleBar />
       </div>
 
-      {/* Sleek Minimal Responsive Header (Level 1 Surface) - fixed below titlebar */}
-      <header className="shrink-0 border-b border-slate-300 dark:border-zinc-800 bg-white/95 dark:bg-[#18181B]/95 backdrop-blur-md z-40 w-full overflow-hidden text-zinc-900 dark:text-zinc-100">
-        <div className="max-w-[1700px] w-full mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-3">
-          {/* Left: Brand Logo & Title (Clickable) + Return to Hub Grid Button */}
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-            <button
-              type="button"
-              onClick={() => handleTabChange('home')}
-              className="flex items-center gap-2 sm:gap-2.5 shrink-0 min-w-0 cursor-pointer text-start hover:opacity-90 transition"
-              title="Return to Home Hub"
-            >
-              <AppLogo size={28} className="shrink-0 drop-shadow-xs" />
-              <div className="flex items-baseline gap-1.5 min-w-0">
-                <span className="font-semibold text-sm tracking-tight text-zinc-900 dark:text-zinc-100 truncate">
-                  {t.brandTitle}
-                </span>
-                <span className="text-[11px] text-zinc-500 dark:text-zinc-400 hidden sm:inline font-mono">
-                  {t.brandSubtitle}
-                </span>
-              </div>
-            </button>
-
-            {/* Hub / All Tools Button */}
-            <button
-              type="button"
-              onClick={() => handleTabChange('home')}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer shrink-0 ${
-                activeTab === 'home'
-                  ? 'bg-zinc-200 text-zinc-900 dark:bg-zinc-700 dark:text-zinc-100 border-zinc-300 dark:border-zinc-600 shadow-xs'
-                  : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-100 border-zinc-200 dark:border-zinc-700'
+      {/* Native Desktop Split Shell */}
+      <div className="flex-1 min-h-0 flex overflow-hidden">
+        {/* Persistent Left Navigation Rail */}
+        <aside
+          className={`${
+            isRailCollapsed ? 'w-14' : 'w-56'
+          } shrink-0 bg-card border-e border-border flex flex-col justify-between transition-[width] duration-150 ease-out z-30`}
+        >
+          {/* Top Brand + Workspace Navigation List */}
+          <div className="flex flex-col min-h-0">
+            {/* Rail Header */}
+            <div
+              className={`border-b border-border shrink-0 ${
+                isRailCollapsed
+                  ? 'py-2 px-1.5 flex flex-col items-center justify-center gap-2'
+                  : 'h-11 px-3 flex items-center justify-between gap-2'
               }`}
-              title="All Tools Dashboard / لوحة جميع الأدوات"
             >
-              <LayoutGrid className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden sm:inline">{t.allTools || 'All Tools'}</span>
-            </button>
+              {isRailCollapsed ? (
+                <>
+                  <Tooltip
+                    content={language === 'ar' ? 'توسيع القائمة' : 'Expand sidebar'}
+                    side={language === 'ar' ? 'left' : 'right'}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setIsRailCollapsed(false)}
+                      aria-label="Expand sidebar"
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition cursor-pointer shrink-0"
+                    >
+                      <PanelLeftOpen className="w-4 h-4 rtl:rotate-180" />
+                    </button>
+                  </Tooltip>
+                  <button
+                    type="button"
+                    onClick={() => handleTabChange('home')}
+                    className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer hover:opacity-90 transition shrink-0"
+                    aria-label="StockFlow Home"
+                  >
+                    <AppLogo size={20} className="shrink-0" />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleTabChange('home')}
+                    className="flex items-center gap-2 min-w-0 cursor-pointer hover:opacity-90 transition text-start"
+                  >
+                    <AppLogo size={20} className="shrink-0" />
+                    <span className="font-semibold text-xs tracking-tight text-foreground truncate">
+                      StockFlow
+                    </span>
+                  </button>
+
+                  <Tooltip
+                    content={language === 'ar' ? 'طي القائمة' : 'Collapse sidebar'}
+                    side={language === 'ar' ? 'left' : 'right'}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setIsRailCollapsed(true)}
+                      aria-label="Collapse sidebar"
+                      className="w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition cursor-pointer shrink-0"
+                    >
+                      <PanelLeftClose className="w-3.5 h-3.5 rtl:rotate-180" />
+                    </button>
+                  </Tooltip>
+                </>
+              )}
+            </div>
+
+            {/* Navigation Items */}
+            <nav className="p-2 space-y-1 overflow-y-auto no-scrollbar" aria-label="Workspace Navigation">
+              {navItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                const btn = (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => handleTabChange(item.id)}
+                    className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                      isActive
+                        ? 'bg-primary text-primary-foreground font-semibold shadow-2xs'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-primary-foreground' : 'text-muted-foreground'}`} />
+                      {!isRailCollapsed && <span className="truncate">{item.label}</span>}
+                    </div>
+                    {!isRailCollapsed && item.badge !== undefined && (
+                      <span
+                        className={`text-[10px] font-mono tabular-nums px-1.5 py-0.5 rounded ${
+                          isActive
+                            ? 'bg-primary-foreground/20 text-primary-foreground font-semibold'
+                            : 'bg-secondary text-muted-foreground'
+                        }`}
+                      >
+                        {item.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+
+                return isRailCollapsed ? (
+                  <Tooltip key={item.id} content={item.label} side={language === 'ar' ? 'left' : 'right'}>
+                    {btn}
+                  </Tooltip>
+                ) : (
+                  btn
+                );
+              })}
+            </nav>
           </div>
 
-          {/* Right Header Utilities (Language, Manage Keys, Theme Toggle, & Local DB Indicator) */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* Language Switcher */}
-            <button
-              type="button"
-              onClick={() => setLanguage(language === 'en' ? 'ar' : 'en')}
-              className="px-2 sm:px-2.5 h-8 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 flex items-center gap-1 sm:gap-1.5 text-xs font-semibold text-zinc-900 dark:text-zinc-100 cursor-pointer transition shadow-2xs"
-              title="Toggle Language / تبديل اللغة"
-            >
-              <Languages className="w-3.5 h-3.5 text-primary shrink-0" />
-              <span className="text-[11px] sm:text-xs font-mono sm:font-sans">
-                {language === 'en' ? 'عربي' : 'EN'}
-              </span>
-            </button>
+          {/* Bottom System & Environment Controls (Single Source of Truth) */}
+          <div className="p-2 border-t border-border space-y-1.5 shrink-0 bg-card">
+            {/* CSV Templates Reference */}
+            <Tooltip content={isRailCollapsed ? t.csvSpecsSamples : undefined} side={language === 'ar' ? 'left' : 'right'}>
+              <button
+                type="button"
+                onClick={() => setIsTemplatesOpen(true)}
+                className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <FileSpreadsheet className="w-4 h-4 text-muted-foreground shrink-0" />
+                  {!isRailCollapsed && <span className="truncate">{t.csvSpecsSamples}</span>}
+                </div>
+              </button>
+            </Tooltip>
 
-            {/* Theme Toggle */}
-            <button
-              type="button"
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-              className="w-8 h-8 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 flex items-center justify-center text-zinc-900 dark:text-zinc-100 cursor-pointer transition shadow-2xs"
-              title={theme === 'dark' ? t.switchToLight : t.switchToDark}
-              aria-label="Toggle theme"
-            >
-              {theme === 'dark' ? (
-                <Sun className="w-3.5 h-3.5 text-amber-400" />
-              ) : (
-                <Moon className="w-3.5 h-3.5 text-zinc-700" />
-              )}
-            </button>
-
-            {/* API Keys (Only displayed in tools that require AI keys, like Metadata Studio) */}
-            {activeTab === 'studio' && (
+            {/* API KeyRing Button */}
+            <Tooltip content={isRailCollapsed ? t.apiKeys : undefined} side={language === 'ar' ? 'left' : 'right'}>
               <button
                 type="button"
                 onClick={() => setIsKeyRingOpen(true)}
-                className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 text-xs font-medium text-zinc-900 dark:text-zinc-100 cursor-pointer transition shadow-2xs"
-                title="Manage API Keys & Priority Cascade"
+                className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer"
               >
-                <KeyRound className="w-3.5 h-3.5 text-primary shrink-0" />
-                <span className="font-medium hidden sm:inline">{t.apiKeys}</span>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <KeyRound className="w-4 h-4 text-primary shrink-0" />
+                  {!isRailCollapsed && <span className="truncate">{t.apiKeys}</span>}
+                </div>
+                {!isRailCollapsed && (
+                  <span dir="ltr" className="text-[10px] font-mono tabular-nums px-1.5 py-0.5 rounded bg-secondary text-foreground">
+                    {healthyKeysCount}/{keys.length}
+                  </span>
+                )}
               </button>
-            )}
+            </Tooltip>
 
-            {/* 100% Local DB badge on desktop */}
-            <div className="hidden md:flex items-center gap-1.5 text-[11px] font-mono pl-2 border-l border-zinc-200 dark:border-zinc-700">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-              <span className="text-zinc-700 dark:text-zinc-300 font-medium">{t.localDb}</span>
+            {/* Theme & Language Controls Row */}
+            <div className={`pt-1.5 border-t border-border flex ${isRailCollapsed ? 'flex-col items-center gap-1.5' : 'items-center justify-between gap-1.5'}`}>
+              {/* Language Switcher */}
+              {isRailCollapsed ? (
+                <Tooltip content={language === 'en' ? 'التبديل إلى العربية' : 'Switch to English'} side={language === 'ar' ? 'left' : 'right'}>
+                  <button
+                    type="button"
+                    onClick={() => setLanguage(language === 'en' ? 'ar' : 'en')}
+                    className="h-7 w-8 rounded-lg bg-secondary hover:bg-secondary/80 border border-border flex items-center justify-center text-[10px] font-mono font-semibold text-foreground cursor-pointer"
+                  >
+                    {language === 'en' ? 'AR' : 'EN'}
+                  </button>
+                </Tooltip>
+              ) : (
+                <div
+                  dir="ltr"
+                  className="inline-flex flex-1 items-center rounded-lg bg-secondary p-0.5 border border-border text-[11px] font-medium"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setLanguage('en')}
+                    className={`flex-1 py-0.5 rounded-md transition-colors cursor-pointer font-mono text-center ${
+                      language === 'en'
+                        ? 'bg-card text-foreground shadow-2xs font-semibold'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    EN
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLanguage('ar')}
+                    className={`flex-1 py-0.5 rounded-md transition-colors cursor-pointer text-center ${
+                      language === 'ar'
+                        ? 'bg-card text-foreground shadow-2xs font-semibold'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    عربي
+                  </button>
+                </div>
+              )}
+
+              {/* Theme Toggle */}
+              <Tooltip content={theme === 'dark' ? t.switchToLight : t.switchToDark} side={language === 'ar' ? 'left' : 'right'}>
+                <button
+                  type="button"
+                  onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                  className="h-7 w-8 rounded-lg bg-secondary hover:bg-secondary/80 border border-border flex items-center justify-center text-foreground cursor-pointer transition-colors shrink-0"
+                  aria-label="Toggle theme"
+                >
+                  {theme === 'dark' ? (
+                    <Sun className="w-3.5 h-3.5 text-foreground" />
+                  ) : (
+                    <Moon className="w-3.5 h-3.5 text-foreground" />
+                  )}
+                </button>
+              </Tooltip>
             </div>
           </div>
+        </aside>
+
+        {/* Right Main Workspace Column (Keep-Alive Workspaces Preserve Batch State Across Tab Switches) */}
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col bg-background overflow-hidden">
+          <main className="flex-1 min-w-0 min-h-0 overflow-hidden flex flex-col">
+            <div className={activeTab === 'home' ? 'flex-1 overflow-y-auto px-4 sm:px-6 py-5' : 'hidden'}>
+              <HomeHubView
+                onNavigate={(tool) => handleTabChange(tool)}
+                onOpenKeyRing={() => setIsKeyRingOpen(true)}
+                onOpenTemplates={() => setIsTemplatesOpen(true)}
+              />
+            </div>
+            <div className={activeTab === 'studio' ? 'flex-1 min-h-0 h-full px-3 sm:px-4 py-3 overflow-hidden' : 'hidden'}>
+              <StudioView />
+            </div>
+            <div className={activeTab === 'cleaner' ? 'flex-1 overflow-y-auto px-4 sm:px-6 py-4' : 'hidden'}>
+              <FileCleanerView
+                onSendToStudio={(files) => {
+                  batchQueueService.addFiles(files);
+                  handleTabChange('studio');
+                }}
+              />
+            </div>
+            <div className={activeTab === 'muter' ? 'flex-1 overflow-y-auto px-4 sm:px-6 py-4' : 'hidden'}>
+              <VideoMuterView
+                onSendToStudio={(files) => {
+                  batchQueueService.addFiles(files);
+                  handleTabChange('studio');
+                }}
+              />
+            </div>
+            <div className={activeTab === 'eps' ? 'flex-1 overflow-y-auto px-4 sm:px-6 py-4' : 'hidden'}>
+              <EpsConverterView
+                onSendToStudio={(files) => {
+                  batchQueueService.addFiles(files);
+                  handleTabChange('studio');
+                }}
+              />
+            </div>
+          </main>
         </div>
-      </header>
+      </div>
 
-      {/* Main Workspace (Dedicated Standalone Views) - strict viewport containment */}
-      <main className="flex-1 max-w-[1700px] w-full mx-auto px-3 sm:px-6 py-3 min-w-0 overflow-hidden flex flex-col">
-        {activeTab === 'home' && <div className="flex-1 overflow-y-auto"><HomeHubView onNavigate={(tool) => handleTabChange(tool)} /></div>}
-        {activeTab === 'studio' && <div className="flex-1 min-h-0 h-full"><StudioView /></div>}
-        {activeTab === 'tracker' && <div className="flex-1 overflow-y-auto"><TrackerView /></div>}
-        {activeTab === 'cleaner' && <div className="flex-1 overflow-y-auto"><FileCleanerView /></div>}
-        {activeTab === 'muter' && <div className="flex-1 overflow-y-auto"><VideoMuterView /></div>}
-        {activeTab === 'eps' && (
-          <div className="flex-1 overflow-y-auto">
-            <EpsConverterView
-              onSendToStudio={(files) => {
-                batchQueueService.addFiles(files);
-                handleTabChange('studio');
-              }}
-            />
-          </div>
-        )}
-      </main>
-
-      {/* Global API KeyRing Dialog */}
+      {/* Global Dialogs */}
       <Dialog
         open={isKeyRingOpen}
         onClose={() => setIsKeyRingOpen(false)}
-        title="API Keys & Priority"
-        className="max-w-2xl"
+        title={t.keysTitle}
+        size="lg"
       >
         <KeyRingView />
       </Dialog>
+
+      <StockTemplatesModal open={isTemplatesOpen} onClose={() => setIsTemplatesOpen(false)} />
     </div>
   );
 }

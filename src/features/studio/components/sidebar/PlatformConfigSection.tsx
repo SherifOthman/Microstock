@@ -1,60 +1,59 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { SupportedPlatform } from '../../../../types';
 import { useLanguage } from '../../../../context/LanguageContext';
-import { FREEPIK_BASE_MODELS } from '../../../../constants/metadataLimits';
-import { Button } from '../../../../components/ui/button';
-import { Badge } from '../../../../components/ui/badge';
-import { Switch } from '../../../../components/ui/switch';
 import { Input } from '../../../../components/ui/input';
-import { Tooltip } from '../../../../components/ui/tooltip';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '../../../../components/ui/select';
-import { Info, Lock, RotateCcw } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../../components/ui/select';
+import { Checkbox } from '../../../../components/ui/checkbox';
 import { CountryCombobox } from '../../../../components/ui/CountryCombobox';
+import { Lock, Unlock } from 'lucide-react';
+import { useStudioMarketplaceSettings } from '../../../../hooks/useStudioMarketplaceSettings';
 
-interface PlatformConfigProps {
-  platformId: string;
-  settings: any;
+export const FREEPIK_AI_MODELS = [
+  'Google Nano Banana',
+  'Midjourney 6',
+  'Flux 1.1 Pro',
+  'DALL-E 3',
+  'Stable Diffusion 3.5',
+  'Leonardo Phoenix',
+  'Ideogram 2.0',
+  'Adobe Firefly 3',
+  'Other',
+] as const;
+
+export interface PlatformConfigSectionProps {
+  platformId: SupportedPlatform;
+  settings: ReturnType<typeof useStudioMarketplaceSettings> | any;
   onUnlockDt?: () => void;
   onUnlockShutter?: () => void;
 }
 
-export const PlatformConfigSection: React.FC<PlatformConfigProps> = React.memo(({
+export const PlatformConfigSection: React.FC<PlatformConfigSectionProps> = React.memo(({
   platformId,
-  settings,
+  settings: s,
   onUnlockDt,
   onUnlockShutter,
 }) => {
-  const { t } = useLanguage();
-  const [dtAdvancedOpen, setDtAdvancedOpen] = useState(false);
-  const [shutterAdvancedOpen, setShutterAdvancedOpen] = useState(false);
+  const { t, language } = useLanguage();
 
   if (platformId === 'vecteezy') {
     return (
-      <div className="p-2.5 ml-4 rounded-md border border-border bg-secondary/20 space-y-2 text-xs">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1">
-            <span className="text-[11px] text-muted-foreground font-medium">{t.license}:</span>
-            <Tooltip content="Pro (Default) or Free license column for Vecteezy contributors.">
-              <Info className="w-3 h-3 text-muted-foreground hover:text-foreground cursor-pointer" />
-            </Tooltip>
-          </div>
-          <div className="w-28">
-            <Select value={settings.vecLicense} onValueChange={(val) => settings.setVecLicense(val as 'pro' | 'free')}>
-              <SelectTrigger className="h-7 text-xs bg-card"><SelectValue /></SelectTrigger>
-              <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60">
-                <SelectItem value="pro" className="text-xs">{t.proDefault}</SelectItem>
-                <SelectItem value="free" className="text-xs">{t.freeLicense}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-        <div className="pt-1 border-t border-border/50 text-[10px] text-muted-foreground font-mono">
-          Direct Web Upload Parity (No Hydration Needed)
+      <div className="pt-2 border-t border-border/70 flex items-center justify-between text-xs">
+        <span className="text-muted-foreground">{t.VecteezyLicense}</span>
+        <div className="flex gap-1 bg-background p-0.5 rounded-md border border-border">
+          {(['pro', 'free'] as const).map((lic) => (
+            <button
+              key={lic}
+              type="button"
+              onClick={() => s.setVecLicense(lic)}
+              className={`px-2 py-0.5 rounded text-[10px] font-mono uppercase cursor-pointer transition ${
+                s.vecLicense === lic
+                  ? 'bg-primary text-primary-foreground font-semibold'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {lic === 'pro' ? t.proLicense : t.freeLicense}
+            </button>
+          ))}
         </div>
       </div>
     );
@@ -62,55 +61,37 @@ export const PlatformConfigSection: React.FC<PlatformConfigProps> = React.memo((
 
   if (platformId === 'freepik') {
     return (
-      <div className="p-2.5 ms-3 rounded-md border border-border bg-secondary/20 space-y-2 text-xs">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <span className="text-[11px] text-foreground font-medium">{t.aiGenerated}</span>
-            <Tooltip content="Check if your files are AI generated (Freepik requires Prompt & Base Model).">
-              <Info className="w-3 h-3 text-muted-foreground hover:text-foreground cursor-pointer" />
-            </Tooltip>
-          </div>
-          <Switch
-            checked={settings.freepikAiGenerated}
-            onCheckedChange={settings.setFreepikAiGenerated}
-            aria-label="Toggle Freepik AI Generated"
+      <div className="pt-2 border-t border-border/70 space-y-2 text-xs">
+        <label className="flex items-center justify-between cursor-pointer">
+          <span className="text-muted-foreground font-medium">{t.markAsAi}</span>
+          <Checkbox
+            checked={s.freepikAiGenerated}
+            onCheckedChange={(c: boolean) => s.setFreepikAiGenerated(!!c)}
           />
-        </div>
-        {settings.freepikAiGenerated ? (
-          <>
-            <div className="flex items-center justify-between pt-1 border-t border-border/40">
-              <div className="flex items-center gap-1">
-                <span className="text-[11px] text-muted-foreground font-medium">{t.baseModel}:</span>
-              </div>
-              <div className="w-44 sm:w-48">
-                <Select value={settings.freepikModel} onValueChange={settings.setFreepikModel}>
-                  <SelectTrigger className="h-7 text-xs bg-card"><SelectValue placeholder="Base model" /></SelectTrigger>
-                  <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60">
-                    {FREEPIK_BASE_MODELS.map((m) => (
-                      <SelectItem key={m} value={m} className="text-xs">{m}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            {settings.freepikModel === 'Other' && (
+        </label>
+        {s.freepikAiGenerated && (
+          <div className="space-y-1.5">
+            <span className="text-muted-foreground block text-[11px]">{t.aiModelUsed}</span>
+            <Select value={s.freepikModel} onValueChange={s.setFreepikModel}>
+              <SelectTrigger className="h-7 text-[11px] bg-background">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60">
+                {FREEPIK_AI_MODELS.map((m) => (
+                  <SelectItem key={m} value={m} className="text-xs">
+                    {m === 'Other' ? (language === 'ar' ? 'أخرى (مخصص)' : 'Other') : m}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {s.freepikModel === 'Other' && (
               <Input
-                placeholder="Enter custom model name..."
-                value={settings.customFreepikModel}
-                onChange={(e) => settings.setCustomFreepikModel(e.target.value)}
-                className="h-7 text-xs"
+                placeholder={t.enterModelName}
+                value={s.customFreepikModel}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => s.setCustomFreepikModel(e.target.value)}
+                className="h-7 text-xs bg-background"
               />
             )}
-            <div className="pt-1 border-t border-border/50 text-[10px] text-muted-foreground space-y-0.5">
-              <p>• Max 49 keywords (Freepik appends _ai_generated)</p>
-              <p>• Titles auto-cleansed (spaces instead of hyphens)</p>
-              <p>• Prompt & Model included for AI compliance</p>
-            </div>
-          </>
-        ) : (
-          <div className="pt-1 border-t border-border/50 text-[10px] text-muted-foreground space-y-0.5">
-            <p className="text-foreground/90 font-medium">• {t.standardPhotoVector}</p>
-            <p>• Prompt & Model columns left empty</p>
           </div>
         )}
       </div>
@@ -119,74 +100,80 @@ export const PlatformConfigSection: React.FC<PlatformConfigProps> = React.memo((
 
   if (platformId === 'dreamstime') {
     return (
-      <div className="p-2.5 ml-4 rounded-md border border-border bg-secondary/20 space-y-2 text-xs">
+      <div className="pt-2 border-t border-border/70 space-y-2 text-xs">
         <div className="flex items-center justify-between">
-          <span className="text-[11px] text-foreground font-medium">{t.aiGenerated}</span>
-          <Switch checked={settings.dtAiGenerated} onCheckedChange={settings.setDtAiGenerated} />
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <Checkbox
+              checked={s.dtAiGenerated}
+              onCheckedChange={(c: boolean) => s.setDtAiGenerated(!!c)}
+            />
+            <span className="text-foreground font-medium text-[11px]">{t.aiContentAndCategory}</span>
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <Checkbox
+              checked={s.dtEditorial}
+              onCheckedChange={(c: boolean) => s.setDtEditorial(!!c)}
+            />
+            <span className="text-muted-foreground text-[11px]">{t.editorialContent}</span>
+          </label>
         </div>
-        <div className="flex items-center justify-between">
-          <span className="text-[11px] text-muted-foreground font-medium">{t.editorial}</span>
-          <Switch checked={settings.dtEditorial} onCheckedChange={settings.setDtEditorial} />
-        </div>
-        <div className="pt-1.5 border-t border-border/50">
-          <button
-            type="button"
-            onClick={() => setDtAdvancedOpen(!dtAdvancedOpen)}
-            className="flex items-center justify-between w-full text-[11px] text-muted-foreground hover:text-foreground cursor-pointer py-1"
-          >
-            <span className="font-semibold text-foreground/80">{t.advancedLicensing}</span>
-            <span className="text-[10px] text-muted-foreground font-mono">
-              {dtAdvancedOpen ? '▲' : '▼ (W-EL & P-EL)'}
-            </span>
-          </button>
-          {dtAdvancedOpen && (
-            <div className="space-y-2 pt-1.5 pl-1 animate-in fade-in-50 duration-150">
-              <div className="flex items-center justify-between gap-1 pb-1.5 border-b border-border/40">
-                {settings.isDtLocked ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={onUnlockDt}
-                    className="h-6 px-2 text-[10px] gap-1 text-amber-500 border-amber-500/30 hover:bg-amber-500/10 cursor-pointer"
-                  >
-                    <Lock className="w-2.5 h-2.5" />
-                    <span>{t.unlockToEdit}</span>
-                  </Button>
-                ) : (
-                  <Badge variant="outline" className="h-5 px-1.5 text-[9px] text-emerald-500 border-emerald-500/30 bg-emerald-500/10 font-mono">
-                    Unlocked
-                  </Badge>
-                )}
-                <Button
+
+        <div className="pt-1.5 border-t border-border/60 space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span dir="ltr" className="text-[10px] font-mono text-muted-foreground">W-EL / P-EL</span>
+            {s.isDtLocked ? (
+              <button
+                type="button"
+                onClick={onUnlockDt}
+                className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <Lock className="w-2.5 h-2.5" />
+                <span>{t.CustomizeLicensing}</span>
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button
                   type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={settings.resetDtLicensing}
-                  className="h-6 px-2 text-[10px] gap-1 text-muted-foreground hover:text-foreground cursor-pointer"
+                  onClick={() => {
+                    if (s.setIsDtLocked) s.setIsDtLocked(true);
+                    localStorage.setItem('stock_dt_locked', JSON.stringify(true));
+                  }}
+                  className="inline-flex items-center gap-1 text-[10px] text-primary hover:underline cursor-pointer"
                 >
-                  <RotateCcw className="w-2.5 h-2.5" />
-                  <span>{t.resetToDefaults}</span>
-                </Button>
+                  <Unlock className="w-2.5 h-2.5" />
+                  <span>{t.lockDefaults}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={s.resetDtLicensing}
+                  className="text-[10px] text-muted-foreground hover:text-foreground underline cursor-pointer"
+                >
+                  {t.resetSafeDefaults}
+                </button>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-muted-foreground">{t.welExtended}</span>
-                <Switch checked={settings.dtWel} onCheckedChange={settings.setDtWel} disabled={settings.isDtLocked} />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-muted-foreground">{t.pelExtended}</span>
-                <Switch checked={settings.dtPel} onCheckedChange={settings.setDtPel} disabled={settings.isDtLocked} />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-muted-foreground">{t.freeImages}</span>
-                <Switch checked={settings.dtFree} onCheckedChange={settings.setDtFree} disabled={settings.isDtLocked} />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-muted-foreground">{t.srelTransfers}</span>
-                <Switch checked={settings.dtSrel} onCheckedChange={settings.setDtSrel} disabled={settings.isDtLocked} />
-              </div>
-            </div>
-          )}
+            )}
+          </div>
+
+          <div className={`grid grid-cols-2 gap-1.5 ${s.isDtLocked ? 'opacity-50 pointer-events-none' : ''}`}>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <Checkbox checked={s.dtWel} disabled={s.isDtLocked} onCheckedChange={(c: boolean) => s.setDtWel(!!c)} />
+              <span dir="ltr" className="text-[11px] font-mono">W-EL (1)</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <Checkbox checked={s.dtPel} disabled={s.isDtLocked} onCheckedChange={(c: boolean) => s.setDtPel(!!c)} />
+              <span dir="ltr" className="text-[11px] font-mono">P-EL (1)</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <Checkbox checked={s.dtFree} disabled={s.isDtLocked} onCheckedChange={(c: boolean) => s.setDtFree(!!c)} />
+              <span className="text-[11px] font-mono text-muted-foreground">
+                {language === 'ar' ? 'مجاني (0)' : 'Free (0)'}
+              </span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <Checkbox checked={s.dtSrel} disabled={s.isDtLocked} onCheckedChange={(c: boolean) => s.setDtSrel(!!c)} />
+              <span dir="ltr" className="text-[11px] font-mono text-muted-foreground">SR-EL (0)</span>
+            </label>
+          </div>
         </div>
       </div>
     );
@@ -194,77 +181,80 @@ export const PlatformConfigSection: React.FC<PlatformConfigProps> = React.memo((
 
   if (platformId === 'shutterstock') {
     return (
-      <div className="p-2.5 ml-4 rounded-md border border-border bg-secondary/20 space-y-2 text-xs">
-        <button
-          type="button"
-          onClick={() => setShutterAdvancedOpen(!shutterAdvancedOpen)}
-          className="flex items-center justify-between w-full text-[11px] text-muted-foreground hover:text-foreground cursor-pointer py-1"
-        >
-          <span className="font-semibold text-foreground/80">{t.shutterstockAdvanced}</span>
-          <span className="text-[10px] text-muted-foreground font-mono">
-            {shutterAdvancedOpen ? '▲' : '▼ (no / no / no)'}
-          </span>
-        </button>
-        {shutterAdvancedOpen && (
-          <div className="space-y-2 pt-1.5 pl-1 animate-in fade-in-50 duration-150 border-t border-border/40 mt-1">
-            <div className="flex items-center justify-between gap-1 pb-1.5 border-b border-border/40">
-              {settings.isShutterLocked ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={onUnlockShutter}
-                  className="h-6 px-2 text-[10px] gap-1 text-amber-500 border-amber-500/30 hover:bg-amber-500/10 cursor-pointer"
-                >
-                  <Lock className="w-2.5 h-2.5" />
-                  <span>{t.unlockToEdit}</span>
-                </Button>
-              ) : (
-                <Badge variant="outline" className="h-5 px-1.5 text-[9px] text-emerald-500 border-emerald-500/30 bg-emerald-500/10 font-mono">
-                  Unlocked
-                </Badge>
-              )}
-              <Button
+      <div className="pt-2 border-t border-border/70 space-y-1.5 text-xs">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-muted-foreground font-mono">{t.shutterstockOptions}</span>
+          {s.isShutterLocked ? (
+            <button
+              type="button"
+              onClick={onUnlockShutter}
+              className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground cursor-pointer"
+            >
+              <Lock className="w-2.5 h-2.5" />
+              <span>{t.customizeOptions}</span>
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
                 type="button"
-                variant="ghost"
-                size="sm"
-                onClick={settings.resetShutterOptions}
-                className="h-6 px-2 text-[10px] gap-1 text-muted-foreground hover:text-foreground cursor-pointer"
+                onClick={() => {
+                  if (s.setIsShutterLocked) s.setIsShutterLocked(true);
+                  localStorage.setItem('stock_shutter_locked', JSON.stringify(true));
+                }}
+                className="inline-flex items-center gap-1 text-[10px] text-primary hover:underline cursor-pointer"
               >
-                <RotateCcw className="w-2.5 h-2.5" />
-                <span>{t.resetToDefaults}</span>
-              </Button>
+                <Unlock className="w-2.5 h-2.5" />
+                <span>{t.lockDefaults}</span>
+              </button>
+              <button
+                type="button"
+                onClick={s.resetShutterOptions}
+                className="text-[10px] text-muted-foreground hover:text-foreground underline cursor-pointer"
+              >
+                {t.resetSafeDefaults}
+              </button>
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] text-muted-foreground">{t.editorial}</span>
-              <Switch checked={settings.shutterEditorial} onCheckedChange={settings.setShutterEditorial} disabled={settings.isShutterLocked} />
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] text-muted-foreground">{t.matureContent}</span>
-              <Switch checked={settings.shutterMature} onCheckedChange={settings.setShutterMature} disabled={settings.isShutterLocked} />
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] text-muted-foreground">{t.illustration}</span>
-              <Switch checked={settings.shutterIllustration} onCheckedChange={settings.setShutterIllustration} disabled={settings.isShutterLocked} />
-            </div>
+          )}
+        </div>
+
+        <div className={`space-y-1.5 ${s.isShutterLocked ? 'opacity-50 pointer-events-none' : ''}`}>
+          <div className="flex items-center justify-between gap-2">
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <Checkbox
+                checked={s.shutterIllustration}
+                disabled={s.isShutterLocked}
+                onCheckedChange={(c: boolean) => s.setShutterIllustration(!!c)}
+              />
+              <span className="text-[11px]">{t.illustrationClipArt}</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <Checkbox
+                checked={s.shutterEditorial}
+                disabled={s.isShutterLocked}
+                onCheckedChange={(c: boolean) => s.setShutterEditorial(!!c)}
+              />
+              <span className="text-[11px]">{t.editorialContent}</span>
+            </label>
           </div>
-        )}
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <Checkbox
+              checked={s.shutterMature}
+              disabled={s.isShutterLocked}
+              onCheckedChange={(c: boolean) => s.setShutterMature(!!c)}
+            />
+            <span className="text-[11px] text-muted-foreground">{t.matureContent}</span>
+          </label>
+        </div>
       </div>
     );
   }
 
   if (platformId === '123rf') {
     return (
-      <div className="p-2.5 ml-4 rounded-md border border-border bg-secondary/20 space-y-2 text-xs">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] text-muted-foreground font-medium shrink-0">{t.rfCountry}:</span>
-          <div className="flex-1 max-w-[200px]">
-            <CountryCombobox
-              value={settings.rfCountry}
-              onChange={settings.setRfCountry}
-              placeholder="--Country--"
-            />
-          </div>
+      <div className="pt-2 border-t border-border/70 flex items-center justify-between gap-2 text-xs">
+        <span className="text-muted-foreground shrink-0 text-[11px]">{t.countryCode}</span>
+        <div className="w-36">
+          <CountryCombobox value={s.rfCountry} onChange={s.setRfCountry} placeholder={t.selectCountry} />
         </div>
       </div>
     );

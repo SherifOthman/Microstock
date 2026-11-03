@@ -1,156 +1,190 @@
-/**
- * Official Microstock CSV Templates, Header Specifications, and Real-World Ingestion Rules
- * Reverse-engineered from official contributor guidelines and active ingestion platforms.
- */
-
-export interface StockPlatformSpec {
-  id: 'adobe' | 'freepik' | 'shutterstock' | 'vecteezy' | 'dreamstime' | '123rf';
+export interface CsvTemplateSpec {
+  id: string;
   name: string;
-  delimiter: string;
-  encoding: 'UTF-8' | 'UTF-8 with BOM';
+  fileName: string;
+  sampleUrl: string;
   headers: string[];
-  filenameRules: {
-    requiresExtension: boolean;
-    maxLength: number;
-    disallowedCharacters: string;
-    description: string;
-  };
-  sampleCsv: string;
-  commonFailureReasons: string[];
-  tipsForUpload: string[];
+  sampleRows: string[][];
+  maxTitleChars: number;
+  maxDescChars: number;
+  maxKeywords: number;
+  rules: string[];
+  rulesAr: string[];
+  tips: string[];
+  tipsAr: string[];
 }
 
-export const STOCK_PLATFORMS_SPEC: Record<string, StockPlatformSpec> = {
-  vecteezy: {
-    id: 'vecteezy',
-    name: 'Vecteezy',
-    delimiter: ',',
-    encoding: 'UTF-8 with BOM',
-    headers: ['Id', 'Filename', 'Title', 'Description', 'Keywords', 'License'],
-    filenameRules: {
-      requiresExtension: true, // For Web Add Data; optional for FTP
-      maxLength: 100,
-      disallowedCharacters: 'accents (ç, é, ñ), underscores (_), spaces, ellipses (…)',
-      description:
-        'Vecteezy website sanitizes filenames on upload: strips underscores, removes accents, and truncates long names with ellipses (…). Primary matching key is the "Id" column!',
-    },
-    sampleCsv: `"Id","Filename","Title","Description","Keywords","License"
-"10293841","Acaibowlwithtoppings2K.jpg","Acai Bowl With Fresh Berries And Coconut Flakes","A colorful acai smoothie bowl topped with fresh strawberries blueberries and toasted coconut flakes on a wooden table.","acai, smoothie bowl, breakfast, superfood, berries, organic, healthy, vegan, fruit","pro"
-"10293842","Zucchininoodlestossedwithpesto.jpg","Zucchini Noodles Tossed With Homemade Pesto Sauce","Fresh zucchini spiralized noodles tossed with rich basil pesto and cherry tomatoes in a white ceramic dish.","zucchini noodles, zoodles, pesto, vegan, healthy, pasta alternative, vegetarian, green","pro"`,
-    commonFailureReasons: [
-      'Leaving "Id" column empty when uploading to Vecteezy "Add Data" web portal.',
-      'Mismatched filenames: Vecteezy stripped underscores (e.g. Açai_bowl -> Acaibowl), causing pre-upload CSV to fail match.',
-      'Special characters or diacritics in filenames (e.g. ç, …) which Vecteezy renames.',
-      'Title not in Title Case or ending with a period/ellipsis (strictly forbidden).',
-      'Fewer than 5 or more than 50 keywords.',
-    ],
-    tipsForUpload: [
-      'Best Workflow: Upload your images first on Vecteezy -> Click "CSV" at top of Add Data page -> Drop that CSV into our "Vecteezy Hydrator" tool -> Re-upload the populated CSV!',
-      'Keep title under 100 characters in strict Title Case with no trailing dots.',
-      'The top 5 keywords carry 80% of search ranking on Vecteezy.',
-    ],
-  },
-
-  adobe: {
+export const CSV_TEMPLATES: CsvTemplateSpec[] = [
+  {
     id: 'adobe',
     name: 'Adobe Stock',
-    delimiter: ',',
-    encoding: 'UTF-8',
+    fileName: 'adobe_stock_metadata.csv',
+    sampleUrl: '/samples/adobe_stock_official_sample.csv',
     headers: ['Filename', 'Title', 'Keywords', 'Category', 'Releases'],
-    filenameRules: {
-      requiresExtension: true,
-      maxLength: 100,
-      disallowedCharacters: 'spaces, commas, diacritics',
-      description:
-        'Adobe Stock expects the exact filename including extension (e.g. image.jpg, video.mov) matching the uploaded asset.',
-    },
-    sampleCsv: `"Filename","Title","Keywords","Category","Releases"
-"AcaiBowl01.jpg","Acai bowl with fresh sliced berries and coconut flakes","acai, breakfast, organic, superfood, berries, bowl, healthy, strawberry, coconut, vegan",7,""
-"Zucchini02.jpg","Zucchini noodles tossed with fresh basil pesto sauce","zucchini, noodles, pesto, healthy, pasta alternative, vegan, vegetarian, dinner",7,""`,
-    commonFailureReasons: [
-      'Missing the 5th "Releases" column or missing trailing comma — Adobe Stock requires all 5 columns.',
-      'UTF-8 BOM prepended to CSV — corrupts "Filename" header match in Adobe Stock.',
-      'Including AI-related terms (ai, generative, midjourney, prompt) in Title or Keywords.',
-      'More than 49 keywords (Adobe accepts up to 49 maximum).',
-      'Filename case mismatch with uploaded file (e.g. photo.JPG vs photo.jpg).',
+    sampleRows: [
+      [
+        'B01_AI_PH_001_workspace.jpg',
+        'Minimalist modern desk setup with laptop and coffee cup in natural sunlight',
+        'desk, laptop, office, workspace, modern, minimalist, coffee, work, technology, business',
+        '3',
+        '',
+      ],
+      [
+        'B01_NT_VC_002_geometric_pattern.eps',
+        'Abstract seamless geometric vector background in monochrome tones',
+        'vector, geometric, pattern, abstract, seamless, background, illustration, modern, design, texture',
+        '11',
+        '',
+      ],
     ],
-    tipsForUpload: [
-      'Adobe Stock officially accepts standard UTF-8 without BOM with exact 5 columns.',
-      'The 5th column "Releases" can be left blank (ending with trailing comma).',
-      'Order keywords by relevance; Adobe prioritizes the first 10 keywords heavily.',
-      'Ensure AI tags are completely stripped before exporting.',
+    maxTitleChars: 199,
+    maxDescChars: 0,
+    maxKeywords: 49,
+    rules: [
+      'Strictly 5 columns: Filename, Title, Keywords, Category, Releases.',
+      'Title limit is 199 characters maximum (no Description column).',
+      'Maximum 49 keywords ordered by relevance; top 10 keywords carry the highest SEO weight.',
+      'Category uses official numeric IDs (1 to 21).',
+      'EPS Vector Override: When exporting .jpg previews of vectors, filenames automatically switch to .eps.',
     ],
-  },
-
-  freepik: {
-    id: 'freepik',
-    name: 'Freepik',
-    delimiter: ';', // MANDATORY SEMICOLON
-    encoding: 'UTF-8 with BOM',
-    headers: ['File name', 'Title', 'Keywords', 'Prompt', 'Model'],
-    filenameRules: {
-      requiresExtension: true,
-      maxLength: 60,
-      disallowedCharacters: 'spaces, special symbols (!, @, #, $, %)',
-      description:
-        'Requires exact extension matching. Vectors (.eps) and previews (.jpg) must share identical base names.',
-    },
-    sampleCsv: `"File name";"Title";"Keywords";"Prompt";"Model"
-"acai_bowl_healthy_breakfast.jpg";"Acai bowl with fresh berries and coconut toppings";"acai, smoothie, breakfast, berries, fruit, healthy, superfood, vegan, fresh";"macro photo of delicious acai bowl with berries";"Midjourney v6"
-"zucchini_pasta_pesto.jpg";"Zucchini pasta noodles with green basil pesto";"zucchini, noodles, pesto, vegan, healthy, pasta, vegetable, vegetarian";"gourmet zoodles with green pesto";"Midjourney v6"`,
-    commonFailureReasons: [
-      'Using comma (,) instead of semicolon (;) delimiter — causes entire CSV to be ignored or dumped into column 1.',
-      'Writing "Filename" instead of official header "File name" (with a space).',
-      'Spaces in image filenames.',
-      'Fewer than 5 or more than 50 keywords.',
+    rulesAr: [
+      'يتكون من 5 أعمدة: Filename, Title, Keywords, Category, Releases.',
+      'الحد الأقصى للعنوان 199 حرفاً (بدون عمود Description).',
+      'الحد الأقصى 49 كلمة مفتاحية مرتبة حسب الأهمية؛ أول 10 كلمات هي الأهم في الـ SEO.',
+      'يُكتب التصنيف كرقم رسمي من 1 إلى 21.',
+      'تحويل تلقائي لملفات EPS: يتم استبدال امتداد معاينة .jpg إلى .eps تلقائياً عند التصدير.',
     ],
-    tipsForUpload: [
-      'Always verify that the CSV uses semicolon (;) delimiter.',
-      'Populate "Prompt" and "Model" columns for AI-generated assets to satisfy Freepik AI policies.',
+    tips: [
+      'Place core subject nouns within the first 10 keywords.',
+      'Set the "Created using generative AI tools" checkbox in the Adobe portal when uploading AI batches.',
+    ],
+    tipsAr: [
+      'ضع الكلمات المفتاحية الأساسية للموضوع ضمن أول 10 كلمات.',
+      'فعّل خيار محتوى AI داخل بوابة Adobe Stock عند رفع دفعات الذكاء الاصطناعي.',
     ],
   },
-
-  shutterstock: {
+  {
     id: 'shutterstock',
     name: 'Shutterstock',
-    delimiter: ',',
-    encoding: 'UTF-8',
-    headers: [
-      'Filename',
-      'Description',
-      'Keywords',
-      'Categories',
-      'Editorial',
-      'Mature content',
-      'illustration',
+    fileName: 'shutterstock_metadata.csv',
+    sampleUrl: '/samples/shutterstock_official_sample.csv',
+    headers: ['Filename', 'Description', 'Keywords', 'Categories', 'Editorial', 'Mature content', 'Illustration'],
+    sampleRows: [
+      [
+        'B01_NT_PH_001_workspace.jpg',
+        'Minimalist modern desk setup with laptop and coffee cup bathed in warm natural sunlight.',
+        'desk, laptop, office, workspace, modern, minimalist, coffee, work, technology, business',
+        'Business/Finance,Technology',
+        'no',
+        'no',
+        'no',
+      ],
     ],
-    filenameRules: {
-      requiresExtension: true,
-      maxLength: 80,
-      disallowedCharacters: 'commas, quotes, special characters',
-      description: 'Must match uploaded file name exactly, case-sensitive.',
-    },
-    sampleCsv: `Filename,Description,Keywords,Categories,Editorial,Mature content,illustration
-footage_filename.mov,A short and simple description,"keyword 1,keyword","nature,transportation",no,yes,no
-footage_filename_1.mpg,Description,"footage,file",,no,,`,
-    commonFailureReasons: [
-      'Third-party AI content uploaded (Shutterstock strictly locks and bans external AI content).',
-      'Using a "Title" column instead of "Description" (Shutterstock has no Title column).',
-      'Description shorter than 5 characters or longer than 200 characters.',
-      'Category names not matching Shutterstock’s exact 26 predefined category strings.',
+    maxTitleChars: 0,
+    maxDescChars: 200,
+    maxKeywords: 50,
+    rules: [
+      'Shutterstock uses the "Description" column as the main asset title (max 200 chars).',
+      'Up to 2 official category names separated by a comma without spaces (e.g. "Nature,Backgrounds/Textures").',
+      'Editorial, Mature content, and Illustration flags use lowercase "yes" or "no".',
+      'Note: Shutterstock generally prohibits AI-generated submissions.',
     ],
-    tipsForUpload: [
-      'Categories: One or two categories in English, separated by commas (e.g. "Nature, Transportation").',
-      'Editorial, Mature content, and illustration accept "yes" or "no" (lowercase, default: "no").',
-      'Keywords: Up to 50 keywords in English separated by commas.',
+    rulesAr: [
+      'تعتمد المنصة عمود Description كعنوان رئيسي للملف (بحد أقصى 200 حرف).',
+      'يُسمح بتصنيفين كحد أقصى مفصولين بفاصلة دون مسافات (مثال: Business/Finance,Technology).',
+      'حقول Editorial و Mature content و Illustration تقبل القيم yes أو no.',
+      'ملاحظة: تمنع Shutterstock عادةً رفع المحتوى المولد بالذكاء الاصطناعي.',
+    ],
+    tips: [
+      'Avoid camera make/model names or lens specs in the Description.',
+      'Vector EPS uploads automatically set Illustration to "yes".',
+    ],
+    tipsAr: [
+      'تجنب ذكر طراز الكاميرا أو العدسة داخل الوصف.',
+      'عند تصدير ملفات الفكتور EPS يتم ضبط حقل Illustration على yes تلقائياً.',
     ],
   },
-
-  dreamstime: {
+  {
+    id: 'freepik',
+    name: 'Magnific',
+    fileName: 'freepik_metadata.csv',
+    sampleUrl: '/samples/freepik_official_sample.csv',
+    headers: ['File name', 'Title', 'Keywords', 'Prompt', 'Model'],
+    sampleRows: [
+      [
+        'B01_AI_PH_001_workspace.jpg',
+        'Minimalist modern desk setup with laptop and coffee cup',
+        'desk, laptop, office, workspace, modern, minimalist, coffee, work, technology, business',
+        'Minimalist modern desk setup with laptop and coffee cup bathed in warm natural sunlight',
+        'Midjourney 6',
+      ],
+    ],
+    maxTitleChars: 100,
+    maxDescChars: 0,
+    maxKeywords: 50,
+    rules: [
+      'Exact semicolon-delimited (;) CSV format required by Magnific (Freepik).',
+      'Headers: "File name;Title;Keywords;Prompt;Model".',
+      'Title must be between 5 and 100 characters.',
+      'When AI flag is enabled, Prompt and Model columns are populated from the detailed description and selected model.',
+    ],
+    rulesAr: [
+      'يُصدّر الملف بفاصل الفاصلة المنقوطة (;) المعتمد رسمياً لدى Magnific (Freepik).',
+      'الأعمدة: File name;Title;Keywords;Prompt;Model.',
+      'طول العنوان يجب أن يتراوح بين 5 و 100 حرف.',
+      'عند تفعيل خيار AI يتم تعبئة عمودي Prompt و Model تلقائياً.',
+    ],
+    tips: [
+      'Ensure the AI model name matches Magnific’s approved generator list.',
+      'For standard photography/vectors, leave AI toggle off to export empty Prompt and Model columns.',
+    ],
+    tipsAr: [
+      'تأكد من اختيار اسم نموذج AI متوافق مع قائمة Magnific المعتمدة.',
+      'للملفات غير المولدة بالـ AI أوقف خيار AI لتصدير حقلي Prompt و Model فارغين.',
+    ],
+  },
+  {
+    id: 'vecteezy',
+    name: 'Vecteezy',
+    fileName: 'vecteezy_metadata.csv',
+    sampleUrl: '/samples/vecteezy_official_sample.csv',
+    headers: ['Filename', 'Title', 'Description', 'Keywords', 'License'],
+    sampleRows: [
+      [
+        'B01_AI_PH_001_workspace.jpg',
+        'Minimalist modern desk setup with laptop and coffee cup in sunlight',
+        'Minimalist modern desk setup with laptop and coffee cup bathed in warm natural sunlight.',
+        'desk, laptop, office, workspace, modern, minimalist, coffee, work, technology, business',
+        'pro',
+      ],
+    ],
+    maxTitleChars: 199,
+    maxDescChars: 300,
+    maxKeywords: 49,
+    rules: [
+      'Direct Web Upload Parity: 5 columns (Filename, Title, Description, Keywords, License).',
+      'Filename includes the exact file extension (.jpg, .mp4, .eps).',
+      'Title requires at least 3 words (max 199 chars) with smart punctuation sanitization.',
+      'License accepts lowercase "pro" or "free".',
+    ],
+    rulesAr: [
+      'متوافق مباشرة مع واجهة رفع Vecteezy عبر 5 أعمدة: Filename, Title, Description, Keywords, License.',
+      'حقل Filename يتضمن الامتداد الكامل للملف (.jpg أو .mp4 أو .eps).',
+      'يجب أن يحتوي العنوان على 3 كلمات على الأقل وبحد أقصى 199 حرفاً.',
+      'حقل License يقبل القيمة pro أو free.',
+    ],
+    tips: [
+      'Upload your media files in Vecteezy Contributor Manager, then attach this CSV directly.',
+    ],
+    tipsAr: [
+      'ارفع الملفات أولاً في لوحة مساهمي Vecteezy ثم ارفع ملف الـ CSV مباشرة.',
+    ],
+  },
+  {
     id: 'dreamstime',
     name: 'Dreamstime',
-    delimiter: ',',
-    encoding: 'UTF-8 with BOM',
+    fileName: 'dreamstime_ai_generated.csv / dreamstime_standard.csv',
+    sampleUrl: '/samples/dreamstime_official_sample.csv',
     headers: [
       'Filename',
       'Image Name',
@@ -168,56 +202,82 @@ footage_filename_1.mpg,Description,"footage,file",,no,,`,
       'MR doc Ids',
       'Pr Docs',
     ],
-    filenameRules: {
-      requiresExtension: true,
-      maxLength: 80,
-      disallowedCharacters: 'commas, quotes',
-      description: 'Exact match with unfinished uploads queue.',
-    },
-    sampleCsv: `"Filename","Image Name","Description","Category 1","Category 2","Category 3","keywords","Free","W-EL","P-EL","SR-EL","SR-Price","Editorial","MR doc Ids","Pr Docs"
-"acai_bowl_01.jpg","Acai Bowl With Fresh Berries","Fresh acai smoothie bowl topped with sliced strawberries and shredded coconut on a rustic wooden table, AI-generated image.","115","105","114","acai, smoothie, breakfast, berries, healthy, superfood, vegan, fruit","0","1","1","0","","0","",""
-"zucchini_pesto_02.jpg","Zucchini Noodles With Pesto","Spiralized fresh zucchini noodles mixed with creamy basil pesto and cherry tomatoes in a white dish, AI-generated image.","115","105","114","zucchini, noodles, pesto, healthy, pasta alternative, vegetarian, green","0","1","1","0","","0","",""`,
-    commonFailureReasons: [
-      'Description is shorter than or equal to Image Name length (strictly rejected by Dreamstime backend).',
-      'Description does not end with a period (.).',
-      'Missing Category 3 = 114 for AI-generated images.',
-      'Accidentally setting SR-EL = 1 (enables copyright buyout and gives away full ownership!).',
-      'Writing "Keywords" or "Title" instead of exact headers "keywords" and "Image Name".',
+    sampleRows: [
+      [
+        'B01_AI_PH_001_workspace.jpg',
+        'Minimalist modern desk setup with laptop',
+        'Minimalist modern desk setup with laptop and coffee cup bathed in warm natural sunlight.',
+        '112',
+        '145',
+        '212',
+        'desk, laptop, office, workspace, modern, minimalist, coffee, work, technology, business',
+        '0',
+        '1',
+        '1',
+        '0',
+        '0',
+        '0',
+        '',
+        '',
+      ],
     ],
-    tipsForUpload: [
-      'Always ensure Description length is greater than Image Name length.',
-      'Always keep SR-EL set to 0 to prevent buyers from buying out your copyright exclusively.',
-      'Category 3 must be 114 for all AI-generated content.',
+    maxTitleChars: 70,
+    maxDescChars: 250,
+    maxKeywords: 50,
+    rules: [
+      'Dual Split Export Engine: Automatically generates separate files for AI assets (dreamstime_ai_generated.csv) and standard assets (dreamstime_standard.csv).',
+      '"Image Name" (Title) is strictly capped at 70 characters.',
+      'Categories 1, 2, and 3 use official Dreamstime numeric IDs; Category 212 is automatically assigned for AI assets.',
+      'Safe licensing defaults: W-EL=1, P-EL=1, Free=0, SR-EL=0.',
+    ],
+    rulesAr: [
+      'نظام الفصل المزدوج: يصدر ملفين منفصلين تلقائياً لمحتوى AI (dreamstime_ai_generated.csv) والمحتوى العادي (dreamstime_standard.csv).',
+      'عمود Image Name محدد بـ 70 حرفاً كحد أقصى.',
+      'التصنيفات الثلاثة تُكتب كأرقام رسمية؛ ويُضاف تصنيف 212 تلقائياً لملفات الذكاء الاصطناعي.',
+      'إعدادات التراخيص الآمنة افتراضياً: W-EL=1 و P-EL=1 و Free=0 و SR-EL=0.',
+    ],
+    tips: [
+      'Keep "Free" and "SR-EL" disabled (0) unless you explicitly intend to give away rights.',
+    ],
+    tipsAr: [
+      'أبقِ خياري Free و SR-EL بقيمة 0 لحماية عوائدك وحقوق الملكية.',
     ],
   },
-
-  '123rf': {
+  {
     id: '123rf',
     name: '123RF',
-    delimiter: ',',
-    encoding: 'UTF-8',
+    fileName: '123rf_metadata.csv',
+    sampleUrl: '/samples/123rf_official_sample.csv',
     headers: ['oldfilename', '123rf_filename', 'description', 'keywords', 'country'],
-    filenameRules: {
-      requiresExtension: true,
-      maxLength: 80,
-      disallowedCharacters: 'spaces, commas, quotes',
-      description:
-        'Must match your exact uploaded file name. "123rf_filename" can be left blank.',
-    },
-    sampleCsv: `"oldfilename","123rf_filename","description","keywords","country"
-"testimage.jpg","testing150200001","this is a sample image description","some,test,keywords,you,can,try,again","EG"
-"footage_filename.mov","","Delicious Mediterranean food dish with herbs and spices","mediterranean,food,healthy,cuisine","EG"`,
-    commonFailureReasons: [
-      'Missing the "oldfilename" column or misspelling it.',
-      'Omitting the file extension in "oldfilename".',
-      'Fewer than 7 or more than 50 keywords (123RF requires minimum 7 keywords).',
-      'Country code not adhering to 2-character ISO format (e.g. "EG" for Egypt, "US" for United States).',
-      'Uploading CSV before media files are uploaded via FTP/web.',
+    sampleRows: [
+      [
+        'B01_AI_PH_001_workspace.jpg',
+        '',
+        'Minimalist modern desk setup with laptop and coffee cup bathed in warm natural sunlight.',
+        'desk, laptop, office, workspace, modern, minimalist, coffee, work, technology, business',
+        'US',
+      ],
     ],
-    tipsForUpload: [
-      'Always upload media files first via FTP or web before submitting the CSV.',
-      'Country code is a 2-character code (Default: "EG" for Egypt).',
-      'Keywords must have at least 7 relevant tags.',
+    maxTitleChars: 0,
+    maxDescChars: 200,
+    maxKeywords: 50,
+    rules: [
+      'Exact lowercase headers: oldfilename, 123rf_filename, description, keywords, country.',
+      '"oldfilename" matches your uploaded file; "123rf_filename" must remain blank.',
+      '"description" acts as both title and description (max 200 chars).',
+      '"country" uses a 2-letter ISO code (e.g. US, EG, AE, SA).',
+    ],
+    rulesAr: [
+      'عناوين الأعمدة بحروف صغيرة: oldfilename, 123rf_filename, description, keywords, country.',
+      'حقل oldfilename يطابق اسم ملفك، بينما يظل 123rf_filename فارغاً.',
+      'حقل description يعمل كعنوان ووصف معاً (بحد أقصى 200 حرف).',
+      'حقل country يقبل رمز الدولة المكون من حرفين (مثل EG, SA, AE, US).',
+    ],
+    tips: [
+      'Set your default ISO country code in the Studio Inspector before exporting.',
+    ],
+    tipsAr: [
+      'حدد رمز الدولة الافتراضي من القائمة الجانبية في الاستوديو قبل التصدير.',
     ],
   },
-};
+];

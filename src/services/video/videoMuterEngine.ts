@@ -1,4 +1,5 @@
 import { saveFilesToLocalDirectory, FileToSave } from '../desktop/desktopFs';
+import { inspectMoovBytes, stripAudioFromBufferInPlace } from '../../workers/videoMuter.worker';
 
 export interface VideoInspectionResult {
   id: string;
@@ -64,6 +65,85 @@ function parseBoxes(data: Uint8Array, start: number, end: number): Box[] {
   return boxes;
 }
 
+// Web Worker Pool for off-main-thread MP4/MOV atom parsing & lossless stripping
+const VIDEO_WORKER_POOL_SIZE = 2;
+let videoWorkers: Worker[] = [];
+let videoWorkerIdx = 0;
+let videoJobId = 1;
+const videoPendingJobs = new Map<number, { resolve: (val: any) => void; reject: (err: any) => void }>();
+
+function getNextVideoWorker(): Worker | null {
+  if (typeof window === 'undefined' || typeof Worker === 'undefined') return null;
+  // In Vitest / JSDOM, Worker may not be a real browser worker
+  if ((globalThis as any).__vitest_worker__ || (typeof process !== 'undefined' && process.env?.VITEST)) {
+    return null;
+  }
+  if (videoWorkers.length === 0) {
+    try {
+      for (let i = 0; i < VIDEO_WORKER_POOL_SIZE; i++) {
+        const w = new Worker(new URL('../../workers/videoMuter.worker.ts', import.meta.url), {
+          type: 'module',
+        });
+        w.onmessage = (e) => {
+          const { id, ok, result, buffer, error } = e.data || {};
+          const job = videoPendingJobs.get(id);
+          if (job) {
+            videoPendingJobs.delete(id);
+            if (ok) {
+              job.resolve(buffer ?? result);
+            } else {
+              job.reject(new Error(error || 'Video worker failed'));
+            }
+          }
+        };
+        videoWorkers.push(w);
+      }
+    } catch {
+      videoWorkers = [];
+      return null;
+    }
+  }
+  const worker = videoWorkers[videoWorkerIdx % videoWorkers.length];
+  videoWorkerIdx = (videoWorkerIdx + 1) % videoWorkers.length;
+  return worker;
+}
+
+async function runInspectInWorker(buffer: ArrayBuffer): Promise<{
+  foundMoov: boolean;
+  hasAudio: boolean;
+  audioTrackCount: number;
+  videoTrackCount: number;
+}> {
+  const worker = getNextVideoWorker();
+  if (worker) {
+    try {
+      return await new Promise((resolve, reject) => {
+        const id = videoJobId++;
+        const timer = setTimeout(() => {
+          if (videoPendingJobs.has(id)) {
+            videoPendingJobs.delete(id);
+            reject(new Error('Worker inspect timeout'));
+          }
+        }, 3000);
+        videoPendingJobs.set(id, {
+          resolve: (res) => {
+            clearTimeout(timer);
+            resolve(res);
+          },
+          reject: (err) => {
+            clearTimeout(timer);
+            reject(err);
+          },
+        });
+        worker.postMessage({ id, action: 'inspect', buffer }, [buffer]);
+      });
+    } catch {
+      // Fallback below
+    }
+  }
+  return inspectMoovBytes(new Uint8Array(buffer));
+}
+
 /**
  * Fast binary inspection of MP4/MOV container to detect presence of audio and video tracks
  * Uses direct MP4 atom parsing for accurate audio track detection
@@ -101,18 +181,23 @@ export async function inspectVideoAudioTrack(file: File): Promise<{
     }
   }
 
-  // 2. Strict ISOBMFF Box Parser
+  // 2. Strict ISOBMFF Box Parser (Offloaded to Web Worker Pool)
   try {
     // Read the first 16MB which typically contains the moov atom (faststart) or full file if < 16MB
     const readSize = Math.min(file.size, 16 * 1024 * 1024);
-    const buffer = await file.slice(0, readSize).arrayBuffer();
-    let data = new Uint8Array(buffer);
+    const headBuffer = await file.slice(0, readSize).arrayBuffer();
+    const headInspect = await runInspectInWorker(headBuffer);
 
-    const topBoxes = parseBoxes(data, 0, data.length);
-    let moov = topBoxes.find((b) => b.type === 'moov');
+    if (headInspect.foundMoov) {
+      return {
+        hasAudio: headInspect.hasAudio,
+        audioTrackCount: headInspect.audioTrackCount,
+        videoTrackCount: headInspect.videoTrackCount,
+      };
+    }
 
     // If moov is at the end of file (common in some camera recordings), read the last 16MB
-    if (!moov && file.size > 16 * 1024 * 1024) {
+    if (file.size > 16 * 1024 * 1024) {
       const tailStart = Math.max(0, file.size - 16 * 1024 * 1024);
       const tailBuf = await file.slice(tailStart, file.size).arrayBuffer();
       const tailData = new Uint8Array(tailBuf);
@@ -120,126 +205,20 @@ export async function inspectVideoAudioTrack(file: File): Promise<{
       const tailMoov = tailBoxes.find((b) => b.type === 'moov');
 
       if (tailMoov) {
-        // Read full moov exactly
         const exactMoovBuf = await file
           .slice(tailStart + tailMoov.offset, tailStart + tailMoov.offset + tailMoov.size)
           .arrayBuffer();
-        data = new Uint8Array(exactMoovBuf);
-        moov = { type: 'moov', offset: 0, size: data.length, headerLen: tailMoov.headerLen };
-      }
-    }
-
-    if (moov) {
-      const moovBoxes = parseBoxes(data, moov.offset + moov.headerLen, moov.offset + moov.size);
-      let audioTracks = 0;
-      let videoTracks = 0;
-
-      for (const b of moovBoxes) {
-        if (b.type === 'trak') {
-          const trakBoxes = parseBoxes(data, b.offset + b.headerLen, b.offset + b.size);
-
-          // Check tkhd (track header) to verify if track is enabled and has non-zero duration
-          let trackEnabled = true;
-          let trackDuration = 1;
-          const tkhd = trakBoxes.find((x) => x.type === 'tkhd');
-          if (tkhd && tkhd.offset + tkhd.headerLen + 24 <= data.length) {
-            const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-            const version = data[tkhd.offset + tkhd.headerLen];
-            const flags =
-              (data[tkhd.offset + tkhd.headerLen + 1] << 16) |
-              (data[tkhd.offset + tkhd.headerLen + 2] << 8) |
-              data[tkhd.offset + tkhd.headerLen + 3];
-            trackEnabled = (flags & 0x01) !== 0;
-
-            if (version === 0 && tkhd.offset + tkhd.headerLen + 24 <= data.length) {
-              trackDuration = view.getUint32(tkhd.offset + tkhd.headerLen + 20);
-            } else if (version === 1 && tkhd.offset + tkhd.headerLen + 32 <= data.length) {
-              const high = view.getUint32(tkhd.offset + tkhd.headerLen + 24);
-              const low = view.getUint32(tkhd.offset + tkhd.headerLen + 28);
-              trackDuration = high > 0 ? high : low;
-            }
-          }
-
-          const mdia = trakBoxes.find((x) => x.type === 'mdia');
-          if (mdia) {
-            const mdiaBoxes = parseBoxes(data, mdia.offset + mdia.headerLen, mdia.offset + mdia.size);
-
-            // Check mdhd (media header) duration
-            let mediaDuration = 1;
-            const mdhd = mdiaBoxes.find((x) => x.type === 'mdhd');
-            if (mdhd && mdhd.offset + mdhd.headerLen + 20 <= data.length) {
-              const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-              const version = data[mdhd.offset + mdhd.headerLen];
-              if (version === 0) {
-                mediaDuration = view.getUint32(mdhd.offset + mdhd.headerLen + 16);
-              } else if (version === 1 && mdhd.offset + mdhd.headerLen + 28 <= data.length) {
-                const high = view.getUint32(mdhd.offset + mdhd.headerLen + 20);
-                const low = view.getUint32(mdhd.offset + mdhd.headerLen + 24);
-                mediaDuration = high > 0 ? high : low;
-              }
-            }
-
-            const hdlr = mdiaBoxes.find((x) => x.type === 'hdlr');
-            if (hdlr && hdlr.offset + hdlr.headerLen + 12 <= data.length) {
-              const htype = String.fromCharCode(
-                data[hdlr.offset + hdlr.headerLen + 8],
-                data[hdlr.offset + hdlr.headerLen + 9],
-                data[hdlr.offset + hdlr.headerLen + 10],
-                data[hdlr.offset + hdlr.headerLen + 11]
-              );
-
-              if (htype === 'soun') {
-                // Default to false: Must strictly prove real audio samples exist!
-                // Eliminates false positives on AI video generators that include silent/dummy audio tracks.
-                let hasRealSamples = false;
-
-                if (trackEnabled && trackDuration > 0 && mediaDuration > 0) {
-                  const minf = mdiaBoxes.find((x) => x.type === 'minf');
-                  if (minf) {
-                    const minfBoxes = parseBoxes(data, minf.offset + minf.headerLen, minf.offset + minf.size);
-                    const stbl = minfBoxes.find((x) => x.type === 'stbl');
-                    if (stbl) {
-                      const stblBoxes = parseBoxes(data, stbl.offset + stbl.headerLen, stbl.offset + stbl.size);
-                      const stsz = stblBoxes.find((x) => x.type === 'stsz');
-                      if (stsz && stsz.offset + stsz.headerLen + 12 <= data.length) {
-                        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-                        const sampleCount = view.getUint32(stsz.offset + stsz.headerLen + 8);
-                        if (sampleCount > 0) {
-                          hasRealSamples = true;
-                        }
-                      } else {
-                        // Fallback to stts (time-to-sample)
-                        const stts = stblBoxes.find((x) => x.type === 'stts');
-                        if (stts && stts.offset + stts.headerLen + 8 <= data.length) {
-                          const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-                          const entryCount = view.getUint32(stts.offset + stts.headerLen + 4);
-                          if (entryCount > 0) {
-                            hasRealSamples = true;
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-
-                if (hasRealSamples) {
-                  audioTracks++;
-                }
-              } else if (htype === 'vide') {
-                videoTracks++;
-              }
-            }
-          }
+        const tailInspect = await runInspectInWorker(exactMoovBuf);
+        if (tailInspect.foundMoov) {
+          return {
+            hasAudio: tailInspect.hasAudio,
+            audioTrackCount: tailInspect.audioTrackCount,
+            videoTrackCount: tailInspect.videoTrackCount,
+          };
         }
       }
-
-      return {
-        hasAudio: audioTracks > 0,
-        audioTrackCount: audioTracks,
-        videoTrackCount: videoTracks,
-      };
     }
-  } catch (err) {
+  } catch {
     // Binary MP4 inspection fallback
   }
 
@@ -293,56 +272,31 @@ export async function inspectVideoAudioTrack(file: File): Promise<{
 }
 
 /**
- * Losslessly removes audio tracks from an MP4/MOV file in milliseconds without re-encoding
+ * Losslessly removes audio tracks from an MP4/MOV file in milliseconds without re-encoding.
+ * Offloads binary mutation to a Web Worker using zero-copy Transferable ArrayBuffers.
  */
 export async function stripAudioTrackLossless(file: File): Promise<Blob> {
   if (!file || file.size === 0) {
     throw new Error(`Cannot mute 0-byte video file "${file?.name || 'unknown'}"`);
   }
   const buffer = await file.arrayBuffer();
-  const data = new Uint8Array(buffer);
+  const worker = getNextVideoWorker();
 
-  const topBoxes = parseBoxes(data, 0, data.length);
-  const moov = topBoxes.find((b) => b.type === 'moov');
-
-  if (!moov) {
-    throw new Error('Unable to locate moov atom in MP4/MOV container. File may be fragmented or non-standard.');
-  }
-
-  const moovBoxes = parseBoxes(data, moov.offset + moov.headerLen, moov.offset + moov.size);
-  let audioTracksMuted = 0;
-
-  for (const b of moovBoxes) {
-    if (b.type === 'trak') {
-      const trakBoxes = parseBoxes(data, b.offset + b.headerLen, b.offset + b.size);
-      const mdia = trakBoxes.find((x) => x.type === 'mdia');
-      if (mdia) {
-        const mdiaBoxes = parseBoxes(data, mdia.offset + mdia.headerLen, mdia.offset + mdia.size);
-        const hdlr = mdiaBoxes.find((x) => x.type === 'hdlr');
-        if (hdlr && hdlr.offset + hdlr.headerLen + 12 <= data.length) {
-          const htype = String.fromCharCode(
-            data[hdlr.offset + hdlr.headerLen + 8],
-            data[hdlr.offset + hdlr.headerLen + 9],
-            data[hdlr.offset + hdlr.headerLen + 10],
-            data[hdlr.offset + hdlr.headerLen + 11]
-          );
-
-          if (htype === 'soun') {
-            // Replace 'trak' with 'free' atom in-place
-            // Standard ISOBMFF specification: FreeSpaceBox ('free') is ignored by all decoders
-            // and chunk offsets (stco/co64) for the video track remain 100% mathematically exact!
-            data[b.offset + 4] = 0x66; // 'f'
-            data[b.offset + 5] = 0x72; // 'r'
-            data[b.offset + 6] = 0x65; // 'e'
-            data[b.offset + 7] = 0x65; // 'e'
-            audioTracksMuted++;
-          }
-        }
-      }
+  if (worker) {
+    try {
+      const mutedBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+        const id = videoJobId++;
+        videoPendingJobs.set(id, { resolve, reject });
+        worker.postMessage({ id, action: 'strip', buffer }, [buffer]);
+      });
+      return new Blob([mutedBuffer], { type: file.type || 'video/mp4' });
+    } catch (err) {
+      throw err;
     }
   }
 
-  return new Blob([data], { type: file.type || 'video/mp4' });
+  const mutedBuffer = stripAudioFromBufferInPlace(buffer);
+  return new Blob([mutedBuffer], { type: file.type || 'video/mp4' });
 }
 
 /**

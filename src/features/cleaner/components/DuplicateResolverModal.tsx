@@ -21,6 +21,7 @@ export interface DuplicateResolverModalProps {
     batches: string[];
     masterDir: string;
   } | null;
+  onSendToStudio?: () => void;
 }
 
 export const DuplicateResolverModal: React.FC<DuplicateResolverModalProps> = React.memo(({
@@ -36,70 +37,83 @@ export const DuplicateResolverModal: React.FC<DuplicateResolverModalProps> = Rea
   showSuccessDialog,
   onOpenChangeSuccessDialog,
   successDialogInfo,
+  onSendToStudio,
 }) => {
   return (
     <>
-      {/* Duplicate Comparison Modal */}
       <Dialog
         open={Boolean(activeDuplicateKey)}
         onClose={onCloseDuplicateModal}
-        title={language === 'ar' ? 'مقارنة الملفات المكررة والنسخ المتشابهة' : 'Duplicate Files Comparison'}
+        title={language === 'ar' ? 'مقارنة الملفات المكررة' : 'Duplicate Variants Comparison'}
         description={
           language === 'ar'
-            ? 'تم اكتشاف أسماء ملفات متشابهة أو نسخ مكبرة/معدلة. قارن بين النسخ أدناه واحذف النسخة غير المرغوبة لتجنب رفض الستوك.'
-            : 'Fuzzy duplicates or upscaled variants detected. Compare previews, resolutions, and file sizes side-by-side before deleting.'
+            ? 'قارن بين النسخ المتشابهة أدناه واحذف النسخ الزائدة قبل الحفظ.'
+            : 'Compare matching or upscaled file variants side-by-side and remove unwanted copies.'
         }
-        className="max-w-3xl sm:max-w-4xl"
+        size="lg"
       >
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-            {currentDuplicateModalItems.map((item) => (
-              <DuplicatePreviewCard
-                key={item.id}
-                item={item}
-                language={language}
-                onLocate={(path) => window.electronAPI?.showItemInFolder?.(path)}
-                onRemove={(id, file, itm) => {
-                  onRemoveItem(id, file, itm);
-                  if (currentDuplicateModalItems.length <= 2) {
-                    onCloseDuplicateModal();
-                  }
-                }}
-              />
-            ))}
-          </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+          {currentDuplicateModalItems.map((item) => (
+            <DuplicatePreviewCard
+              key={item.id}
+              item={item}
+              language={language}
+              onLocate={(path) => window.electronAPI?.showItemInFolder?.(path)}
+              onRemove={(id, file, itm) => {
+                onRemoveItem(id, file, itm);
+                if (currentDuplicateModalItems.length <= 2) {
+                  onCloseDuplicateModal();
+                }
+              }}
+            />
+          ))}
         </div>
       </Dialog>
 
-      {/* Duplicate Ingestion Warning Intercept Dialog */}
       <ConfirmDialog
         open={showDuplicateInterceptDialog}
         onOpenChange={onOpenChangeDuplicateIntercept}
-        title={language === 'ar' ? 'تنبيه: تم اكتشاف ملفات مكررة' : 'Potential Duplicates Detected'}
+        title={language === 'ar' ? 'تم رصد ملفات مكررة' : 'Potential Duplicates Detected'}
         description={
           language === 'ar'
-            ? `يوجد ${totalDuplicateCount} ملفات قد تكون مكررة أو نُسخ مكبرة/معدلة في القائمة الحالية. هل ترغب في المتابعة وحفظها على أي حال؟`
-            : `There are ${totalDuplicateCount} potential duplicate or upscaled file variants detected in your queue. Are you sure you want to proceed with ingestion?`
+            ? `يوجد ${totalDuplicateCount} ملفات مكررة أو متشابهة في القائمة. هل تريد المتابعة على أي حال؟`
+            : `${totalDuplicateCount} potential duplicate files remain in the queue. Proceed with saving anyway?`
         }
-        confirmText={language === 'ar' ? 'متابعة الحفظ على أي حال' : 'Proceed Anyway'}
-        cancelText={language === 'ar' ? 'إلغاء ومراجعة الملفات' : 'Cancel & Review'}
+        confirmText={language === 'ar' ? 'متابعة الحفظ' : 'Proceed Anyway'}
+        cancelText={language === 'ar' ? 'مراجعة القائمة' : 'Review Queue'}
         onConfirm={onConfirmProceedDuplicates}
         onCancel={() => onOpenChangeDuplicateIntercept(false)}
       />
 
-      {/* Prominent Success Modal after Ingestion */}
       <ConfirmDialog
         open={showSuccessDialog}
         onOpenChange={onOpenChangeSuccessDialog}
-        title={language === 'ar' ? '✅ اكتمل التنظيم والحفظ بنجاح!' : '✅ Ingestion Complete!'}
+        title={language === 'ar' ? 'اكتمل التنظيم والحفظ' : 'Batch Ingestion Complete'}
         description={
           language === 'ar'
-            ? `تم بنجاح تنظيم وحفظ ${successDialogInfo?.savedCount} ملف وتوزيعها داخل المجلدات (${successDialogInfo?.batches.join(', ')}) حسب النوع (Photos / Videos / Vectors).`
-            : `Successfully organized ${successDialogInfo?.savedCount} files into ${successDialogInfo?.batches.join(', ')} across media sub-folders (Photos/, Videos/, and Vectors/).`
+            ? `تم حفظ ${successDialogInfo?.savedCount} ملف داخل (${successDialogInfo?.batches.join(', ')}). هل تريد إرسالها الآن إلى استوديو Metadata؟`
+            : `Organized ${successDialogInfo?.savedCount} files into ${successDialogInfo?.batches.join(', ')}. Send them directly to Metadata Studio now?`
         }
-        confirmText={language === 'ar' ? 'فتح المجلد في Explorer' : 'Open in Explorer'}
-        hideCancel={true}
+        confirmText={
+          onSendToStudio
+            ? language === 'ar'
+              ? `إرسال إلى استوديو Metadata (${successDialogInfo?.savedCount || 0})`
+              : `Send to Metadata Studio (${successDialogInfo?.savedCount || 0})`
+            : language === 'ar'
+            ? 'فتح المجلد'
+            : 'Open Folder'
+        }
+        cancelText={language === 'ar' ? 'فتح المجلد وإغلاق' : 'Open Folder'}
+        hideCancel={!onSendToStudio}
         onConfirm={() => {
+          onOpenChangeSuccessDialog(false);
+          if (onSendToStudio) {
+            onSendToStudio();
+          } else if (successDialogInfo?.masterDir) {
+            window.electronAPI?.openPath?.(successDialogInfo.masterDir);
+          }
+        }}
+        onCancel={() => {
           if (successDialogInfo?.masterDir) {
             window.electronAPI?.openPath?.(successDialogInfo.masterDir);
           }
@@ -111,3 +125,4 @@ export const DuplicateResolverModal: React.FC<DuplicateResolverModalProps> = Rea
 });
 
 DuplicateResolverModal.displayName = 'DuplicateResolverModal';
+

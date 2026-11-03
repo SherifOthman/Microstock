@@ -6,8 +6,7 @@
  */
 
 import { useMemo } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
+import { db, useSqliteQuery } from '../db';
 import { MasterMetadataRecord } from '../types';
 import { QueueState } from '../services/queue/BatchQueueService';
 import { UnifiedAssetRow } from '../features/studio/components/AssetCard';
@@ -59,8 +58,8 @@ export function useUnifiedAssets(
   searchQuery = '',
   statusFilter = 'all'
 ): UnifiedAssetsResult {
-  // Query Dexie masterRecords ordered deterministically by createdAt index
-  const liveRecords = useLiveQuery(() => db.masterRecords.orderBy('createdAt').toArray(), []) || [];
+  // Query SQLite masterRecords ordered deterministically by createdAt index
+  const liveRecords = useSqliteQuery(() => db.masterRecords.orderBy('createdAt').toArray(), [], []) || [];
 
   return useMemo(() => {
     const rowMap = new Map<string, UnifiedAssetRow>();

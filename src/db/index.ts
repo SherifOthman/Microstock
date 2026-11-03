@@ -1,17 +1,14 @@
-import Dexie, { type EntityTable } from 'dexie';
+import { useState, useEffect, useRef } from 'react';
 import {
   ApiKeyRecord,
   AppSettings,
-  AssetTrackerRecord,
   BatchRecord,
   MasterMetadataRecord,
   PlatformLimitConfig,
-  PlatformStatusInfo,
-  PlatformUploadStatus,
   ProviderType,
   SupportedPlatform,
 } from '../types';
-import { PROVIDERS_META, PROVIDER_ORDER } from '../constants/providers';
+import { PROVIDERS_META } from '../constants/providers';
 import { encryptSecret } from '../services/desktop/secureStorage';
 
 export interface SettingItem {
@@ -19,28 +16,377 @@ export interface SettingItem {
   value: any;
 }
 
-export class StockAssistantDB extends Dexie {
-  apiKeys!: EntityTable<ApiKeyRecord, 'id'>;
-  batches!: EntityTable<BatchRecord, 'id'>;
-  masterRecords!: EntityTable<MasterMetadataRecord, 'id'>;
-  settings!: EntityTable<SettingItem, 'key'>;
-  trackerRecords!: EntityTable<AssetTrackerRecord, 'id'>;
+// ============================================================================
+// Reactive Change Notification Bus (Throttled to prevent render storms)
+// ============================================================================
+type DbChangeListener = () => void;
+const dbListeners = new Set<DbChangeListener>();
+let notifyTimer: ReturnType<typeof setTimeout> | null = null;
+let lastNotifyTime = 0;
+const THROTTLE_MS = 120;
 
-  constructor() {
-    super('StockAssistantDB');
-    this.version(1).stores({
-      apiKeys: 'id, providerId, status, lastUsedAt, createdAt',
-      batches: 'id, createdAt, status',
-      masterRecords: 'id, batchId, filename, status, isAiGenerated, createdAt',
-      settings: 'key',
+export function subscribeToDbChanges(listener: DbChangeListener): () => void {
+  dbListeners.add(listener);
+  return () => {
+    dbListeners.delete(listener);
+  };
+}
+
+export function notifyDbChanged(immediate = false): void {
+  const fire = () => {
+    lastNotifyTime = Date.now();
+    notifyTimer = null;
+    dbListeners.forEach((fn) => {
+      try {
+        fn();
+      } catch (e) {
+        console.error('[SQLite Bridge] Listener error:', e);
+      }
     });
-    this.version(2).stores({
-      trackerRecords: 'id, filename, mediaType, updatedAt, createdAt',
-    });
+  };
+
+  if (immediate) {
+    if (notifyTimer) {
+      clearTimeout(notifyTimer);
+      notifyTimer = null;
+    }
+    fire();
+    return;
+  }
+
+  const elapsed = Date.now() - lastNotifyTime;
+  if (elapsed >= THROTTLE_MS && !notifyTimer) {
+    fire();
+  } else if (!notifyTimer) {
+    notifyTimer = setTimeout(fire, Math.max(16, THROTTLE_MS - elapsed));
   }
 }
 
-export const db = new StockAssistantDB();
+/**
+ * Reactive hook for querying the SQLite IPC bridge (drop-in replacement for useLiveQuery)
+ */
+export function useSqliteQuery<T>(
+  querier: () => Promise<T> | T,
+  deps: any[] = [],
+  defaultValue?: T
+): T | undefined {
+  const [data, setData] = useState<T | undefined>(defaultValue);
+  const mountedRef = useRef(true);
+  const querierRef = useRef(querier);
+  querierRef.current = querier;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    let cancelled = false;
+
+    const runQuery = async () => {
+      try {
+        const res = await querierRef.current();
+        if (!cancelled && mountedRef.current) {
+          setData(res);
+        }
+      } catch (err) {
+        console.warn('[useSqliteQuery] Query failed:', err);
+      }
+    };
+
+    runQuery();
+    const unsub = subscribeToDbChanges(runQuery);
+
+    return () => {
+      cancelled = true;
+      mountedRef.current = false;
+      unsub();
+    };
+  }, deps);
+
+  return data;
+}
+
+// ============================================================================
+// In-Memory Fallback Store (Used when running Vitest unit tests outside Electron)
+// ============================================================================
+const testMemoryStore = {
+  masterRecords: new Map<string, MasterMetadataRecord>(),
+  apiKeys: new Map<string, ApiKeyRecord>(),
+  batches: new Map<string, BatchRecord>(),
+  settings: new Map<string, SettingItem>(),
+};
+
+async function invokeDbRpc(method: string, ...args: any[]): Promise<any> {
+  if (typeof window !== 'undefined' && window.electronAPI?.db?.invoke) {
+    return await window.electronAPI.db.invoke(method, ...args);
+  }
+
+  // Fallback for Node / Vitest unit test environments
+  switch (method) {
+    case 'getDbInfo':
+      return { dbPath: ':memory:', engine: 'test-memory' };
+    case 'getMasterRecords':
+      return Array.from(testMemoryStore.masterRecords.values()).sort(
+        (a, b) => (a.createdAt || 0) - (b.createdAt || 0)
+      );
+    case 'getMasterRecord':
+      return testMemoryStore.masterRecords.get(args[0]);
+    case 'countMasterRecords':
+      return testMemoryStore.masterRecords.size;
+    case 'putMasterRecord': {
+      const rec = args[0] as MasterMetadataRecord;
+      testMemoryStore.masterRecords.set(rec.id, { ...rec });
+      return rec.id;
+    }
+    case 'bulkPutMasterRecords': {
+      for (const r of (args[0] || []) as MasterMetadataRecord[]) {
+        testMemoryStore.masterRecords.set(r.id, { ...r });
+      }
+      return;
+    }
+    case 'updateMasterRecord': {
+      const [id, changes] = args;
+      const existing = testMemoryStore.masterRecords.get(id);
+      if (!existing) return 0;
+      testMemoryStore.masterRecords.set(id, { ...existing, ...changes, id });
+      return 1;
+    }
+    case 'modifyAllMasterRecords': {
+      const changes = args[0] || {};
+      for (const [id, rec] of testMemoryStore.masterRecords.entries()) {
+        testMemoryStore.masterRecords.set(id, { ...rec, ...changes });
+      }
+      return;
+    }
+    case 'deleteMasterRecord':
+      testMemoryStore.masterRecords.delete(args[0]);
+      return;
+    case 'bulkDeleteMasterRecords':
+      for (const id of args[0] || []) testMemoryStore.masterRecords.delete(id);
+      return;
+    case 'clearMasterRecords':
+      testMemoryStore.masterRecords.clear();
+      return;
+    case 'getApiKeys':
+      return Array.from(testMemoryStore.apiKeys.values()).sort(
+        (a, b) => (a.createdAt || 0) - (b.createdAt || 0)
+      );
+    case 'getApiKey':
+      return testMemoryStore.apiKeys.get(args[0]);
+    case 'putApiKey': {
+      const rec = args[0] as ApiKeyRecord;
+      testMemoryStore.apiKeys.set(rec.id, { ...rec });
+      return rec.id;
+    }
+    case 'bulkPutApiKeys': {
+      for (const r of (args[0] || []) as ApiKeyRecord[]) {
+        testMemoryStore.apiKeys.set(r.id, { ...r });
+      }
+      return;
+    }
+    case 'updateApiKey': {
+      const [id, changes] = args;
+      const existing = testMemoryStore.apiKeys.get(id);
+      if (!existing) return 0;
+      testMemoryStore.apiKeys.set(id, { ...existing, ...changes, id });
+      return 1;
+    }
+    case 'deleteApiKey':
+      testMemoryStore.apiKeys.delete(args[0]);
+      return;
+    case 'deleteApiKeysByProvider': {
+      const providerId = args[0];
+      for (const [id, rec] of testMemoryStore.apiKeys.entries()) {
+        if (rec.providerId === providerId) testMemoryStore.apiKeys.delete(id);
+      }
+      return;
+    }
+    case 'clearApiKeys':
+      testMemoryStore.apiKeys.clear();
+      return;
+    case 'getBatches':
+      return Array.from(testMemoryStore.batches.values()).sort(
+        (a, b) => (a.createdAt || 0) - (b.createdAt || 0)
+      );
+    case 'getBatch':
+      return testMemoryStore.batches.get(args[0]);
+    case 'putBatch': {
+      const rec = args[0] as BatchRecord;
+      testMemoryStore.batches.set(rec.id, { ...rec });
+      return rec.id;
+    }
+    case 'deleteBatch':
+      testMemoryStore.batches.delete(args[0]);
+      return;
+    case 'clearBatches':
+      testMemoryStore.batches.clear();
+      return;
+    case 'getSetting':
+      return testMemoryStore.settings.get(args[0]);
+    case 'putSetting': {
+      const item = args[0] as SettingItem;
+      testMemoryStore.settings.set(item.key, { key: item.key, value: item.value });
+      return item.key;
+    }
+    case 'clearSettings':
+      testMemoryStore.settings.clear();
+      return;
+    default:
+      return undefined;
+  }
+}
+
+// ============================================================================
+// SQLite Relational Client Bridge (Drop-in Async Table Interface)
+// ============================================================================
+export class StockFlowSqliteDB {
+  masterRecords = {
+    toArray: async (): Promise<MasterMetadataRecord[]> => {
+      return (await invokeDbRpc('getMasterRecords')) || [];
+    },
+    orderBy: (_field: keyof MasterMetadataRecord) => ({
+      toArray: async (): Promise<MasterMetadataRecord[]> => {
+        return (await invokeDbRpc('getMasterRecords')) || [];
+      },
+    }),
+    filter: (predicate: (rec: MasterMetadataRecord) => boolean) => ({
+      toArray: async (): Promise<MasterMetadataRecord[]> => {
+        const all: MasterMetadataRecord[] = (await invokeDbRpc('getMasterRecords')) || [];
+        return all.filter(predicate);
+      },
+    }),
+    toCollection: () => ({
+      modify: async (changes: Partial<MasterMetadataRecord>): Promise<void> => {
+        await invokeDbRpc('modifyAllMasterRecords', changes);
+        notifyDbChanged();
+      },
+    }),
+    count: async (): Promise<number> => {
+      return (await invokeDbRpc('countMasterRecords')) || 0;
+    },
+    get: async (id: string): Promise<MasterMetadataRecord | undefined> => {
+      return await invokeDbRpc('getMasterRecord', id);
+    },
+    put: async (record: MasterMetadataRecord): Promise<string> => {
+      const id = await invokeDbRpc('putMasterRecord', record);
+      notifyDbChanged();
+      return id;
+    },
+    bulkPut: async (records: MasterMetadataRecord[]): Promise<void> => {
+      await invokeDbRpc('bulkPutMasterRecords', records);
+      notifyDbChanged();
+    },
+    update: async (id: string, changes: Partial<MasterMetadataRecord>): Promise<number> => {
+      const res = await invokeDbRpc('updateMasterRecord', id, changes);
+      notifyDbChanged();
+      return res;
+    },
+    delete: async (id: string): Promise<void> => {
+      await invokeDbRpc('deleteMasterRecord', id);
+      notifyDbChanged(true);
+    },
+    bulkDelete: async (ids: string[]): Promise<void> => {
+      await invokeDbRpc('bulkDeleteMasterRecords', ids);
+      notifyDbChanged(true);
+    },
+    clear: async (): Promise<void> => {
+      await invokeDbRpc('clearMasterRecords');
+      notifyDbChanged(true);
+    },
+  };
+
+  apiKeys = {
+    toArray: async (): Promise<ApiKeyRecord[]> => {
+      return (await invokeDbRpc('getApiKeys')) || [];
+    },
+    get: async (id: string): Promise<ApiKeyRecord | undefined> => {
+      return await invokeDbRpc('getApiKey', id);
+    },
+    where: (field: keyof ApiKeyRecord) => ({
+      equals: (val: any) => ({
+        toArray: async (): Promise<ApiKeyRecord[]> => {
+          const all: ApiKeyRecord[] = (await invokeDbRpc('getApiKeys')) || [];
+          return all.filter((k) => k[field] === val);
+        },
+        delete: async (): Promise<void> => {
+          if (field === 'providerId') {
+            await invokeDbRpc('deleteApiKeysByProvider', val);
+          } else {
+            const all: ApiKeyRecord[] = (await invokeDbRpc('getApiKeys')) || [];
+            for (const k of all) {
+              if (k[field] === val) await invokeDbRpc('deleteApiKey', k.id);
+            }
+          }
+          notifyDbChanged(true);
+        },
+      }),
+    }),
+    put: async (record: ApiKeyRecord): Promise<string> => {
+      const id = await invokeDbRpc('putApiKey', record);
+      notifyDbChanged();
+      return id;
+    },
+    bulkPut: async (records: ApiKeyRecord[]): Promise<void> => {
+      await invokeDbRpc('bulkPutApiKeys', records);
+      notifyDbChanged(true);
+    },
+    update: async (id: string, changes: Partial<ApiKeyRecord>): Promise<number> => {
+      const res = await invokeDbRpc('updateApiKey', id, changes);
+      notifyDbChanged();
+      return res;
+    },
+    delete: async (id: string): Promise<void> => {
+      await invokeDbRpc('deleteApiKey', id);
+      notifyDbChanged(true);
+    },
+    clear: async (): Promise<void> => {
+      await invokeDbRpc('clearApiKeys');
+      notifyDbChanged(true);
+    },
+  };
+
+  batches = {
+    toArray: async (): Promise<BatchRecord[]> => {
+      return (await invokeDbRpc('getBatches')) || [];
+    },
+    get: async (id: string): Promise<BatchRecord | undefined> => {
+      return await invokeDbRpc('getBatch', id);
+    },
+    put: async (record: BatchRecord): Promise<string> => {
+      const id = await invokeDbRpc('putBatch', record);
+      notifyDbChanged();
+      return id;
+    },
+    delete: async (id: string): Promise<void> => {
+      await invokeDbRpc('deleteBatch', id);
+      notifyDbChanged();
+    },
+    clear: async (): Promise<void> => {
+      await invokeDbRpc('clearBatches');
+      notifyDbChanged();
+    },
+  };
+
+  settings = {
+    get: async (key: string): Promise<SettingItem | undefined> => {
+      return await invokeDbRpc('getSetting', key);
+    },
+    put: async (item: SettingItem): Promise<string> => {
+      const k = await invokeDbRpc('putSetting', item);
+      notifyDbChanged();
+      return k;
+    },
+    clear: async (): Promise<void> => {
+      await invokeDbRpc('clearSettings');
+      notifyDbChanged();
+    },
+  };
+
+  async transaction<T>(_mode: string, _table: any, scope: () => Promise<T>): Promise<T> {
+    const res = await scope();
+    notifyDbChanged();
+    return res;
+  }
+}
+
+export const db = new StockFlowSqliteDB();
 
 export const DEFAULT_PLATFORM_LIMITS: Record<SupportedPlatform, PlatformLimitConfig> = {
   adobe: {
@@ -161,7 +507,7 @@ export async function updateApiKey(id: string, changes: Partial<ApiKeyRecord>): 
 }
 
 /**
- * Auto-migrates any plaintext API keys stored in IndexedDB to OS-level DPAPI encrypted format
+ * Auto-migrates any plaintext API keys stored in SQLite to OS-level DPAPI encrypted format
  */
 export async function migratePlaintextApiKeys(): Promise<void> {
   try {
@@ -264,128 +610,10 @@ export async function importKeyRingBackup(jsonString: string): Promise<{ importe
     throw new Error('Invalid backup file format: missing keys array');
   }
 
-  // Restore settings if present
   if (data.settings) {
     await saveAppSettings(data.settings);
   }
 
-  // Insert or overwrite keys
   await db.apiKeys.bulkPut(data.keys);
   return { importedCount: data.keys.length };
-}
-
-// ============================================================================
-// Stock Distribution Tracker Operations
-// ============================================================================
-
-export function createInitialPlatformStatuses(): Record<SupportedPlatform, PlatformStatusInfo> {
-  const now = Date.now();
-  return {
-    adobe: { status: 'not_uploaded', updatedAt: now },
-    freepik: { status: 'not_uploaded', updatedAt: now },
-    shutterstock: { status: 'not_uploaded', updatedAt: now },
-    vecteezy: { status: 'not_uploaded', updatedAt: now },
-    dreamstime: { status: 'not_uploaded', updatedAt: now },
-    '123rf': { status: 'not_uploaded', updatedAt: now },
-  };
-}
-
-export async function getAllTrackerRecords(): Promise<AssetTrackerRecord[]> {
-  const records = await db.trackerRecords.toArray();
-  return records.sort((a, b) => b.updatedAt - a.updatedAt);
-}
-
-export async function getTrackerRecord(id: string): Promise<AssetTrackerRecord | undefined> {
-  return await db.trackerRecords.get(id);
-}
-
-export async function saveTrackerRecord(record: AssetTrackerRecord): Promise<void> {
-  await db.trackerRecords.put(record);
-}
-
-export async function bulkSaveTrackerRecords(records: AssetTrackerRecord[]): Promise<void> {
-  await db.trackerRecords.bulkPut(records);
-}
-
-export async function updateAssetPlatformStatus(
-  id: string,
-  platform: SupportedPlatform,
-  status: PlatformUploadStatus,
-  notes?: string
-): Promise<void> {
-  const existing = await db.trackerRecords.get(id);
-  if (!existing) return;
-
-  const now = Date.now();
-  const updatedPlatforms = {
-    ...existing.platforms,
-    [platform]: {
-      status,
-      updatedAt: now,
-      notes: notes !== undefined ? notes : existing.platforms[platform]?.notes,
-    },
-  };
-
-  await db.trackerRecords.update(id, {
-    platforms: updatedPlatforms,
-    updatedAt: now,
-  });
-}
-
-export async function bulkUpdateAssetPlatformStatus(
-  ids: string[],
-  platform: SupportedPlatform,
-  status: PlatformUploadStatus
-): Promise<void> {
-  const now = Date.now();
-  await db.transaction('rw', db.trackerRecords, async () => {
-    for (const id of ids) {
-      const existing = await db.trackerRecords.get(id);
-      if (existing) {
-        existing.platforms[platform] = {
-          status,
-          updatedAt: now,
-        };
-        existing.updatedAt = now;
-        await db.trackerRecords.put(existing);
-      }
-    }
-  });
-}
-
-export async function deleteTrackerRecord(id: string): Promise<void> {
-  await db.trackerRecords.delete(id);
-}
-
-export async function bulkDeleteTrackerRecords(ids: string[]): Promise<void> {
-  await db.trackerRecords.bulkDelete(ids);
-}
-
-export async function exportTrackerBackup(): Promise<string> {
-  const records = await getAllTrackerRecords();
-  const settings = await getAppSettings();
-  return JSON.stringify(
-    {
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      platformLimits: settings.platformLimits,
-      trackerRecords: records,
-    },
-    null,
-    2
-  );
-}
-
-export async function importTrackerBackup(jsonString: string): Promise<{ importedCount: number }> {
-  const data = JSON.parse(jsonString);
-  if (!data.trackerRecords || !Array.isArray(data.trackerRecords)) {
-    throw new Error('Invalid tracker backup format: missing trackerRecords array');
-  }
-
-  if (data.platformLimits) {
-    await saveAppSettings({ platformLimits: data.platformLimits });
-  }
-
-  await db.trackerRecords.bulkPut(data.trackerRecords);
-  return { importedCount: data.trackerRecords.length };
 }

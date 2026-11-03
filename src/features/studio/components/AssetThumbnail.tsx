@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { MasterMetadataRecord } from '../../../types';
 import { QueueItem } from '../../../services/queue/BatchQueueService';
 import {
-  Camera,
   Film,
   Image as ImageIcon,
   PenTool,
@@ -10,8 +9,8 @@ import {
   VolumeX,
   Loader2,
 } from 'lucide-react';
-import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
+import { Tooltip } from '../../../components/ui/tooltip';
 
 export interface AssetThumbnailProps {
   assetId: string;
@@ -73,14 +72,13 @@ export const AssetThumbnail: React.FC<AssetThumbnailProps> = React.memo(({
 
   return (
     <div
-      className={`w-full ${isCompact ? 'w-24 sm:w-28' : 'lg:w-56'} shrink-0 flex flex-col gap-2 min-w-0`}
+      className={`w-full ${isCompact ? 'w-24 sm:w-28' : 'lg:w-52'} shrink-0 flex flex-col gap-2 min-w-0`}
     >
       <div
         onClick={() => onOpenLightbox && onOpenLightbox(assetId)}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
-        className="relative rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 aspect-4/3 flex items-center justify-center group cursor-pointer shadow-2xs"
-        title="Click to view in Full-Screen Lightbox"
+        className="relative rounded-xl overflow-hidden border border-border bg-secondary/60 aspect-4/3 flex items-center justify-center group cursor-pointer"
       >
         {isHoverPlaying && hoverVideoUrl ? (
           <video
@@ -95,15 +93,15 @@ export const AssetThumbnail: React.FC<AssetThumbnailProps> = React.memo(({
           <img
             src={thumbnailUrl}
             alt={filename}
-            className="w-full h-full object-contain bg-white dark:bg-zinc-900"
+            className="w-full h-full object-contain bg-secondary"
           />
         ) : isVector ? (
-          <div className="flex flex-col items-center gap-1.5 text-blue-500">
+          <div className="flex flex-col items-center gap-1.5 text-primary">
             <PenTool className="w-8 h-8" />
             <span className="text-[10px] font-mono uppercase">EPS Vector</span>
           </div>
         ) : isVideo ? (
-          <div className="flex flex-col items-center gap-1.5 text-purple-500">
+          <div className="flex flex-col items-center gap-1.5 text-primary">
             <Film className="w-8 h-8" />
             <span className="text-[10px] font-mono uppercase">Video</span>
           </div>
@@ -115,13 +113,13 @@ export const AssetThumbnail: React.FC<AssetThumbnailProps> = React.memo(({
         {isVideo && videoMeta && (
           <div className="absolute bottom-1.5 left-1.5 flex items-center gap-1">
             {videoMeta.durationSeconds !== undefined && videoMeta.durationSeconds > 0 && (
-              <span className="bg-black/75 text-white font-mono text-[9px] px-1.5 py-0.5 rounded-sm backdrop-blur-xs font-semibold">
+              <span className="bg-background/90 text-foreground border border-border font-mono tabular-nums text-[9px] px-1.5 py-0.5 rounded-sm backdrop-blur-xs font-semibold">
                 {Math.floor(videoMeta.durationSeconds / 60)}:
                 {String(videoMeta.durationSeconds % 60).padStart(2, '0')}
               </span>
             )}
             {videoMeta.resolution && (
-              <span className="bg-blue-600/80 text-white font-mono text-[9px] px-1 py-0.5 rounded-sm backdrop-blur-xs font-bold">
+              <span className="bg-primary text-primary-foreground font-mono text-[9px] px-1 py-0.5 rounded-sm backdrop-blur-xs font-bold">
                 {videoMeta.resolution}
               </span>
             )}
@@ -130,41 +128,44 @@ export const AssetThumbnail: React.FC<AssetThumbnailProps> = React.memo(({
 
         {/* Single Video Audio / Mute Button */}
         {isVideo && onMuteSingleVideo && (
-          <div className="absolute top-1.5 right-1.5">
-            <Button
-              type="button"
-              size="icon"
-              variant="secondary"
-              onClick={(e) => {
-                e.stopPropagation();
-                onMuteSingleVideo(assetId);
-              }}
-              disabled={isMuting || isMuted}
-              className={`h-6 w-6 rounded-md shadow-xs text-xs ${
+          <div className="absolute top-1.5 left-1.5">
+            <Tooltip
+              content={
                 isMuted
-                  ? 'bg-emerald-500/90 text-white'
+                  ? 'Silent (Audio removed)'
                   : hasAudio
-                  ? 'bg-amber-500/90 text-white hover:bg-amber-600'
-                  : 'bg-zinc-800/80 text-zinc-300'
-              }`}
-              title={
-                isMuted
-                  ? 'Audio removed (Silent)'
-                  : hasAudio
-                  ? 'Audio track detected: Click to strip audio lossless'
+                  ? 'Strip audio track losslessly'
                   : 'Already silent'
               }
             >
-              {isMuting ? (
-                <Loader2 className="w-3 h-3 animate-spin" />
-              ) : isMuted ? (
-                <VolumeX className="w-3 h-3" />
-              ) : hasAudio ? (
-                <Volume2 className="w-3 h-3" />
-              ) : (
-                <VolumeX className="w-3 h-3 opacity-60" />
-              )}
-            </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant="secondary"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMuteSingleVideo(assetId);
+                }}
+                disabled={isMuting || isMuted}
+                className={`h-6 w-6 rounded-md shadow-xs text-xs ${
+                  isMuted
+                    ? 'bg-emerald-600 text-white'
+                    : hasAudio
+                    ? 'bg-amber-600 text-white hover:bg-amber-500'
+                    : 'bg-secondary/90 text-muted-foreground'
+                }`}
+              >
+                {isMuting ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : isMuted ? (
+                  <VolumeX className="w-3 h-3" />
+                ) : hasAudio ? (
+                  <Volume2 className="w-3 h-3" />
+                ) : (
+                  <VolumeX className="w-3 h-3 opacity-60" />
+                )}
+              </Button>
+            </Tooltip>
           </div>
         )}
       </div>

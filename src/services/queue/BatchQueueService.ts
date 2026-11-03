@@ -115,6 +115,7 @@ export interface QueueState {
 }
 
 export type QueueStateListener = (state: QueueState) => void;
+export type QueueTimerListener = (elapsedSeconds: number) => void;
 
 export class BatchQueueService {
   private static instance: BatchQueueService;
@@ -125,6 +126,7 @@ export class BatchQueueService {
   private activeWorkers = 0;
   private isLoopActive = false;
   private listeners: Set<QueueStateListener> = new Set();
+  private timerListeners: Set<QueueTimerListener> = new Set();
   private timerInterval?: any;
   private elapsedSeconds = 0;
   private maxRetries = 3;
@@ -146,6 +148,11 @@ export class BatchQueueService {
     return () => this.listeners.delete(listener);
   }
 
+  public subscribeTimer(listener: QueueTimerListener): () => void {
+    this.timerListeners.add(listener);
+    return () => this.timerListeners.delete(listener);
+  }
+
   private notify(): void {
     const state = this.getState();
     this.listeners.forEach((fn) => {
@@ -153,6 +160,16 @@ export class BatchQueueService {
         fn(state);
       } catch (e) {
         console.error('Queue state listener error', e);
+      }
+    });
+  }
+
+  private notifyTimer(): void {
+    this.timerListeners.forEach((fn) => {
+      try {
+        fn(this.elapsedSeconds);
+      } catch (e) {
+        console.error('Queue timer listener error', e);
       }
     });
   }
@@ -176,10 +193,57 @@ export class BatchQueueService {
   }
 
   /**
-   * Adds new image files to the queue and generates lightweight 512px thumbnails
+   * Checks whether a File is a supported microstock image, video, or vector asset.
+   * Excludes OS junk files (.DS_Store, thumbs.db, desktop.ini) and non-media documents (.exe, .pdf, .zip, .csv).
+   */
+  public static isSupportedStockMediaFile(file: File): boolean {
+    if (!file || !file.name) return false;
+    const lowerName = file.name.toLowerCase().trim();
+    if (
+      lowerName === '.ds_store' ||
+      lowerName === 'thumbs.db' ||
+      lowerName === 'desktop.ini' ||
+      lowerName.startsWith('._')
+    ) {
+      return false;
+    }
+    const dotIdx = lowerName.lastIndexOf('.');
+    const ext = dotIdx !== -1 ? lowerName.slice(dotIdx + 1) : '';
+    const supportedExts = new Set([
+      'jpg',
+      'jpeg',
+      'png',
+      'webp',
+      'tif',
+      'tiff',
+      'bmp',
+      'gif',
+      'avif',
+      'mp4',
+      'mov',
+      'webm',
+      'avi',
+      'mkv',
+      'm4v',
+      'eps',
+      'ai',
+      'svg',
+    ]);
+    if (supportedExts.has(ext)) return true;
+    if (file.type && (file.type.startsWith('image/') || file.type.startsWith('video/'))) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Adds new image/video/vector files to the queue and generates lightweight 512px thumbnails
    */
   public async addFiles(files: File[]): Promise<void> {
-    if (files.length === 0) return;
+    if (!files || files.length === 0) return;
+
+    const validMediaFiles = files.filter((f) => BatchQueueService.isSupportedStockMediaFile(f));
+    if (validMediaFiles.length === 0) return;
 
     if (this.status === 'idle' && this.items.size === 0) {
       this.currentBatchId = crypto.randomUUID();
@@ -191,97 +255,143 @@ export class BatchQueueService {
     this.notify();
 
     const baseTime = Date.now();
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
+    for (let i = 0; i < validMediaFiles.length; i++) {
+      const file = validMediaFiles[i];
       const id = crypto.randomUUID();
+      const sourceMediaType = (file as any).__sourceMediaType as MediaType | undefined;
+      const createdAt = baseTime + i;
+      const initialDraft: MasterMetadataRecord = {
+        id,
+        batchId: this.currentBatchId,
+        filename: file.name,
+        fileSize: file.size,
+        thumbnailBase64: '',
+        mediaType: sourceMediaType || 'image',
+        isAiGenerated: true,
+        baseTitle: '',
+        detailedDescription: '',
+        rankedKeywords: [],
+        categories: undefined,
+        status: 'pending',
+        createdAt,
+      };
       const item: QueueItem = {
         id,
         filename: file.name,
         file,
+        mediaType: sourceMediaType,
         originalSizeBytes: file.size,
         status: 'resizing',
         retryCount: 0,
-        createdAt: baseTime + i,
+        createdAt,
+        metadataRecord: initialDraft,
       };
       this.items.set(id, item);
     }
     this.notify();
 
-    // Process thumbnail downsampling and media extraction in micro-batches
-    for (const item of this.items.values()) {
-      if (item.status === 'resizing' && item.file) {
-        let extractTimer: any;
-        try {
-          const extractTimeoutPromise = new Promise<never>((_, reject) => {
-            extractTimer = setTimeout(() => reject(new Error('Media extraction timed out after 20s')), 20000);
-          });
+    // Process thumbnail downsampling and media extraction with bounded concurrency (6 workers)
+    // and batched SQLite transactions (24 items per chunk) to prevent N+1 writes and UI freezes
+    const resizingItems = Array.from(this.items.values()).filter(
+      (item) => item.status === 'resizing' && item.file
+    );
+    const INGEST_CHUNK_SIZE = 24;
+    const INGEST_CONCURRENCY = 6;
 
-          const media = await Promise.race([
-            extractMediaInfo(item.file, undefined, 512, 0.75),
-            extractTimeoutPromise,
-          ]);
+    for (let i = 0; i < resizingItems.length; i += INGEST_CHUNK_SIZE) {
+      const chunk = resizingItems.slice(i, i + INGEST_CHUNK_SIZE);
+      const draftsToPersist: MasterMetadataRecord[] = [];
 
-          item.thumbnailBase64 = media.thumbnailBase64;
-          item.thumbnailDataUrl = media.thumbnailDataUrl;
-          item.compressedSizeBytes = media.compressedSizeBytes;
-          item.mediaType = media.mediaType;
-          item.videoDurationSeconds = media.videoDurationSeconds;
-          item.videoResolution = media.videoResolution;
-          item.videoWidth = media.width;
-          item.videoHeight = media.height;
-          item.hasAudio = media.hasAudio;
-          item.hasRealPreview = media.hasRealPreview;
-          item.status = 'ready';
+      for (let j = 0; j < chunk.length; j += INGEST_CONCURRENCY) {
+        const subBatch = chunk.slice(j, j + INGEST_CONCURRENCY);
+        await Promise.all(
+          subBatch.map(async (item) => {
+            if (!item.file) return;
+            let extractTimer: any;
+            try {
+              const extractTimeoutPromise = new Promise<never>((_, reject) => {
+                extractTimer = setTimeout(() => reject(new Error('Media extraction timed out after 20s')), 20000);
+              });
 
-          // Persist draft in Dexie IndexedDB so refresh never removes the asset
-          const draft: MasterMetadataRecord = {
-            id: item.id,
-            batchId: this.currentBatchId,
-            filename: item.filename,
-            fileSize: item.originalSizeBytes,
-            compressedSize: item.compressedSizeBytes,
-            thumbnailBase64: item.thumbnailDataUrl || (item.thumbnailBase64 ? `data:image/jpeg;base64,${item.thumbnailBase64}` : ''),
-            mediaType: item.mediaType || 'image',
-            videoMeta: (item.videoDurationSeconds || item.videoResolution || item.videoWidth) ? {
-              durationSeconds: item.videoDurationSeconds,
-              resolution: item.videoResolution,
-              width: item.videoWidth,
-              height: item.videoHeight,
-            } : undefined,
-            isAiGenerated: true,
-            baseTitle: '',
-            detailedDescription: '',
-            rankedKeywords: [],
-            categories: undefined,
-            status: 'pending',
-            createdAt: Date.now(),
-          };
-          await db.masterRecords.put(draft);
-        } catch (err: any) {
-          item.status = 'error';
-          item.error = `Failed to process asset: ${err.message}`;
+              const media = await Promise.race([
+                extractMediaInfo(item.file, undefined, 512, 0.75),
+                extractTimeoutPromise,
+              ]);
 
-          const errDraft: MasterMetadataRecord = {
-            id: item.id,
-            batchId: this.currentBatchId,
-            filename: item.filename,
-            fileSize: item.originalSizeBytes,
-            thumbnailBase64: '',
-            mediaType: item.mediaType || 'image',
-            isAiGenerated: true,
-            baseTitle: '',
-            detailedDescription: '',
-            rankedKeywords: [],
-            categories: undefined,
-            status: 'error',
-            errorMessage: err.message,
-            createdAt: Date.now(),
-          };
-          await db.masterRecords.put(errDraft);
-        } finally {
-          if (extractTimer) clearTimeout(extractTimer);
-        }
+              item.thumbnailBase64 = media.thumbnailBase64;
+              item.thumbnailDataUrl = media.thumbnailDataUrl;
+              item.compressedSizeBytes = media.compressedSizeBytes;
+              item.mediaType = media.mediaType;
+              item.videoDurationSeconds = media.videoDurationSeconds;
+              item.videoResolution = media.videoResolution;
+              item.videoWidth = media.width;
+              item.videoHeight = media.height;
+              item.hasAudio = media.hasAudio;
+              item.hasRealPreview = media.hasRealPreview;
+              item.status = 'ready';
+
+              const draftRec: MasterMetadataRecord = {
+                id: item.id,
+                batchId: this.currentBatchId,
+                filename: item.filename,
+                fileSize: item.originalSizeBytes,
+                compressedSize: item.compressedSizeBytes,
+                thumbnailBase64:
+                  item.thumbnailDataUrl ||
+                  (item.thumbnailBase64 ? `data:image/jpeg;base64,${item.thumbnailBase64}` : ''),
+                mediaType: item.mediaType || 'image',
+                videoMeta:
+                  item.videoDurationSeconds || item.videoResolution || item.videoWidth
+                    ? {
+                        durationSeconds: item.videoDurationSeconds,
+                        resolution: item.videoResolution,
+                        width: item.videoWidth,
+                        height: item.videoHeight,
+                      }
+                    : undefined,
+                isAiGenerated: true,
+                baseTitle: item.metadataRecord?.baseTitle || '',
+                detailedDescription: item.metadataRecord?.detailedDescription || '',
+                rankedKeywords: item.metadataRecord?.rankedKeywords || [],
+                categories: item.metadataRecord?.categories,
+                status: 'pending',
+                createdAt: item.createdAt || Date.now(),
+              };
+              item.metadataRecord = draftRec;
+              draftsToPersist.push(draftRec);
+            } catch (err: any) {
+              item.status = 'error';
+              item.error = `Failed to process asset: ${err.message}`;
+
+              const errRec: MasterMetadataRecord = {
+                id: item.id,
+                batchId: this.currentBatchId,
+                filename: item.filename,
+                fileSize: item.originalSizeBytes,
+                thumbnailBase64: '',
+                mediaType: item.mediaType || 'image',
+                isAiGenerated: true,
+                baseTitle: '',
+                detailedDescription: '',
+                rankedKeywords: [],
+                categories: undefined,
+                status: 'error',
+                errorMessage: err.message,
+                createdAt: item.createdAt || Date.now(),
+              };
+              item.metadataRecord = errRec;
+              draftsToPersist.push(errRec);
+            } finally {
+              if (extractTimer) clearTimeout(extractTimer);
+            }
+          })
+        );
       }
+
+      if (draftsToPersist.length > 0) {
+        await db.masterRecords.bulkPut(draftsToPersist);
+      }
+      this.notify();
     }
 
     this.status = 'idle';
@@ -877,7 +987,8 @@ export class BatchQueueService {
     if (this.timerInterval) clearInterval(this.timerInterval);
     this.timerInterval = setInterval(() => {
       this.elapsedSeconds++;
-      this.notify();
+      // Notify only lightweight timer subscribers so the 2,000-item Studio list never re-sorts at 1Hz
+      this.notifyTimer();
     }, 1000);
   }
 

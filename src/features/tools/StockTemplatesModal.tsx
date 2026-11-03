@@ -1,173 +1,291 @@
 import React, { useState } from 'react';
-import { STOCK_PLATFORMS_SPEC, StockPlatformSpec } from '../../constants/csvTemplates';
+import { CSV_TEMPLATES, CsvTemplateSpec } from '../../constants/csvTemplates';
 import { Dialog } from '../../components/ui/dialog';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
-import { saveAs } from 'file-saver';
-import {
-  AlertTriangle,
-  CheckCircle2,
-  Copy,
-  Download,
-  FileSpreadsheet,
-  Info,
-  ShieldAlert,
-} from 'lucide-react';
+import { Check, Copy, Download, FileSpreadsheet, Info, CheckCircle2 } from 'lucide-react';
+import { getPlatformLogo } from '../../components/icons/StockLogos';
 import { useLanguage } from '../../context/LanguageContext';
 
-interface Props {
+interface StockTemplatesModalProps {
   open: boolean;
   onClose: () => void;
 }
 
-export const StockTemplatesModal: React.FC<Props> = ({ open, onClose }) => {
-  const { isRtl } = useLanguage();
-  const [selectedKey, setSelectedKey] = useState<string>('vecteezy');
-  const [copied, setCopied] = useState<boolean>(false);
+export const StockTemplatesModal: React.FC<StockTemplatesModalProps> = ({ open, onClose }) => {
+  const { language } = useLanguage();
+  const [selectedId, setSelectedId] = useState<string>('adobe');
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const spec = STOCK_PLATFORMS_SPEC[selectedKey];
+  const activeTemplate = CSV_TEMPLATES.find((t) => t.id === selectedId) || CSV_TEMPLATES[0];
 
-  const handleDownloadSample = () => {
-    if (!spec) return;
-    const blob = new Blob([spec.sampleCsv], { type: 'text/csv;charset=utf-8' });
-    saveAs(blob, `${spec.id}_official_sample.csv`);
+  const generateCsvString = (tpl: CsvTemplateSpec): string => {
+    const delimiter = tpl.id === 'freepik' ? ';' : ',';
+    const escapeCell = (val: string) => {
+      if (val.includes(delimiter) || val.includes('"') || val.includes('\n')) {
+        return `"${val.replace(/"/g, '""')}"`;
+      }
+      return val;
+    };
+
+    const headerRow = tpl.headers.map(escapeCell).join(delimiter);
+    const dataRows = tpl.sampleRows.map((row) => row.map(escapeCell).join(delimiter));
+    return [headerRow, ...dataRows].join('\r\n');
   };
 
-  const handleCopySample = () => {
-    if (!spec) return;
-    navigator.clipboard.writeText(spec.sampleCsv);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+  const handleDownloadSample = async (tpl: CsvTemplateSpec) => {
+    try {
+      const response = await fetch(tpl.sampleUrl);
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', tpl.sampleUrl.split('/').pop() || tpl.fileName);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        return;
+      }
+    } catch {
+      // Fallback to generated CSV string
+    }
+
+    const csvContent = '\uFEFF' + generateCsvString(tpl);
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', tpl.fileName.split(' ')[0]);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
+
+  const handleCopyHeaders = (tpl: CsvTemplateSpec) => {
+    const delimiter = tpl.id === 'freepik' ? ';' : ',';
+    navigator.clipboard.writeText(tpl.headers.join(delimiter));
+    setCopiedId(tpl.id);
+    setTimeout(() => setCopiedId(null), 1500);
+  };
+
+  const rulesList = language === 'ar' ? activeTemplate.rulesAr : activeTemplate.rules;
+  const tipsList = language === 'ar' ? activeTemplate.tipsAr : activeTemplate.tips;
 
   return (
     <Dialog
       open={open}
       onClose={onClose}
-      title={isRtl ? 'مواصفات وقواعد ملفات CSV الرسمية' : 'Official Stock CSV Formats & Ingestion Rules'}
-      description={
-        isRtl
-          ? 'المواصفات الدقيقة وقوالب الأعمدة المعتمدة لجميع منصات الميكروستوك'
-          : 'Exact verified specifications, column schemas, and sample CSV files for all microstock platforms.'
-      }
-      className="max-w-4xl"
+      title={language === 'ar' ? 'قوالب ومعايير CSV للمنصات الست' : '6-Platform CSV Specifications & Samples'}
+      size="lg"
     >
-      <div dir="ltr" className="space-y-4 text-xs text-left">
+      <div className="space-y-4 text-xs">
         {/* Platform Selector Tabs */}
-        <div className="flex items-center gap-1.5 p-1 rounded-lg bg-secondary/60 border border-border overflow-x-auto">
-          {Object.values(STOCK_PLATFORMS_SPEC).map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => setSelectedKey(p.id)}
-              className={`px-3 py-1.5 rounded-md font-medium text-xs transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-                selectedKey === p.id
-                  ? 'bg-background text-foreground shadow-xs font-semibold'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              <span>{p.name}</span>
-            </button>
-          ))}
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 p-1 bg-secondary rounded-lg border border-border">
+          {CSV_TEMPLATES.map((tpl) => {
+            const isSelected = tpl.id === selectedId;
+            return (
+              <button
+                key={tpl.id}
+                type="button"
+                onClick={() => setSelectedId(tpl.id)}
+                className={`px-2.5 py-2 rounded-md text-xs font-medium transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                  isSelected
+                    ? 'bg-card text-foreground shadow-xs border border-border font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <span className="shrink-0">{getPlatformLogo(tpl.id as any, 15)}</span>
+                <span dir="ltr" className="truncate">{tpl.name.split(' ')[0]}</span>
+              </button>
+            );
+          })}
         </div>
 
-        {spec && (
-          <div className="space-y-4">
-            {/* Quick Metrics & Headers */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-              <div className="p-2.5 rounded-lg border border-border bg-card">
-                <span className="text-[10px] text-muted-foreground uppercase font-mono block">Delimiter</span>
-                <span className="font-semibold text-foreground font-mono">
-                  {spec.delimiter === ';' ? 'Semicolon (;)' : 'Comma (,)'}
-                </span>
+        {/* Active Platform Specification Panel */}
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          {/* Header Row */}
+          <div className="p-4 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-secondary/40">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-card border border-border flex items-center justify-center shrink-0">
+                {getPlatformLogo(activeTemplate.id as any, 20)}
               </div>
-
-              <div className="p-2.5 rounded-lg border border-border bg-card">
-                <span className="text-[10px] text-muted-foreground uppercase font-mono block">Encoding</span>
-                <span className="font-semibold text-foreground font-mono">{spec.encoding}</span>
-              </div>
-
-              <div className="p-2.5 rounded-lg border border-border bg-card">
-                <span className="text-[10px] text-muted-foreground uppercase font-mono block">Filename Limit</span>
-                <span className="font-semibold text-foreground font-mono">
-                  {spec.filenameRules.maxLength} chars max
-                </span>
-              </div>
-
-              <div className="p-2.5 rounded-lg border border-border bg-card">
-                <span className="text-[10px] text-muted-foreground uppercase font-mono block">Columns Count</span>
-                <span className="font-semibold text-foreground font-mono">{spec.headers.length} columns</span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 dir="ltr" className="text-sm font-semibold text-foreground">{activeTemplate.name}</h3>
+                  <span className="text-[11px] font-mono text-muted-foreground">
+                    · {activeTemplate.headers.length} {language === 'ar' ? 'أعمدة' : 'Columns'}
+                    {activeTemplate.id === 'freepik' ? ' (;)' : ' (,)'}
+                  </span>
+                </div>
+                <p dir="ltr" className="text-[11px] text-muted-foreground font-mono mt-0.5 text-start">{activeTemplate.fileName}</p>
               </div>
             </div>
 
-            {/* Official Column Headers */}
-            <div className="p-3 rounded-lg border border-border bg-card space-y-1.5">
-              <span className="text-muted-foreground font-medium text-[11px] block">
-                Official Exact Column Headers (Left to Right):
-              </span>
-              <div className="flex flex-wrap gap-1.5">
-                {spec.headers.map((h, i) => (
-                  <span
-                    key={i}
-                    className="px-2 py-0.5 rounded bg-secondary text-foreground font-mono text-[11px] border border-border"
-                  >
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleCopyHeaders(activeTemplate)}
+                className="h-7.5 text-xs gap-1.5 cursor-pointer"
+              >
+                {copiedId === activeTemplate.id ? (
+                  <Check className="w-3.5 h-3.5 text-emerald-500" />
+                ) : (
+                  <Copy className="w-3.5 h-3.5" />
+                )}
+                <span>
+                  {copiedId === activeTemplate.id
+                    ? language === 'ar'
+                      ? 'تم النسخ'
+                      : 'Copied'
+                    : language === 'ar'
+                    ? 'نسخ الأعمدة'
+                    : 'Copy Headers'}
+                </span>
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => handleDownloadSample(activeTemplate)}
+                className="h-7.5 text-xs gap-1.5 font-semibold cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{language === 'ar' ? 'تحميل قالب CSV' : 'Download Sample CSV'}</span>
+              </Button>
+            </div>
+          </div>
+
+          <div className="p-4 space-y-4">
+            {/* Limits Summary Row */}
+            <div className="grid grid-cols-3 gap-2.5">
+              <div className="p-2.5 rounded-lg bg-secondary/60 border border-border">
+                <span className="text-[10px] text-muted-foreground block">
+                  {language === 'ar' ? 'حد العنوان (Title)' : 'Title Limit'}
+                </span>
+                <span className="text-xs font-mono font-semibold text-foreground tabular-nums">
+                  {activeTemplate.maxTitleChars > 0
+                    ? language === 'ar'
+                      ? `${activeTemplate.maxTitleChars} حرف`
+                      : `${activeTemplate.maxTitleChars} chars`
+                    : language === 'ar'
+                    ? 'مدمج مع الوصف'
+                    : 'Uses Description'}
+                </span>
+              </div>
+              <div className="p-2.5 rounded-lg bg-secondary/60 border border-border">
+                <span className="text-[10px] text-muted-foreground block">
+                  {language === 'ar' ? 'حد الوصف (Description)' : 'Description Limit'}
+                </span>
+                <span className="text-xs font-mono font-semibold text-foreground tabular-nums">
+                  {activeTemplate.maxDescChars > 0
+                    ? language === 'ar'
+                      ? `${activeTemplate.maxDescChars} حرف`
+                      : `${activeTemplate.maxDescChars} chars`
+                    : language === 'ar'
+                    ? 'غير مستخدم'
+                    : 'Not Required'}
+                </span>
+              </div>
+              <div className="p-2.5 rounded-lg bg-secondary/60 border border-border">
+                <span className="text-[10px] text-muted-foreground block">
+                  {language === 'ar' ? 'الكلمات المفتاحية (Keywords)' : 'Max Keywords'}
+                </span>
+                <span className="text-xs font-mono font-semibold text-primary tabular-nums">
+                  {language === 'ar' ? `${activeTemplate.maxKeywords} كلمة` : `${activeTemplate.maxKeywords} tags`}
+                </span>
+              </div>
+            </div>
+
+            {/* Exact Column Schema */}
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5 font-semibold text-foreground">
+                <FileSpreadsheet className="w-3.5 h-3.5 text-primary" />
+                <span>{language === 'ar' ? 'ترتيب الأعمدة الرسمي' : 'Column Schema'}</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 p-2.5 rounded-lg bg-secondary/50 border border-border" dir="ltr">
+                {activeTemplate.headers.map((h, i) => (
+                  <Badge key={h} variant="outline" className="font-mono text-[11px] bg-card border-border text-foreground">
+                    <span className="text-muted-foreground mr-1 tabular-nums">{i + 1}.</span>
                     {h}
-                  </span>
+                  </Badge>
                 ))}
               </div>
             </div>
 
-            {/* Sample CSV Preview */}
+            {/* Sample Data Preview Table */}
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground font-medium text-[11px]">
-                  Official Verified Sample CSV Content:
-                </span>
-                <div className="flex items-center gap-1.5">
-                  <Button size="sm" variant="ghost" onClick={handleCopySample} className="h-6 px-2 text-[11px] gap-1">
-                    <Copy className="w-3 h-3" />
-                    {copied ? 'Copied' : 'Copy'}
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={handleDownloadSample} className="h-6 px-2 text-[11px] gap-1">
-                    <Download className="w-3 h-3" />
-                    Download Sample .CSV
-                  </Button>
-                </div>
+              <span className="font-semibold text-foreground block">
+                {language === 'ar' ? 'معاينة الصفوف' : 'Sample Row Structure'}
+              </span>
+              <div className="overflow-x-auto rounded-lg border border-border" dir="ltr">
+                <table className="w-full text-left border-collapse text-[11px] font-mono">
+                  <thead>
+                    <tr className="bg-secondary border-b border-border text-muted-foreground">
+                      {activeTemplate.headers.map((h) => (
+                        <th key={h} className="p-2 font-semibold whitespace-nowrap border-r border-border last:border-0">
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeTemplate.sampleRows.map((row, idx) => (
+                      <tr key={idx} className="border-b border-border/60 last:border-0 bg-card">
+                        {row.map((cell, cIdx) => (
+                          <td
+                            key={cIdx}
+                            className="p-2 text-foreground max-w-[200px] truncate border-r border-border/50 last:border-0"
+                          >
+                            {cell || (
+                              <span className="text-muted-foreground/50 italic">
+                                {language === 'ar' ? 'فارغ' : 'empty'}
+                              </span>
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              <pre className="p-3 bg-secondary/50 rounded-lg text-[11px] font-mono text-foreground overflow-x-auto max-h-48 whitespace-pre border border-border">
-                {spec.sampleCsv}
-              </pre>
             </div>
 
-            {/* Common Pitfalls & Why Tools Fail */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="p-3 rounded-lg border border-destructive/30 bg-destructive/5 space-y-1.5">
-                <div className="flex items-center gap-1.5 font-semibold text-destructive text-[11px]">
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  <span>Why Generic CSVs Fail on {spec.name}</span>
+            {/* Platform Rules & Best Practices */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+              <div className="p-3 rounded-lg bg-secondary/40 border border-border space-y-2">
+                <div className="flex items-center gap-1.5 font-semibold text-foreground">
+                  <Info className="w-3.5 h-3.5 text-primary" />
+                  <span>{language === 'ar' ? 'قواعد التصدير' : 'Format Rules'}</span>
                 </div>
-                <ul className="list-disc list-inside space-y-1 text-muted-foreground text-[11px]">
-                  {spec.commonFailureReasons.map((r, i) => (
-                    <li key={i} className="leading-snug">{r}</li>
+                <ul className="space-y-1.5 text-muted-foreground">
+                  {rulesList.map((rule, i) => (
+                    <li key={i} className="flex items-start gap-2 leading-relaxed">
+                      <span className="text-primary font-bold">•</span>
+                      <span>{rule}</span>
+                    </li>
                   ))}
                 </ul>
               </div>
 
-              <div className="p-3 rounded-lg border border-primary/30 bg-primary/5 space-y-1.5">
-                <div className="flex items-center gap-1.5 font-semibold text-primary text-[11px]">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Stock Assistant Pro Tips</span>
+              <div className="p-3 rounded-lg bg-secondary/40 border border-border space-y-2">
+                <div className="flex items-center gap-1.5 font-semibold text-foreground">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>{language === 'ar' ? 'نصائح القبول' : 'Submission Tips'}</span>
                 </div>
-                <ul className="list-disc list-inside space-y-1 text-muted-foreground text-[11px]">
-                  {spec.tipsForUpload.map((t, i) => (
-                    <li key={i} className="leading-snug">{t}</li>
+                <ul className="space-y-1.5 text-muted-foreground">
+                  {tipsList.map((tip, i) => (
+                    <li key={i} className="flex items-start gap-2 leading-relaxed">
+                      <span className="text-emerald-500 font-bold">✓</span>
+                      <span>{tip}</span>
+                    </li>
                   ))}
                 </ul>
               </div>
             </div>
           </div>
-        )}
+        </div>
       </div>
     </Dialog>
   );

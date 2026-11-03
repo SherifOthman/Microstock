@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   CleanedFileItem,
   CleanerOptions,
@@ -12,7 +12,27 @@ import {
   validateMediaDimensions,
 } from '../../../services/cleaner/fileCleanerEngine';
 
-export function useFileCleaner(language: string) {
+export function buildRenamedFilesFromCleanedItems(items: CleanedFileItem[]): File[] {
+  return items
+    .filter((i) => !i.validation?.isBlocking)
+    .map((item) => {
+      const finalName = item.customName !== undefined ? item.customName : item.cleanedName;
+      const renamedFile = new File([item.file], finalName, {
+        type: item.file.type,
+        lastModified: item.file.lastModified || Date.now(),
+      });
+      if (item.subFolder === 'Vectors') {
+        Object.defineProperty(renamedFile, '__sourceMediaType', {
+          value: 'vector',
+          enumerable: false,
+          configurable: true,
+        });
+      }
+      return renamedFile;
+    });
+}
+
+export function useFileCleaner(language: string, onSendToStudio?: (files: File[]) => void) {
   // Master Destination Directory & Disk State
   const [masterDirectory, setMasterDirectory] = useState<string>(() => {
     return localStorage.getItem('stock_cleaner_master_dir') || '';
@@ -27,6 +47,7 @@ export function useFileCleaner(language: string) {
 
   // Imported Files & Configuration
   const [rawFiles, setRawFiles] = useState<File[]>([]);
+  const [lastProcessedFiles, setLastProcessedFiles] = useState<File[]>([]);
   const [nativePaths, setNativePaths] = useState<Record<string, string>>({});
   const [options, setOptions] = useState<CleanerOptions>(DEFAULT_CLEANER_OPTIONS);
   const [shuffleSeed, setShuffleSeed] = useState(1);
@@ -57,6 +78,7 @@ export function useFileCleaner(language: string) {
 
   // File Validations Map (Keyed by file unique identifier)
   const [validations, setValidations] = useState<Record<string, MediaResolutionValidation>>({});
+  const validatedKeysRef = useRef<Set<string>>(new Set());
 
   // Scan Master Directory from disk via Electron native fs
   const scanMasterDirectory = useCallback(async (dirPath: string) => {
@@ -123,35 +145,53 @@ export function useFileCleaner(language: string) {
     return calculateAllMediaSlots(mediaBatches, options.maxItemsPerBatch);
   }, [mediaBatches, options.maxItemsPerBatch]);
 
-  // Validate imported files resolutions asynchronously
+  // Validate imported files resolutions asynchronously in bounded chunks of 50 (no effect loop)
   useEffect(() => {
     let isCancelled = false;
 
-    const runValidations = async () => {
-      const newValidations: Record<string, MediaResolutionValidation> = {};
-      for (const file of rawFiles) {
-        const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
-        if (!validations[fileKey]) {
-          const val = await validateMediaDimensions(file);
-          if (!isCancelled) {
-            newValidations[fileKey] = val;
-          }
-        }
-      }
+    const unvalidatedFiles = rawFiles.filter((file) => {
+      const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
+      return !validatedKeysRef.current.has(fileKey);
+    });
 
-      if (!isCancelled && Object.keys(newValidations).length > 0) {
-        setValidations((prev) => ({ ...prev, ...newValidations }));
+    if (unvalidatedFiles.length === 0) return;
+
+    const runValidations = async () => {
+      const CHUNK_SIZE = 50;
+      const CONCURRENCY = 8;
+
+      for (let i = 0; i < unvalidatedFiles.length; i += CHUNK_SIZE) {
+        if (isCancelled) break;
+        const chunk = unvalidatedFiles.slice(i, i + CHUNK_SIZE);
+        const chunkResults: Record<string, MediaResolutionValidation> = {};
+
+        for (let j = 0; j < chunk.length; j += CONCURRENCY) {
+          if (isCancelled) break;
+          const subBatch = chunk.slice(j, j + CONCURRENCY);
+          await Promise.all(
+            subBatch.map(async (file) => {
+              const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
+              const val = await validateMediaDimensions(file);
+              if (!isCancelled) {
+                validatedKeysRef.current.add(fileKey);
+                chunkResults[fileKey] = val;
+              }
+            })
+          );
+        }
+
+        if (!isCancelled && Object.keys(chunkResults).length > 0) {
+          setValidations((prev) => ({ ...prev, ...chunkResults }));
+        }
       }
     };
 
-    if (rawFiles.length > 0) {
-      runValidations();
-    }
+    runValidations();
 
     return () => {
       isCancelled = true;
     };
-  }, [rawFiles, validations]);
+  }, [rawFiles]);
 
   // Import files deduplicated and record native disk paths for Explorer interactions
   const handleAddFiles = useCallback((newFiles: File[]) => {
@@ -382,6 +422,8 @@ export function useFileCleaner(language: string) {
   const handleClearAll = useCallback(() => {
     setRawFiles([]);
     setManualOverrides({});
+    setValidations({});
+    validatedKeysRef.current.clear();
     setStatusNotification(null);
   }, []);
 
@@ -430,6 +472,9 @@ export function useFileCleaner(language: string) {
       );
 
       if (res.success) {
+        const preparedFiles = buildRenamedFilesFromCleanedItems(cleanedItems);
+        setLastProcessedFiles(preparedFiles);
+
         const touchedBatches = Array.from(new Set(cleanedItems.map((i) => `${i.subFolder}/${i.batchFolder}`)));
         setSuccessDialogInfo({
           savedCount: res.savedCount,
@@ -467,12 +512,27 @@ export function useFileCleaner(language: string) {
     }
   }, [totalDuplicateCount, handleProcessAndSave]);
 
+  const handleSendToStudio = useCallback(() => {
+    if (!onSendToStudio) return;
+    if (cleanedItems.length > 0) {
+      const files = buildRenamedFilesFromCleanedItems(cleanedItems);
+      if (files.length > 0) {
+        onSendToStudio(files);
+      }
+      return;
+    }
+    if (lastProcessedFiles.length > 0) {
+      onSendToStudio(lastProcessedFiles);
+    }
+  }, [cleanedItems, lastProcessedFiles, onSendToStudio]);
+
   return {
     masterDirectory,
     mediaBatches,
     existingBatches,
     isScanningDisk,
     rawFiles,
+    lastProcessedFiles,
     options,
     setOptions,
     searchFilter,
@@ -512,5 +572,7 @@ export function useFileCleaner(language: string) {
     handleReShuffle,
     handleInitiateProcess,
     handleProcessAndSave,
+    handleSendToStudio,
   };
 }
+

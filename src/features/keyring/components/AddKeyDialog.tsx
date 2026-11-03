@@ -1,14 +1,11 @@
-import React, { useEffect, useState } from 'react';
-import { ApiKeyRecord, ProviderType } from '../../../types';
-import { MODEL_DISPLAY_NAMES, PROVIDERS_META, PROVIDER_ORDER } from '../../../constants/providers';
-import { createApiKeyRecord, saveApiKey, updateApiKey, removeApiKey, getAllApiKeys } from '../../../db';
-import { keyRingScheduler } from '../../../services/scheduler/KeyRingScheduler';
-import { getProviderAdapter } from '../../../services/providers';
+import React, { useState, useEffect } from 'react';
+import { ProviderType, ApiKeyRecord } from '../../../types';
+import { PROVIDERS_META, PROVIDER_ORDER, MODEL_DISPLAY_NAMES } from '../../../constants/providers';
+import { createApiKeyRecord, saveApiKey, updateApiKey } from '../../../db';
 import { decryptSecret } from '../../../services/desktop/secureStorage';
 import { Dialog } from '../../../components/ui/dialog';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
-import { Badge } from '../../../components/ui/badge';
 import {
   Select,
   SelectContent,
@@ -16,777 +13,259 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../../../components/ui/select';
-import {
-  AlertCircle,
-  AlertTriangle,
-  CheckCircle2,
-  KeyRound,
-  Loader2,
-  Plus,
-  RefreshCw,
-  Sparkles,
-  Trash2,
-} from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import { useLanguage } from '../../../context/LanguageContext';
 
-interface KeyEntry {
-  id: string;
-  providerId: ProviderType;
-  key: string;
-  label: string;
-  model: string;
-  rpm: number;
-  createdAt: number;
-  isTesting: boolean;
-  testStatus?: 'idle' | 'success' | 'failed';
-  latencyMs?: number;
-  error?: string;
-  warning?: string;
-}
-
-interface Props {
+interface AddKeyDialogProps {
   open: boolean;
-  initialProvider?: ProviderType;
   onClose: () => void;
-  onSuccess: (records: ApiKeyRecord[]) => void;
+  onKeyAdded: () => void;
+  editKey?: ApiKeyRecord | null;
 }
 
-export const AddKeyDialog: React.FC<Props> = ({
+export const AddKeyDialog: React.FC<AddKeyDialogProps> = ({
   open,
-  initialProvider = 'gemini',
   onClose,
-  onSuccess,
+  onKeyAdded,
+  editKey,
 }) => {
-  const { t, isRtl } = useLanguage();
-  const [providerId, setProviderId] = useState<ProviderType>(initialProvider);
-  const [inputKeysText, setInputKeysText] = useState<string>('');
-  const [customKeyLabel, setCustomKeyLabel] = useState<string>('');
-  const [keysList, setKeysList] = useState<KeyEntry[]>([]);
-  const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  const [availableModels, setAvailableModels] = useState<string[]>(
-    PROVIDERS_META[initialProvider].recommendedVisionModels
-  );
-  const [selectedModel, setSelectedModel] = useState<string>(
-    PROVIDERS_META[initialProvider].defaultModelId
-  );
-  const [isFetchingModels, setIsFetchingModels] = useState<boolean>(false);
-  const [fetchNotice, setFetchNotice] = useState<string | null>(null);
-
-  const [cfAccountId, setCfAccountId] = useState<string>(() => {
-    return localStorage.getItem('stock_cf_account_id') || '';
-  });
-  const [cfError, setCfError] = useState<string | null>(null);
+  const { language } = useLanguage();
+  const [providerId, setProviderId] = useState<ProviderType>('gemini');
+  const [label, setLabel] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [cfAccountId, setCfAccountId] = useState('');
+  const [modelId, setModelId] = useState(PROVIDERS_META.gemini.defaultModelId);
+  const [rpmLimit, setRpmLimit] = useState<number>(PROVIDERS_META.gemini.defaultRpm);
 
   useEffect(() => {
-    if (cfAccountId) {
-      localStorage.setItem('stock_cf_account_id', cfAccountId);
-    }
-  }, [cfAccountId]);
+    let active = true;
+    const loadEditKey = async () => {
+      if (editKey && open) {
+        setProviderId(editKey.providerId);
+        setLabel(editKey.label);
+        setModelId(editKey.modelId);
+        setRpmLimit(editKey.rpmLimit);
 
-  const currentMeta = PROVIDERS_META[providerId];
+        const decrypted = await decryptSecret(editKey.key);
+        if (!active) return;
 
-  // Reset or switch provider
-  const handleProviderSelect = (p: ProviderType) => {
-    setProviderId(p);
-    const meta = PROVIDERS_META[p];
-    setAvailableModels(meta.recommendedVisionModels);
-    setSelectedModel(meta.defaultModelId);
-    setFetchNotice(null);
-    setCfError(null);
-  };
-
-  // Pre-load all saved keys from database when dialog opens
-  useEffect(() => {
-    if (open) {
-      getAllApiKeys().then(async (records) => {
-        const loaded: KeyEntry[] = await Promise.all(
-          records
-            .sort((a, b) => a.createdAt - b.createdAt)
-            .map(async (r) => ({
-              id: r.id,
-              providerId: r.providerId,
-              key: await decryptSecret(r.key),
-              label: r.label,
-              model: r.modelId,
-              rpm: r.rpmLimit,
-              createdAt: r.createdAt,
-              isTesting: false,
-              testStatus: r.status === 'healthy' ? 'success' : r.status === 'invalid' ? 'failed' : 'idle',
-              latencyMs: r.lastLatencyMs,
-              error: r.lastError,
-            }))
-        );
-        setKeysList(loaded);
-      });
-    }
-  }, [open]);
-
-  // Automatically detect provider & fetch live models when a key is pasted or entered
-  useEffect(() => {
-    const rawLines = inputKeysText
-      .split('\n')
-      .map((k) => k.trim())
-      .filter((k) => k.length > 5);
-
-    if (rawLines.length > 0) {
-      const first = rawLines[0];
-      // Auto-detect provider from prefix
-      if (first.startsWith('sk-or-v1-') && providerId !== 'openrouter') {
-        handleProviderSelect('openrouter');
-        return;
-      }
-      if (first.startsWith('gsk_') && providerId !== 'groq') {
-        handleProviderSelect('groq');
-        return;
-      }
-      if ((first.startsWith('AQ.') || first.startsWith('AIza')) && providerId !== 'gemini') {
-        handleProviderSelect('gemini');
-        return;
-      }
-      if (first.startsWith('cfut_') && providerId !== 'cloudflare') {
-        handleProviderSelect('cloudflare');
-        return;
-      }
-
-      // FIXED: Increased debounce from 500ms to 1000ms to reduce API spam
-      const timer = setTimeout(() => {
-        tryFetchLiveModels(rawLines[0]);
-      }, 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [inputKeysText, providerId]);
-
-  // Dynamically queries the provider's API with the key to discover active models
-  const tryFetchLiveModels = async (apiKey: string) => {
-    if (!apiKey || apiKey.length < 10) return;
-    setIsFetchingModels(true);
-    setFetchNotice(null);
-
-    try {
-      const adapter = getProviderAdapter(providerId);
-      if (adapter.fetchModels) {
-        const live = await adapter.fetchModels(apiKey);
-
-        if (live && live.length > 0) {
-          let filteredNames: string[] = [];
-
-          if (providerId === 'openrouter') {
-            // Priority: verified multimodal vision models
-            const visionKeywords = ['gemini', 'vision', 'vl', 'pixtral', 'multimodal'];
-            const freeVisionModels = live
-              .filter(
-                (m) =>
-                  (m.id.includes(':free') || m.pricing?.prompt === '0') &&
-                  visionKeywords.some((vk) => m.id.toLowerCase().includes(vk))
-              )
-              .map((m) => m.id);
-
-            filteredNames = freeVisionModels.length > 0 ? freeVisionModels : live.map((m) => m.id);
-          } else {
-            filteredNames = live.map((m) => m.id);
-          }
-
-          if (filteredNames.length > 0) {
-            setAvailableModels(filteredNames);
-            if (!filteredNames.includes(selectedModel)) {
-              setSelectedModel(filteredNames[0]);
-            }
-            setFetchNotice(`Loaded ${filteredNames.length} active models from your key`);
-          }
-        }
-      }
-    } catch {
-      // Keep static recommended list if query fails or key is still incomplete
-    } finally {
-      setIsFetchingModels(false);
-    }
-  };
-
-  // Instant Add, Real-Time Test & Auto-Save
-  const handleAddAndTestKey = async () => {
-    const lines = inputKeysText
-      .split('\n')
-      .map((k) => k.trim())
-      .filter((k) => k.length > 5);
-
-    if (lines.length === 0) return;
-
-    if (providerId === 'cloudflare' && !cfAccountId.trim()) {
-      const hasEmbedded = lines.some((l) => l.includes(':'));
-      if (!hasEmbedded) {
-        setCfError('Please enter your Cloudflare Account ID.');
-        return;
-      }
-    }
-    setCfError(null);
-
-    // FIXED: Check for duplicate keys before testing
-    const existingKeySet = new Set(keysList.map((k) => k.key));
-    const duplicates: string[] = [];
-    const newLines = lines.filter((line) => {
-      const key = providerId === 'cloudflare' && !line.includes(':') 
-        ? `${cfAccountId.trim()}:${line.trim()}` 
-        : line;
-      
-      if (existingKeySet.has(key)) {
-        duplicates.push(key.slice(0, 12) + '...');
-        return false;
-      }
-      return true;
-    });
-
-    if (newLines.length === 0) {
-      alert(`All ${lines.length} key(s) are already registered:\n${duplicates.join('\n')}`);
-      return;
-    }
-
-    if (duplicates.length > 0) {
-      console.warn(`Skipped ${duplicates.length} duplicate key(s):`, duplicates);
-    }
-
-    setIsProcessing(true);
-    const adapter = getProviderAdapter(providerId);
-    const newEntries: KeyEntry[] = [];
-    const newSavedRecords: ApiKeyRecord[] = [];
-    const baseNow = Date.now();
-
-    for (let i = 0; i < newLines.length; i++) {
-      let rawKey = newLines[i];
-      if (providerId === 'cloudflare' && !rawKey.includes(':') && cfAccountId.trim()) {
-        rawKey = `${cfAccountId.trim()}:${rawKey.trim()}`;
-      }
-      const entryId = crypto.randomUUID();
-      const itemCreatedAt = baseNow + i;
-
-      try {
-        const res = await adapter.testKey(rawKey, selectedModel);
-
-        if (res.success) {
-          // Success / Valid: Immediately create and save to database!
-          const label =
-            customKeyLabel.trim() && newLines.length === 1
-              ? customKeyLabel.trim()
-              : `${currentMeta.name} #${keysList.filter((k) => k.providerId === providerId).length + i + 1}`;
-
-          const record = createApiKeyRecord(
-            providerId,
-            rawKey,
-            label,
-            selectedModel,
-            currentMeta.defaultRpm
-          );
-          record.createdAt = itemCreatedAt;
-          record.status = 'healthy';
-          record.lastLatencyMs = res.latencyMs;
-          if (res.warning) {
-            record.lastError = res.warning;
-          }
-
-          await saveApiKey(record);
-          newSavedRecords.push(record);
-
-          newEntries.push({
-            id: record.id,
-            providerId,
-            key: rawKey,
-            label: record.label,
-            model: selectedModel,
-            rpm: currentMeta.defaultRpm,
-            createdAt: itemCreatedAt,
-            isTesting: false,
-            testStatus: 'success',
-            latencyMs: res.latencyMs,
-            warning: res.warning,
-          });
+        if (editKey.providerId === 'cloudflare' && decrypted.includes(':')) {
+          const [accId, token] = decrypted.split(':');
+          setCfAccountId(accId);
+          setApiKey(token);
         } else {
-          // Test failed
-          newEntries.push({
-            id: entryId,
-            providerId,
-            key: rawKey,
-            label: `${currentMeta.name} (Invalid)`,
-            model: selectedModel,
-            rpm: currentMeta.defaultRpm,
-            createdAt: itemCreatedAt,
-            isTesting: false,
-            testStatus: 'failed',
-            error: res.error || 'Verification failed',
-          });
+          setApiKey(decrypted);
+          setCfAccountId('');
         }
-      } catch (err: any) {
-        newEntries.push({
-          id: entryId,
-          providerId,
-          key: rawKey,
-          label: `${currentMeta.name} (Error)`,
-          model: selectedModel,
-          rpm: currentMeta.defaultRpm,
-          createdAt: itemCreatedAt,
-          isTesting: false,
-          testStatus: 'failed',
-          error: err.message || 'Connection test failed',
-        });
+      } else if (!editKey && open) {
+        setProviderId('gemini');
+        setLabel('');
+        setApiKey('');
+        setCfAccountId('');
+        setModelId(PROVIDERS_META.gemini.defaultModelId);
+        setRpmLimit(PROVIDERS_META.gemini.defaultRpm);
       }
-    }
+    };
+    loadEditKey();
+    return () => {
+      active = false;
+    };
+  }, [editKey, open]);
 
-    if (newSavedRecords.length > 0) {
-      await keyRingScheduler.refreshKeys();
-      onSuccess(newSavedRecords);
-    }
-
-    setKeysList((prev) => [...prev, ...newEntries]);
-    setInputKeysText('');
-    setCustomKeyLabel('');
-    setIsProcessing(false);
+  const handleProviderChange = (newProvider: ProviderType) => {
+    setProviderId(newProvider);
+    const cfg = PROVIDERS_META[newProvider];
+    setModelId(cfg.defaultModelId);
+    setRpmLimit(cfg.defaultRpm);
   };
 
-  const handleTestSingleKey = async (entryId: string) => {
-    setKeysList((prev) =>
-      prev.map((item) =>
-        item.id === entryId ? { ...item, isTesting: true, testStatus: 'idle', error: undefined } : item
-      )
-    );
+  const getCombinedKey = () => {
+    if (providerId === 'cloudflare') {
+      return `${cfAccountId.trim()}:${apiKey.trim()}`;
+    }
+    return apiKey.trim();
+  };
 
-    const target = keysList.find((k) => k.id === entryId);
-    if (!target) return;
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const finalKey = getCombinedKey();
+    if (!apiKey.trim() || (providerId === 'cloudflare' && !cfAccountId.trim())) return;
 
-    try {
-      const adapter = getProviderAdapter(target.providerId);
-      const res = await adapter.testKey(target.key, target.model);
-
-      const newStatus = res.success
-        ? 'healthy'
-        : res.statusCode === 429
-        ? 'cooling_down'
-        : 'invalid';
-      const cooldown = res.statusCode === 429 ? Date.now() + 30000 : undefined;
-
-      await updateApiKey(target.id, {
-        status: newStatus,
-        lastLatencyMs: res.latencyMs,
-        lastError: res.success ? '' : (res.error || 'Verification failed'),
-        cooldownUntil: cooldown,
+    if (editKey) {
+      await updateApiKey(editKey.id, {
+        providerId,
+        label: label.trim() || `${PROVIDERS_META[providerId].name} Key`,
+        key: finalKey,
+        modelId,
+        rpmLimit: Number(rpmLimit) || PROVIDERS_META[providerId].defaultRpm,
+        status: 'healthy',
+        lastError: undefined,
       });
-      await keyRingScheduler.refreshKeys();
-
-      setKeysList((prev) =>
-        prev.map((item) =>
-          item.id === entryId
-            ? {
-                ...item,
-                isTesting: false,
-                testStatus: res.success ? 'success' : 'failed',
-                latencyMs: res.latencyMs,
-                error: res.success ? undefined : (res.error || 'Verification failed'),
-                warning: res.warning,
-              }
-            : item
-        )
+    } else {
+      const record = createApiKeyRecord(
+        providerId,
+        finalKey,
+        label.trim() || undefined,
+        modelId,
+        Number(rpmLimit) || PROVIDERS_META[providerId].defaultRpm,
+        PROVIDERS_META[providerId].defaultRpd
       );
-    } catch (err: any) {
-      await updateApiKey(target.id, {
-        status: 'invalid',
-        lastError: err.message || 'Verification failed',
-      });
-      await keyRingScheduler.refreshKeys();
-
-      setKeysList((prev) =>
-        prev.map((item) =>
-          item.id === entryId
-            ? {
-                ...item,
-                isTesting: false,
-                testStatus: 'failed',
-                error: err.message || 'Verification failed',
-              }
-            : item
-        )
-      );
+      await saveApiKey(record);
     }
+
+    onKeyAdded();
+    onClose();
   };
 
-  const currentProviderKeys = keysList
-    .filter((k) => k.providerId === providerId)
-    .sort((a, b) => a.createdAt - b.createdAt);
-
-  const handleTestAllKeys = async () => {
-    // FIXED: Test in parallel batches of 3 keys at a time
-    const batchSize = 3;
-    for (let i = 0; i < currentProviderKeys.length; i += batchSize) {
-      const batch = currentProviderKeys.slice(i, i + batchSize);
-      await Promise.all(batch.map((item) => handleTestSingleKey(item.id)));
-    }
-  };
-
-  const handleRemoveKey = async (id: string) => {
-    setKeysList((prev) => prev.filter((k) => k.id !== id));
-    await removeApiKey(id);
-    await keyRingScheduler.refreshKeys();
-  };
-
-  const maskKey = (key: string) => {
-    if (!key || key.startsWith('enc:')) return '••••••••';
-    if (key.includes(':')) {
-      const [acc, tok] = key.split(':');
-      const maskedAcc = acc.length > 8 ? `${acc.slice(0, 4)}...${acc.slice(-4)}` : acc;
-      const maskedTok = tok.length > 8 ? `${tok.slice(0, 4)}••••${tok.slice(-4)}` : '••••••••';
-      return `Account: ${maskedAcc} • Token: ${maskedTok}`;
-    }
-    if (key.length <= 8) return '••••••••';
-    return `${key.slice(0, 4)}••••${key.slice(-4)}`;
-  };
+  const currentProvider = PROVIDERS_META[providerId];
+  const isFormValid =
+    apiKey.trim().length > 0 && (providerId !== 'cloudflare' || cfAccountId.trim().length > 0);
 
   return (
     <Dialog
       open={open}
       onClose={onClose}
-      title={isRtl ? 'إضافة مفتاح API' : 'Add API Key'}
-      className="max-w-2xl"
+      title={
+        editKey
+          ? language === 'ar'
+            ? 'تعديل مفتاح API'
+            : 'Edit API Key'
+          : language === 'ar'
+          ? 'إضافة مفتاح API'
+          : 'Add API Key'
+      }
+      size="sm"
     >
-      <div className="space-y-4 text-xs">
-        {/* 1. Provider Select (Clean, no confusing generic RPM labels) */}
-        <div className="space-y-1.5">
-          <label className="font-medium text-foreground block">{t.aiProvider || 'AI Provider'}</label>
-          <div dir="ltr" className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-left">
-            {PROVIDER_ORDER.map((pid) => {
-              const meta = PROVIDERS_META[pid];
-              const isSelected = providerId === pid;
-              const count = keysList.filter((k) => k.providerId === pid).length;
-              return (
-                <button
-                  key={pid}
-                  type="button"
-                  onClick={() => handleProviderSelect(pid)}
-                  className={`p-2.5 rounded-lg border text-left transition cursor-pointer flex flex-col gap-0.5 ${
-                    isSelected
-                      ? 'border-foreground bg-accent font-medium'
-                      : 'border-border bg-card hover:bg-accent/40 text-muted-foreground'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-foreground text-xs font-semibold">{meta.name}</span>
-                    {count > 0 && (
-                      <Badge variant="secondary" className="text-[10px] py-0 px-1.5 font-mono">
-                        {count}
-                      </Badge>
-                    )}
-                  </div>
-                  <span className="text-[10px] text-muted-foreground line-clamp-1">
-                    {meta.badge}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Dedicated Cloudflare Account ID Field */}
-        {providerId === 'cloudflare' && (
-          <div className="space-y-1.5 p-3 rounded-lg border border-border bg-secondary/25">
-            <div className="flex items-center justify-between">
-              <label className="font-semibold text-foreground flex items-center gap-1.5">
-                <span>{t.cfAccountId || 'Cloudflare Account ID'}</span>
-                <span className="text-red-400">*</span>
-              </label>
-              <a
-                href="https://dash.cloudflare.com/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[11px] text-muted-foreground hover:text-foreground underline"
-              >
-                {t.findCfDashboard || 'Find in Cloudflare Dashboard'}
-              </a>
-            </div>
-            <Input
-              dir="ltr"
-              type="text"
-              placeholder={t.cfAccountPlaceholder || 'e.g. 724b4f792d39b271ed1b3b15364f1ce2'}
-              value={cfAccountId}
-              onChange={(e) => {
-                setCfAccountId((e.target.value ?? '').trim());
-                if (cfError) setCfError(null);
-              }}
-              className="h-8 text-xs font-mono bg-card text-left"
-            />
-            {cfError && <p className="text-[11px] text-red-400 font-medium">{cfError}</p>}
-          </div>
-        )}
-
-        {/* 2. Key Input Area with Instant Auto-Verify Button */}
+      <form onSubmit={handleSave} className="space-y-3.5 text-xs">
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
             <label className="font-medium text-foreground">
-              {providerId === 'cloudflare'
-                ? (t.cfApiToken || 'Cloudflare API Token')
-                : (t.apiSecretKey || 'API Secret Key')}
+              {language === 'ar' ? 'مزود الخدمة (Provider)' : 'AI Provider'}
             </label>
             <a
-              href={currentMeta.signupUrl}
+              href={currentProvider.signupUrl || currentProvider.docsUrl}
               target="_blank"
-              rel="noopener noreferrer"
-              className="text-[11px] text-muted-foreground hover:text-foreground underline"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
             >
-              {(t.getFreeKeyFrom || 'Get free key from {name}').replace('{name}', currentMeta.name)}
+              <span>{language === 'ar' ? 'الحصول على مفتاح' : 'Get API Key'}</span>
+              <ExternalLink className="w-3 h-3" />
             </a>
           </div>
-
-          {/* Optional Custom Label for single-key addition */}
-          <div>
-            <Input
-              type="text"
-              placeholder={isRtl ? 'اسم أو تصنيف المفتاح (اختياري، مثلاً: حسابي الأساسي)' : 'Custom Key Label (optional, e.g. "Main Account Key")'}
-              value={customKeyLabel}
-              onChange={(e) => setCustomKeyLabel(e.target.value)}
-              className="h-8 text-xs bg-card"
-            />
-          </div>
-
-          <div dir="ltr" className="flex flex-col sm:flex-row gap-2 text-left">
-            <textarea
-              rows={2}
-              placeholder={
-                providerId === 'cloudflare'
-                  ? 'Paste your Cloudflare API Token (e.g. cfut_...)...'
-                  : 'Paste your API key here (or multiple keys, one per line)...'
-              }
-              value={inputKeysText}
-              onChange={(e) => setInputKeysText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                  e.preventDefault();
-                  handleAddAndTestKey();
-                }
-              }}
-              className="flex-1 p-2 text-xs font-mono rounded-md border border-border bg-card text-foreground focus:outline-hidden focus:ring-1 focus:ring-ring resize-none w-full text-left"
-            />
-            <Button
-              type="button"
-              size="sm"
-              onClick={handleAddAndTestKey}
-              disabled={!(inputKeysText ?? '').trim() || isProcessing}
-              className="w-full sm:w-auto self-stretch sm:self-end h-8 gap-1.5 text-xs font-semibold px-3"
-            >
-              {isProcessing ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  {t.testingAndAdding || 'Testing & Adding...'}
-                </>
-              ) : (
-                <>
-                  <Plus className="w-3.5 h-3.5" />
-                  {t.addKey || 'Add Key'}
-                </>
-              )}
-            </Button>
-          </div>
+          <Select value={providerId} onValueChange={(v) => handleProviderChange(v as ProviderType)}>
+            <SelectTrigger className="w-full h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60">
+              {PROVIDER_ORDER.map((id) => {
+                const p = PROVIDERS_META[id];
+                return (
+                  <SelectItem key={p.id} value={p.id} className="text-xs">
+                    {p.name}
+                  </SelectItem>
+                );
+              })}
+            </SelectContent>
+          </Select>
         </div>
 
-        {/* 3. Vision Model Selector with Official shadcn Select */}
         <div className="space-y-1.5">
-          <div className="flex items-center justify-between">
-            <label className="font-medium text-foreground">{t.visionModel || 'Vision Model'}</label>
-            {isFetchingModels && (
-              <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-mono">
-                <Loader2 className="w-2.5 h-2.5 animate-spin" /> Fetching models...
-              </span>
-            )}
-            {fetchNotice && !isFetchingModels && (
-              <span className="text-[10px] text-foreground flex items-center gap-1 font-mono">
-                <Sparkles className="w-2.5 h-2.5" /> {fetchNotice}
-              </span>
-            )}
+          <label className="font-medium text-foreground block">
+            {language === 'ar' ? 'اسم تعريفي' : 'Key Label'}
+          </label>
+          <Input
+            placeholder={
+              language === 'ar'
+                ? `مثال: مفتاح ${currentProvider.name} الأساسي`
+                : `e.g. ${currentProvider.name} Primary`
+            }
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            className="h-8 text-xs"
+          />
+        </div>
+
+        {providerId === 'cloudflare' && (
+          <div className="space-y-1.5">
+            <label className="font-medium text-foreground block">
+              {language === 'ar' ? 'معرّف حساب Cloudflare (Account ID)' : 'Cloudflare Account ID'}
+            </label>
+            <Input
+              dir="ltr"
+              placeholder="e.g. 8a9b0c1d2e3f4g5h6i7j8k9l0m1n2o3p"
+              value={cfAccountId}
+              onChange={(e) => setCfAccountId(e.target.value)}
+              required
+              className="font-mono h-8 text-xs text-left"
+            />
           </div>
+        )}
 
-          <div dir="ltr" className="text-left">
-            <Select
-              value={selectedModel}
-              onValueChange={(val) => {
-                setSelectedModel(val);
-                setKeysList((prev) =>
-                  prev.map((k) => (k.providerId === providerId ? { ...k, model: val } : k))
-                );
-              }}
-            >
-              <SelectTrigger className="h-8 text-xs bg-card text-left">
-                <SelectValue placeholder="Select a vision model" />
+        <div className="space-y-1.5">
+          <label className="font-medium text-foreground block">
+            {providerId === 'cloudflare'
+              ? language === 'ar'
+                ? 'رمز Cloudflare API'
+                : 'Cloudflare API Token'
+              : language === 'ar'
+              ? 'مفتاح API'
+              : 'API Key'}
+          </label>
+          <Input
+            dir="ltr"
+            type="password"
+            placeholder={providerId === 'cloudflare' ? 'API Token...' : 'AIzaSy... / gsk_...'}
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            required
+            className="font-mono h-8 text-xs text-left"
+          />
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+          <div className="sm:col-span-2 space-y-1.5">
+            <label className="font-medium text-foreground block">
+              {language === 'ar' ? 'نموذج الرؤية (Vision Model)' : 'Vision Model'}
+            </label>
+            <Select value={modelId} onValueChange={(v) => setModelId(v)}>
+              <SelectTrigger className="w-full font-mono text-xs h-8">
+                <SelectValue />
               </SelectTrigger>
-              <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60 text-left">
-                {availableModels.map((m) => {
-                  const isDefault = m === currentMeta.defaultModelId;
-                  const isFree =
-                    m.includes(':free') ||
-                    m.startsWith('openrouter/free') ||
-                    m.includes('flash-lite') ||
-                    m.includes('qwen');
-                  const displayName = MODEL_DISPLAY_NAMES[m] || m;
-
-                  return (
-                    <SelectItem key={m} value={m} className="text-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono">{displayName}</span>
-                        {isDefault && (
-                          <Badge variant="outline" className="text-[9px] py-0 px-1">
-                            Recommended
-                          </Badge>
-                        )}
-                        {isFree && (
-                          <Badge variant="secondary" className="text-[9px] py-0 px-1 font-mono">
-                            Free
-                          </Badge>
-                        )}
-                      </div>
-                    </SelectItem>
-                  );
-                })}
+              <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60">
+                {currentProvider.recommendedVisionModels.map((m) => (
+                  <SelectItem key={m} value={m} className="font-mono text-xs">
+                    {MODEL_DISPLAY_NAMES[m] || m}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
-        </div>
 
-        {/* 4. Active / Tested Keys List for Selected Provider */}
-        <div className="space-y-2 pt-2 border-t border-border">
-          <div className="flex items-center justify-between">
-            <span className="font-medium text-foreground text-xs">
-              {(t.registeredKeys || '{name} Keys ({count})')
-                .replace('{name}', currentMeta.name)
-                .replace('{count}', String(currentProviderKeys.length))}
-            </span>
-            {currentProviderKeys.length > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleTestAllKeys}
-                className="h-7 text-xs gap-1"
-              >
-                <RefreshCw className="w-3 h-3" />
-                {(t.testProviderKeys || 'Test {name} Keys').replace('{name}', currentMeta.name)}
-              </Button>
-            )}
+          <div className="space-y-1.5">
+            <label className="font-medium text-foreground block">
+              {language === 'ar' ? 'حد الطلبات/دقيقة (RPM)' : 'RPM Limit'}
+            </label>
+            <Input
+              dir="ltr"
+              type="number"
+              min={1}
+              max={500}
+              value={rpmLimit}
+              onChange={(e) => setRpmLimit(Number(e.target.value))}
+              className="font-mono tabular-nums h-8 text-xs text-left"
+            />
           </div>
-
-          {currentProviderKeys.length > 0 ? (
-            <div dir="ltr" className="max-h-48 overflow-y-auto space-y-1.5 rounded-lg border border-border p-2 bg-card text-left">
-              {currentProviderKeys.map((entry, index) => {
-                const isLastAdded =
-                  index === currentProviderKeys.length - 1 && currentProviderKeys.length > 1;
-
-                return (
-                  <div
-                    key={entry.id}
-                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2 rounded-md bg-secondary/30 border border-border text-xs"
-                  >
-                    <div className="space-y-0.5 min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-semibold">
-                          #{index + 1}
-                        </span>
-                        <span className="font-mono text-foreground font-semibold truncate">
-                          {maskKey(entry.key)}
-                        </span>
-                        <Badge variant="outline" className="text-[9px] py-0 font-mono truncate max-w-[150px] sm:max-w-none">
-                          {MODEL_DISPLAY_NAMES[entry.model] || entry.model}
-                        </Badge>
-                        {isLastAdded && (
-                          <Badge
-                            variant="secondary"
-                            className="text-[9px] py-0 px-1 font-mono text-emerald-400 border border-emerald-500/20"
-                          >
-                            Last Added
-                          </Badge>
-                        )}
-                      </div>
-                    {entry.warning && (
-                      <p
-                        className="text-[10px] text-amber-400/90 truncate max-w-sm"
-                        title={entry.warning}
-                      >
-                        {entry.warning}
-                      </p>
-                    )}
-                    {entry.error && entry.testStatus !== 'success' && (
-                      <p
-                        className="text-[10px] text-destructive truncate max-w-sm"
-                        title={entry.error}
-                      >
-                        {entry.error.toLowerCase().includes('timed out')
-                          ? 'Verification timed out. The provider endpoint was unreachable or slow.'
-                          : entry.error}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-auto border-t sm:border-t-0 border-border/40 pt-1 sm:pt-0 w-full sm:w-auto justify-end">
-                    {entry.testStatus === 'success' && !entry.warning && (
-                      <Badge
-                        variant="outline"
-                        className="text-[10px] py-0 gap-1 text-emerald-500 border-emerald-500/30"
-                      >
-                        <CheckCircle2 className="w-3 h-3" />
-                        {entry.latencyMs ? `${entry.latencyMs}ms` : 'Healthy'}
-                      </Badge>
-                    )}
-
-                    {entry.testStatus === 'success' && entry.warning && (
-                      <Badge
-                        variant="outline"
-                        className="text-[10px] py-0 gap-1 text-amber-500 border-amber-500/30"
-                        title={entry.warning}
-                      >
-                        <AlertTriangle className="w-3 h-3" />
-                        Valid (Restricted)
-                      </Badge>
-                    )}
-
-                    {entry.testStatus === 'failed' && (
-                      <Badge variant="destructive" className="text-[10px] py-0 gap-1">
-                        <AlertCircle className="w-3 h-3" /> Failed
-                      </Badge>
-                    )}
-
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleTestSingleKey(entry.id)}
-                      disabled={entry.isTesting}
-                      className="h-6 px-2 text-[10px]"
-                    >
-                      {entry.isTesting ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      ) : (
-                        'Test'
-                      )}
-                    </Button>
-
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleRemoveKey(entry.id)}
-                      className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                      title="Remove key"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
-            </div>
-          ) : (
-            <div className="p-4 rounded-lg border border-dashed border-border bg-muted/10 text-center text-xs text-muted-foreground">
-              {isRtl
-                ? `لم يتم تسجيل مفاتيح لـ ${currentMeta.name} بعد. الصق مفتاحك بالأعلى واضغط على "إضافة مفتاح".`
-                : `No keys registered for ${currentMeta.name} yet. Paste your key above and click "+ Add Key".`}
-            </div>
-          )}
         </div>
 
-        {/* Clean Footer */}
-        <div className="flex items-center justify-end pt-2 border-t border-border">
-          <Button size="sm" onClick={onClose} className="px-6 font-semibold">
-            {t.done || 'Done'}
+        <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+          <Button type="button" variant="ghost" size="sm" onClick={onClose} className="h-8 text-xs cursor-pointer">
+            {language === 'ar' ? 'إلغاء' : 'Cancel'}
+          </Button>
+          <Button type="submit" size="sm" disabled={!isFormValid} className="h-8 text-xs font-semibold cursor-pointer">
+            {editKey ? (language === 'ar' ? 'تحديث' : 'Update Key') : (language === 'ar' ? 'حفظ المفتاح' : 'Save Key')}
           </Button>
         </div>
-      </div>
+      </form>
     </Dialog>
   );
 };

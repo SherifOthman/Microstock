@@ -11,8 +11,6 @@ describe('Tier 3 UI State & Studio Workflow Tests', () => {
   const defaultToolbarProps = {
     searchQuery: '',
     onSearchChange: vi.fn(),
-    cardViewMode: 'detailed' as const,
-    onViewModeChange: vi.fn(),
     totalAssetsCount: 5,
     completedCount: 5,
     pendingCount: 0,
@@ -106,19 +104,6 @@ describe('Tier 3 UI State & Studio Workflow Tests', () => {
       expect(onRetryFailed).toHaveBeenCalledTimes(1);
     });
 
-    it('triggers view mode change between compact and detailed', () => {
-      const onViewModeChange = vi.fn();
-      render(
-        <LanguageProvider>
-          <StudioToolbar {...defaultToolbarProps} onViewModeChange={onViewModeChange} />
-        </LanguageProvider>
-      );
-
-      const compactBtn = screen.getByTitle(/compact/i);
-      fireEvent.click(compactBtn);
-      expect(onViewModeChange).toHaveBeenCalledWith('compact');
-    });
-
     it('triggers search query input changes', () => {
       const onSearchChange = vi.fn();
       render(
@@ -127,7 +112,7 @@ describe('Tier 3 UI State & Studio Workflow Tests', () => {
         </LanguageProvider>
       );
 
-      const input = screen.getByPlaceholderText(/search/i);
+      const input = screen.getByPlaceholderText(/filter|search/i);
       fireEvent.change(input, { target: { value: 'sunset' } });
       expect(onSearchChange).toHaveBeenCalledWith('sunset');
     });
@@ -180,41 +165,41 @@ describe('Tier 3 UI State & Studio Workflow Tests', () => {
     });
   });
 
-  describe('AssetCard Dreamstime Dedicated Row Layout', () => {
-    it('renders Dreamstime categories on their own row cleanly', () => {
-      const mockRec: MasterMetadataRecord = {
-        id: 'asset-card-test',
-        filename: 'solar_panel.jpg',
-        batchId: 'b1',
-        thumbnailBase64: '',
-        isAiGenerated: true,
-        baseTitle: 'Solar Panel Array on Commercial Roof',
-        detailedDescription: 'Commercial rooftop solar panel installation.',
-        rankedKeywords: ['solar', 'panel', 'energy'],
-        categories: {
-          adobeCategoryId: 19,
-          shutterstockCategories: ['Technology', 'Industrial'],
-          dreamstimeCategory1: 95, // Power and energy
-          dreamstimeCategory2: 99, // Environment
-          dreamstimeCategory3: 212, // AI generated
-        },
-        status: 'completed',
-        createdAt: 1000,
-      };
+  describe('Unified Single-Row AssetCard & Expandable Drawer', () => {
+    const mockRec: MasterMetadataRecord = {
+      id: 'asset-card-test',
+      filename: 'solar_panel.jpg',
+      batchId: 'b1',
+      thumbnailBase64: '',
+      isAiGenerated: true,
+      baseTitle: 'Solar Panel Array on Commercial Roof',
+      detailedDescription: 'Commercial rooftop solar panel installation.',
+      rankedKeywords: ['solar', 'panel', 'energy'],
+      categories: {
+        adobeCategoryId: 19,
+        shutterstockCategories: ['Technology', 'Industrial'],
+        dreamstimeCategory1: 95,
+        dreamstimeCategory2: 99,
+        dreamstimeCategory3: 212,
+      },
+      status: 'completed',
+      createdAt: 1000,
+    };
 
-      const asset = {
-        id: 'asset-card-test',
-        filename: 'solar_panel.jpg',
-        status: 'completed' as const,
-        masterRecord: mockRec,
-      };
+    const asset = {
+      id: 'asset-card-test',
+      filename: 'solar_panel.jpg',
+      status: 'completed' as const,
+      masterRecord: mockRec,
+      createdAt: 1000,
+    };
 
+    it('renders dense single-row inline title and keyword count by default', () => {
       render(
         <LanguageProvider>
           <AssetCard
             asset={asset}
             rec={mockRec}
-            viewMode="detailed"
             selectedPlatforms={['adobe', 'shutterstock', 'dreamstime']}
             copiedKey={null}
             onCopyText={vi.fn()}
@@ -225,11 +210,33 @@ describe('Tier 3 UI State & Studio Workflow Tests', () => {
         </LanguageProvider>
       );
 
-      // Adobe category should be visible
+      expect(screen.getByDisplayValue('Solar Panel Array on Commercial Roof')).toBeTruthy();
+      expect(screen.getByText(/3 tags/i)).toBeTruthy();
+      expect(screen.queryByText(/Dreamstime:/i)).toBeNull();
+    });
+
+    it('expands drawer on chevron click to show full editable Description textarea and agency categories', () => {
+      render(
+        <LanguageProvider>
+          <AssetCard
+            asset={asset}
+            rec={mockRec}
+            selectedPlatforms={['adobe', 'shutterstock', 'dreamstime']}
+            copiedKey={null}
+            onCopyText={vi.fn()}
+            onCopyAll={vi.fn()}
+            onDelete={vi.fn()}
+            onRegenerate={vi.fn()}
+          />
+        </LanguageProvider>
+      );
+
+      const expandBtn = screen.getByRole('button', { name: /expand details/i });
+      fireEvent.click(expandBtn);
+
+      expect(screen.getByDisplayValue('Commercial rooftop solar panel installation.')).toBeTruthy();
       expect(screen.getByText(/Adobe:/i)).toBeTruthy();
-      // Shutterstock category should be visible
       expect(screen.getByText(/Shutterstock:/i)).toBeTruthy();
-      // Dreamstime category badge should be visible
       expect(screen.getByText(/Dreamstime:/i)).toBeTruthy();
     });
   });

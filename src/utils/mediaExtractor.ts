@@ -21,7 +21,10 @@ export interface ExtractedMediaInfo {
 /**
  * Identifies the media type based on filename extension
  */
-export function getMediaTypeFromFilename(filename: string): MediaType {
+export function getMediaTypeFromFilename(filename: string, file?: File): MediaType {
+  if (file && (file as any).__sourceMediaType === 'vector') {
+    return 'vector';
+  }
   const ext = filename.split('.').pop()?.toLowerCase() || '';
   if (['mp4', 'mov', 'webm', 'avi', 'mkv', 'm4v'].includes(ext)) {
     return 'video';
@@ -33,7 +36,9 @@ export function getMediaTypeFromFilename(filename: string): MediaType {
 }
 
 /**
- * Extracts a compressed thumbnail and metadata from an image file
+ * Extracts a compressed thumbnail and metadata from an image file.
+ * Uses hardware-accelerated createImageBitmap when available to avoid allocating
+ * multi-megabyte Base64 strings in main-thread memory for every photo.
  */
 export async function processImageFile(
   file: File,
@@ -43,6 +48,55 @@ export async function processImageFile(
   if (!file || file.size === 0) {
     throw new Error(`Image file "${file?.name || 'unknown'}" is corrupted or empty (0 bytes)`);
   }
+
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bitmap = await createImageBitmap(file);
+      const origWidth = bitmap.width;
+      const origHeight = bitmap.height;
+      let width = origWidth;
+      let height = origHeight;
+
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, width);
+      canvas.height = Math.max(1, height);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        bitmap.close();
+        throw new Error('Failed to create canvas context');
+      }
+
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close();
+
+      const dataUrl = canvas.toDataURL('image/jpeg', quality);
+      const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
+      const compressedSizeBytes = Math.round((base64.length * 3) / 4);
+
+      return {
+        mediaType: 'image',
+        thumbnailBase64: base64,
+        thumbnailDataUrl: dataUrl,
+        originalSizeBytes: file.size,
+        compressedSizeBytes,
+        width: origWidth,
+        height: origHeight,
+      };
+    } catch {
+      // Fall back to FileReader + Image below (e.g. in JSDOM test environments)
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Failed to read image file'));
@@ -262,6 +316,18 @@ export async function processVideoFile(
 }
 
 /**
+ * Helper to convert a Blob into a Base64 Data URL
+ */
+function blobToBase64DataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Failed to encode vector preview blob to Base64'));
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
  * Handles EPS / Vector files with PostScript Level 2/3 vector rasterizer
  */
 export async function processVectorFile(
@@ -286,24 +352,39 @@ export async function processVectorFile(
   // Use the True Multi-Tier EPS 10 Rasterizer Engine!
   try {
     const epsResult = await rasterizeEpsFile(file, maxDim, quality);
-    
-    // sourceTier 'vector' from Tier 1 (PS paths) or 'binary_preview'/'xmp' from Tier 2 = real content
-    // sourceTier 'vector' from Tier 3 fallback badge = no real preview (detected by pathOpCount = 0)
-    const isRealContent =
-      epsResult.sourceTier === 'binary_preview' ||
-      epsResult.sourceTier === 'xmp' ||
-      (epsResult.sourceTier === 'vector' && epsResult.pathOpCount !== undefined && epsResult.pathOpCount >= 10);
 
-    return {
-      mediaType: 'vector',
-      thumbnailBase64: epsResult.dataUrl.replace(/^data:image\/jpeg;base64,/, ''),
-      thumbnailDataUrl: epsResult.dataUrl,
-      originalSizeBytes: file.size,
-      compressedSizeBytes: Math.round((epsResult.dataUrl.length * 3) / 4),
-      width: epsResult.width,
-      height: epsResult.height,
-      hasRealPreview: isRealContent,
-    };
+    // Ensure we always store a true Base64 data URL for AI Vision APIs & IndexedDB,
+    // and immediately revoke any temporary blob: objectUrl created for previewing.
+    let base64DataUrl = epsResult.dataUrl || '';
+    if (!base64DataUrl.startsWith('data:image/') && epsResult.blob) {
+      base64DataUrl = await blobToBase64DataUrl(epsResult.blob);
+    }
+    if (epsResult.objectUrl && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+      try {
+        URL.revokeObjectURL(epsResult.objectUrl);
+      } catch {
+        // ignore
+      }
+    }
+
+    if (base64DataUrl.startsWith('data:image/')) {
+      const pureBase64 = base64DataUrl.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
+      const isRealContent =
+        epsResult.sourceTier === 'binary_preview' ||
+        epsResult.sourceTier === 'xmp' ||
+        (epsResult.sourceTier === 'vector' && epsResult.pathOpCount !== undefined && epsResult.pathOpCount >= 10);
+
+      return {
+        mediaType: 'vector',
+        thumbnailBase64: pureBase64,
+        thumbnailDataUrl: base64DataUrl,
+        originalSizeBytes: file.size,
+        compressedSizeBytes: Math.round((pureBase64.length * 3) / 4),
+        width: epsResult.width,
+        height: epsResult.height,
+        hasRealPreview: isRealContent,
+      };
+    }
   } catch (err) {
     // EPS rasterization fallback
   }
@@ -369,11 +450,20 @@ export async function extractMediaInfo(
   if (!file || file.size === 0) {
     throw new Error(`Media file "${file?.name || 'unknown'}" is corrupted or empty (0 bytes)`);
   }
-  const type = getMediaTypeFromFilename(file.name);
+  const type = getMediaTypeFromFilename(file.name, file);
   if (type === 'video') {
     return await processVideoFile(file, maxDim, quality);
   }
   if (type === 'vector') {
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    if ((file as any).__sourceMediaType === 'vector' && (ext === 'jpg' || ext === 'jpeg' || ext === 'png')) {
+      const res = await processImageFile(file, maxDim, quality);
+      return {
+        ...res,
+        mediaType: 'vector',
+        hasRealPreview: true,
+      };
+    }
     return await processVectorFile(file, companionPreviewFile, maxDim, quality);
   }
   return await processImageFile(file, maxDim, quality);

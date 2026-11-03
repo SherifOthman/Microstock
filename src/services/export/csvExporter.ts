@@ -25,6 +25,24 @@ export type { SupportedPlatform, ExportPlatformConfig };
 export { PLATFORMS_CONFIG };
 
 /**
+ * Filters a batch of MasterMetadataRecord items to strictly retain only completed records
+ * with valid generated metadata (preventing blank pending/failed rows in agency CSVs).
+ */
+export function filterCompletedExportRecords(records: MasterMetadataRecord[]): MasterMetadataRecord[] {
+  if (!Array.isArray(records)) return [];
+  return records.filter((rec) => {
+    if (!rec) return false;
+    const status = String(rec.status || 'completed').toLowerCase();
+    if (status === 'pending' || status === 'processing' || status === 'error' || status === 'failed') {
+      return false;
+    }
+    const hasTitle = Boolean(rec.baseTitle && rec.baseTitle.trim().length > 0);
+    const hasKeywords = Array.isArray(rec.rankedKeywords) && rec.rankedKeywords.length > 0;
+    return hasTitle || hasKeywords;
+  });
+}
+
+/**
  * Deterministically generates CSV strings for selected platforms from the single Master Metadata records
  */
 export function generatePlatformCsv(
@@ -37,7 +55,9 @@ export function generatePlatformCsv(
   const cleanBatchName = (batchName ?? '').replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
   let filename = `${cleanBatchName}_${config.filenameSuffix}`;
 
-  if (records.length === 0) {
+  const completedRecords = filterCompletedExportRecords(records);
+
+  if (completedRecords.length === 0) {
     return {
       platformId,
       platformName: config.name,
@@ -54,15 +74,15 @@ export function generatePlatformCsv(
 
   switch (platformId) {
     case 'adobe':
-      rows = transformForAdobeStock(records);
+      rows = transformForAdobeStock(completedRecords);
       break;
 
     case 'freepik':
-      rows = transformForFreepik(records, options?.freepik);
+      rows = transformForFreepik(completedRecords, options?.freepik);
       break;
 
     case 'shutterstock': {
-      const res = transformForShutterstock(records, options?.shutterstock);
+      const res = transformForShutterstock(completedRecords, options?.shutterstock);
       rows = res.rows;
       isBlocked = res.isBlocked;
       blockedReason = res.blockedReason;
@@ -70,7 +90,7 @@ export function generatePlatformCsv(
     }
 
     case 'vecteezy':
-      rows = transformForVecteezy(records, options?.vecteezy);
+      rows = transformForVecteezy(completedRecords, options?.vecteezy);
       break;
 
     case 'dreamstime': {
@@ -80,8 +100,8 @@ export function generatePlatformCsv(
       const isVideoRec = (r: MasterMetadataRecord) =>
         r.mediaType === 'video' || /\.(mp4|mov|webm|mkv|m4v)$/i.test(r.filename ?? '');
 
-      const imageRecords = records.filter((r) => !isVideoRec(r));
-      const videoRecords = records.filter((r) => isVideoRec(r));
+      const imageRecords = completedRecords.filter((r) => !isVideoRec(r));
+      const videoRecords = completedRecords.filter((r) => isVideoRec(r));
 
       if (imageRecords.length === 0 && videoRecords.length > 0) {
         // Pure video batch
@@ -115,7 +135,7 @@ export function generatePlatformCsv(
     }
 
     case '123rf':
-      rows = transformFor123rf(records, options?.['123rf']);
+      rows = transformFor123rf(completedRecords, options?.['123rf']);
       break;
   }
 
@@ -262,3 +282,39 @@ export async function saveCsvToDirectory(
     onProgress: (done, total) => onProgress?.(done, total),
   });
 }
+
+/**
+ * Generates and saves all selected platform CSVs directly to a local directory via Native Desktop FS Bridge
+ */
+export async function exportAllCsvsToDirectory(
+  platforms: SupportedPlatform[],
+  records: MasterMetadataRecord[],
+  batchName = 'stock_metadata',
+  options?: UniversalTransformOptions,
+  folderName = '_Metadata_CSVs',
+  onProgress?: (done: number, total: number) => void
+): Promise<{ success: boolean; savedCount: number; blockedCount: number; error?: string; canceled?: boolean }> {
+  const completedRecords = filterCompletedExportRecords(records);
+  if (completedRecords.length === 0) {
+    throw new Error('No completed assets with valid metadata are ready to export.');
+  }
+
+  const results: PlatformExportResult[] = [];
+  let blockedCount = 0;
+
+  for (const pid of platforms) {
+    const res = generatePlatformCsv(pid, completedRecords, batchName, options);
+    if (res.isBlocked) {
+      blockedCount++;
+      continue;
+    }
+    results.push(res);
+  }
+
+  const saveRes = await saveCsvToDirectory(results, folderName, onProgress);
+  return {
+    ...saveRes,
+    blockedCount,
+  };
+}
+

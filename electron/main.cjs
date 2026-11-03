@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawn, spawnSync } = require('child_process');
+const { sqliteDb } = require('./sqliteDb.cjs');
 
 let mainWindow = null;
 
@@ -194,6 +195,13 @@ app.on('window-all-closed', () => {
 });
 
 function setupIpcHandlers() {
+  sqliteDb.init(app);
+
+  // Native SQLite Relational Database RPC Bridge
+  ipcMain.handle('db:invoke', async (_event, method, ...args) => {
+    return sqliteDb.invoke(method, ...args);
+  });
+
   // Window Control IPC
   ipcMain.on('window-minimize', () => {
     if (mainWindow) mainWindow.minimize();
@@ -590,40 +598,106 @@ function setupIpcHandlers() {
     }
   });
 
-  // IPC: High-Fidelity Native EPS to JPG Rasterization via Ghostscript
+  // Asynchronous Ghostscript Process Pool (prevents blocking Electron Main Process event loop)
+  const MAX_GS_CONCURRENCY = Math.min(3, Math.max(1, (os.cpus() ? os.cpus().length : 4) - 1));
+  let activeGsProcesses = 0;
+  const gsWaitQueue = [];
+
+  function acquireGsSlot() {
+    if (activeGsProcesses < MAX_GS_CONCURRENCY) {
+      activeGsProcesses++;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      gsWaitQueue.push(resolve);
+    });
+  }
+
+  function releaseGsSlot() {
+    activeGsProcesses = Math.max(0, activeGsProcesses - 1);
+    if (gsWaitQueue.length > 0 && activeGsProcesses < MAX_GS_CONCURRENCY) {
+      const next = gsWaitQueue.shift();
+      if (next) {
+        activeGsProcesses++;
+        next();
+      }
+    }
+  }
+
+  function runGhostscriptAsync(gsBinary, gsArgs, timeoutMs = 25000) {
+    return new Promise((resolve) => {
+      let settled = false;
+      let stdout = '';
+      let stderr = '';
+
+      const child = spawn(gsBinary, gsArgs, {
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          try {
+            child.kill('SIGKILL');
+          } catch {}
+          resolve({ status: -1, stdout, stderr: stderr || 'Ghostscript timed out after 25s' });
+        }
+      }, timeoutMs);
+
+      if (child.stdout) {
+        child.stdout.on('data', (chunk) => {
+          if (stdout.length < 65536) stdout += chunk.toString();
+        });
+      }
+      if (child.stderr) {
+        child.stderr.on('data', (chunk) => {
+          if (stderr.length < 65536) stderr += chunk.toString();
+        });
+      }
+
+      child.on('error', (err) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve({ status: -1, stdout, stderr: err.message || 'Failed to spawn Ghostscript' });
+        }
+      });
+
+      child.on('close', (code) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve({ status: code ?? -1, stdout, stderr });
+        }
+      });
+    });
+  }
+
+  // IPC: High-Fidelity Native EPS to JPG Rasterization via Ghostscript (Non-Blocking Async Pool)
   ipcMain.handle('eps:rasterizeNative', async (event, payload) => {
+    const { fileBuffer, fileName } = payload || {};
+    if (!fileBuffer) {
+      return { success: false, error: 'No EPS buffer provided' };
+    }
+
+    const gsBinary = findGhostscriptExecutable();
+    if (!gsBinary) {
+      return {
+        success: false,
+        error: 'Ghostscript binary not found. Please install Ghostscript or place gswin64c.exe in Program Files.',
+      };
+    }
+
+    await acquireGsSlot();
+    const tempDir = os.tmpdir();
+    const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const tempEps = path.join(tempDir, `eps_input_${uniqueId}.eps`);
+    const tempJpg = path.join(tempDir, `eps_out_${uniqueId}.jpg`);
+
     try {
-      const { fileBuffer, fileName } = payload;
-      if (!fileBuffer) {
-        return { success: false, error: 'No EPS buffer provided' };
-      }
+      await fs.promises.writeFile(tempEps, Buffer.from(fileBuffer));
 
-      const gsBinary = findGhostscriptExecutable();
-      if (!gsBinary) {
-        return {
-          success: false,
-          error: 'Ghostscript binary not found. Please install Ghostscript or place gswin64c.exe in Program Files.',
-        };
-      }
-
-      const tempDir = os.tmpdir();
-      const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-      const tempEps = path.join(tempDir, `eps_input_${uniqueId}.eps`);
-      const tempJpg = path.join(tempDir, `eps_out_${uniqueId}.jpg`);
-
-      writeAndFlushFileSync(tempEps, Buffer.from(fileBuffer));
-
-      // Ghostscript execution matching Adobe Illustrator "Export As" (300 DPI, DeviceRGB, Art-Optimized):
-      // -dSAFER -dBATCH -dNOPAUSE: Unattended execution sandbox
-      // -dEPSCrop: Crop strictly to Artboard / %%BoundingBox
-      // -r300: 300 DPI rasterization (multiplies vector points for commercial microstock resolution)
-      // -sDEVICE=jpeg: JPEG output
-      // -dJPEGQ=100: Maximum JPEG quality (100% / zero compression artifacts)
-      // -dTextAlphaBits=4: 4-bit font supersampling anti-aliasing
-      // -dGraphicsAlphaBits=4: 4-bit vector graphics supersampling anti-aliasing (smooth curves, no jagged edges)
-      // -sColorConversionStrategy=RGB: Enforces RGB color conversion
-      // -dProcessColorModel=/DeviceRGB: Enforces sRGB device color model (mandatory for microstock)
-      // -dBackgroundColor=16#FFFFFF: Pure white background (#FFFFFF)
       const gsArgs = [
         '-dSAFER',
         '-dBATCH',
@@ -641,20 +715,14 @@ function setupIpcHandlers() {
         tempEps,
       ];
 
-      const proc = spawnSync(gsBinary, gsArgs, {
-        windowsHide: true,
-        encoding: 'utf8',
-        maxBuffer: 50 * 1024 * 1024,
-      });
+      const proc = await runGhostscriptAsync(gsBinary, gsArgs, 25000);
 
       if (proc.status !== 0 || !fs.existsSync(tempJpg)) {
         const errMsg = proc.stderr || proc.stdout || 'Ghostscript exited with status ' + proc.status;
-        try { if (fs.existsSync(tempEps)) fs.unlinkSync(tempEps); } catch {}
-        try { if (fs.existsSync(tempJpg)) fs.unlinkSync(tempJpg); } catch {}
         return { success: false, error: errMsg };
       }
 
-      const jpgBuffer = fs.readFileSync(tempJpg);
+      const jpgBuffer = await fs.promises.readFile(tempJpg);
 
       // Read dimensions from SOF marker
       let width = 0;
@@ -667,10 +735,6 @@ function setupIpcHandlers() {
         }
       }
 
-      // Cleanup temp files
-      try { if (fs.existsSync(tempEps)) fs.unlinkSync(tempEps); } catch {}
-      try { if (fs.existsSync(tempJpg)) fs.unlinkSync(tempJpg); } catch {}
-
       return {
         success: true,
         buffer: jpgBuffer.buffer.slice(jpgBuffer.byteOffset, jpgBuffer.byteOffset + jpgBuffer.byteLength),
@@ -678,8 +742,12 @@ function setupIpcHandlers() {
         height,
       };
     } catch (err) {
-      console.error('[Electron Main] eps:rasterizeNative error:', err);
+      console.error(`[Electron Main] eps:rasterizeNative error on "${fileName || 'unknown'}":`, err);
       return { success: false, error: err.message || 'EPS rasterization failed.' };
+    } finally {
+      try { await fs.promises.unlink(tempEps); } catch {}
+      try { await fs.promises.unlink(tempJpg); } catch {}
+      releaseGsSlot();
     }
   });
 }

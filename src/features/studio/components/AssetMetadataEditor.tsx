@@ -23,7 +23,7 @@ export const AssetMetadataEditor: React.FC<AssetMetadataEditorProps> = React.mem
   copiedKey,
   onCopyText,
 }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [localTitle, setLocalTitle] = useState(rec?.baseTitle || '');
   const [localDesc, setLocalDesc] = useState(rec?.detailedDescription || '');
   const [isDescExpanded, setIsDescExpanded] = useState(false);
@@ -57,17 +57,17 @@ export const AssetMetadataEditor: React.FC<AssetMetadataEditorProps> = React.mem
       {/* Title Field with Copy & Character Counter */}
       <div className="space-y-1">
         <div className="flex items-center justify-between text-xs">
-          <label className="font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
+          <label className="font-semibold text-foreground flex items-center gap-1.5">
             <span>{t.title}</span>
-            <span className="text-[10px] font-mono font-normal text-muted-foreground">
-              ({(localTitle || '').length} chars)
+            <span className="text-[10px] font-mono tabular-nums font-normal text-muted-foreground">
+              ({(localTitle || '').length} {language === 'ar' ? 'حرف' : 'chars'})
             </span>
           </label>
           <button
             type="button"
             onClick={() => onCopyText(localTitle, `${assetId}_title`)}
             disabled={!localTitle}
-            className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-zinc-100 dark:hover:bg-zinc-800 transition cursor-pointer disabled:opacity-40"
+            className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition cursor-pointer disabled:opacity-40"
           >
             {copiedKey === `${assetId}_title` ? (
               <>
@@ -83,23 +83,33 @@ export const AssetMetadataEditor: React.FC<AssetMetadataEditorProps> = React.mem
           </button>
         </div>
         <Input
-          dir="ltr"
+          dir={localTitle ? 'ltr' : language === 'ar' ? 'rtl' : 'ltr'}
           value={localTitle}
           onChange={(e) => setLocalTitle(e.target.value)}
           onBlur={handleBlurTitle}
-          placeholder={isProcessing ? 'Generating title...' : 'Stock Asset Title...'}
+          placeholder={
+            isProcessing
+              ? language === 'ar'
+                ? 'جاري توليد العنوان...'
+                : 'Generating title...'
+              : language === 'ar'
+              ? 'عنوان الملف (بالإنجليزية)...'
+              : 'Stock Asset Title...'
+          }
           disabled={!rec}
-          className="text-xs bg-zinc-100/90 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 font-medium text-left h-8 focus:ring-1 focus:ring-blue-500 shadow-2xs"
+          className={`text-xs bg-secondary/70 border border-border text-foreground font-medium h-8 focus:ring-1 focus:ring-ring ${
+            localTitle ? 'text-left' : 'text-start'
+          }`}
         />
       </div>
 
       {/* Description Field with Copy, Character Counter & Expand Toggle on Compact */}
       <div className="space-y-1">
         <div className="flex items-center justify-between text-xs">
-          <label className="font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
+          <label className="font-semibold text-foreground flex items-center gap-1.5">
             <span>{t.description}</span>
-            <span className="text-[10px] font-mono font-normal text-muted-foreground">
-              ({(localDesc || '').length} chars)
+            <span className="text-[10px] font-mono tabular-nums font-normal text-muted-foreground">
+              ({(localDesc || '').length} {language === 'ar' ? 'حرف' : 'chars'})
             </span>
           </label>
           <div className="flex items-center gap-1.5">
@@ -110,14 +120,14 @@ export const AssetMetadataEditor: React.FC<AssetMetadataEditorProps> = React.mem
                 className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground cursor-pointer"
               >
                 {isDescExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                <span>{isDescExpanded ? (t.showLessTags || 'Less') : 'More'}</span>
+                <span>{isDescExpanded ? (t.showLessTags || 'Less') : language === 'ar' ? 'المزيد' : 'More'}</span>
               </button>
             )}
             <button
               type="button"
               onClick={() => onCopyText(localDesc, `${assetId}_desc`)}
               disabled={!localDesc}
-              className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-zinc-100 dark:hover:bg-zinc-800 transition cursor-pointer disabled:opacity-40"
+              className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition cursor-pointer disabled:opacity-40"
             >
               {copiedKey === `${assetId}_desc` ? (
                 <>
@@ -134,16 +144,24 @@ export const AssetMetadataEditor: React.FC<AssetMetadataEditorProps> = React.mem
           </div>
         </div>
         <Textarea
-          dir="ltr"
+          dir={localDesc ? 'ltr' : language === 'ar' ? 'rtl' : 'ltr'}
           rows={isCompact && !isDescExpanded ? 2 : 3}
           value={localDesc}
           onChange={(e) => setLocalDesc(e.target.value)}
           onBlur={handleBlurDesc}
-          placeholder={isProcessing ? 'Generating description...' : 'Detailed stock description...'}
+          placeholder={
+            isProcessing
+              ? language === 'ar'
+                ? 'جاري توليد الوصف...'
+                : 'Generating description...'
+              : language === 'ar'
+              ? 'وصف تفصيلي للملف (بالإنجليزية)...'
+              : 'Detailed stock description...'
+          }
           disabled={!rec}
-          className={`text-xs bg-zinc-100/90 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 resize-none text-left focus:ring-1 focus:ring-blue-500 shadow-2xs ${
-            isCompact && !isDescExpanded ? 'line-clamp-2 max-h-16' : ''
-          }`}
+          className={`text-xs bg-secondary/70 border border-border text-foreground resize-none focus:ring-1 focus:ring-ring ${
+            localDesc ? 'text-left' : 'text-start'
+          } ${isCompact && !isDescExpanded ? 'line-clamp-2 max-h-16' : ''}`}
         />
       </div>
     </>

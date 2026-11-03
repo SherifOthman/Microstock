@@ -83,5 +83,8 @@ interface Window {
       decrypt: (cipherText: string) => Promise<string>;
     };
     getPathForFile: (file: File) => string;
+    db?: {
+      invoke: (method: string, ...args: any[]) => Promise<any>;
+    };
   };
 }

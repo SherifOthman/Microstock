@@ -37,40 +37,40 @@ export const DuplicatePreviewCard: React.FC<DuplicatePreviewCardProps> = React.m
   const isImage = item.subFolder === 'Photos';
 
   return (
-    <div className="flex flex-col border border-border bg-card rounded-xl p-3 space-y-2.5 shadow-xs">
-      <div className="w-full h-40 bg-zinc-950/80 rounded-lg overflow-hidden flex items-center justify-center relative border border-border/60">
+    <div className="flex flex-col border border-border bg-card rounded-xl p-3 space-y-2.5">
+      <div className="w-full h-36 bg-secondary rounded-lg overflow-hidden flex items-center justify-center relative border border-border">
         {isVideo && objectUrl ? (
           <video src={objectUrl} controls className="w-full h-full object-contain" />
         ) : isImage && objectUrl ? (
           <img src={objectUrl} alt={item.originalName} className="w-full h-full object-contain" />
         ) : (
           <div className="flex flex-col items-center gap-1.5 text-muted-foreground">
-            <PenTool className="w-8 h-8 text-amber-500" />
+            <PenTool className="w-7 h-7 text-primary" />
             <span className="text-xs uppercase font-mono">{item.extension}</span>
           </div>
         )}
       </div>
 
-      <div className="space-y-1 text-xs flex-1">
-        <div className="font-mono font-medium text-foreground truncate" title={item.originalName}>
+      <div className="space-y-1 text-xs flex-1 min-w-0">
+        <div className="font-mono font-medium text-foreground truncate">
           {item.originalName}
         </div>
-        <div className="flex items-center justify-between text-muted-foreground font-mono text-[11px]">
+        <div className="flex items-center justify-between text-muted-foreground font-mono tabular-nums text-[11px]">
           <span>
             {item.validation?.width && item.validation?.height
               ? `${item.validation.width} × ${item.validation.height}`
-              : 'Unknown res'}
+              : '—'}
           </span>
           <span>{(item.size / (1024 * 1024)).toFixed(2)} MB</span>
         </div>
         {item.nativePath && (
-          <div className="text-[10px] text-zinc-500 font-mono truncate" title={item.nativePath}>
+          <div className="text-[10px] text-muted-foreground font-mono truncate">
             {item.nativePath}
           </div>
         )}
       </div>
 
-      <div className="flex items-center gap-2 pt-1 border-t border-border/50">
+      <div className="flex items-center gap-2 pt-1.5 border-t border-border">
         {item.nativePath && (
           <Button
             type="button"
@@ -78,10 +78,9 @@ export const DuplicatePreviewCard: React.FC<DuplicatePreviewCardProps> = React.m
             size="sm"
             onClick={() => onLocate(item.nativePath!)}
             className="flex-1 h-7 text-[11px] gap-1 cursor-pointer"
-            title={language === 'ar' ? 'تحديد الملف في مستكشف ويندوز' : 'Show in Windows Explorer'}
           >
             <FolderOpen className="w-3 h-3" />
-            <span>{language === 'ar' ? 'تحديد' : 'Locate'}</span>
+            <span>{language === 'ar' ? 'المجلد' : 'Locate'}</span>
           </Button>
         )}
         <Button
@@ -90,7 +89,6 @@ export const DuplicatePreviewCard: React.FC<DuplicatePreviewCardProps> = React.m
           size="sm"
           onClick={() => onRemove(item.id, item.file, item)}
           className="h-7 text-[11px] px-2.5 gap-1 cursor-pointer"
-          title={language === 'ar' ? 'حذف هذه النسخة من القائمة' : 'Remove this copy'}
         >
           <Trash2 className="w-3 h-3" />
           <span>{language === 'ar' ? 'حذف' : 'Remove'}</span>

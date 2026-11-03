@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { CleanedFileItem } from '../../../services/cleaner/fileCleanerEngine';
 import { Button } from '../../../components/ui/button';
-import { Badge } from '../../../components/ui/badge';
 import { Input } from '../../../components/ui/input';
+import { Tooltip } from '../../../components/ui/tooltip';
 import { useLanguage } from '../../../context/LanguageContext';
 import {
   AlertCircle,
@@ -22,6 +23,7 @@ import {
   Search,
   Trash2,
   UploadCloud,
+  Wand2,
 } from 'lucide-react';
 
 export interface CleanerFileTableProps {
@@ -43,6 +45,7 @@ export interface CleanerFileTableProps {
   onSelectFilesClick: () => void;
   onSelectFolderClick: () => void;
   onInitiateProcess: () => void;
+  onSendToStudio?: () => void;
   onOpenDuplicateModal: (key: string) => void;
   onRemoveItem: (id: string, file: File, item: CleanedFileItem) => void;
 }
@@ -52,7 +55,6 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
   rawFilesCount,
   cleanedItems,
   filteredItems,
-  mediaBatches,
   batchDistribution,
   searchFilter,
   setSearchFilter,
@@ -66,35 +68,44 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
   onSelectFilesClick,
   onSelectFolderClick,
   onInitiateProcess,
+  onSendToStudio,
   onOpenDuplicateModal,
   onRemoveItem,
 }) => {
   const { t } = useLanguage();
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+
+  const rowVirtualizer = useVirtualizer({
+    count: filteredItems.length,
+    getScrollElement: () => tableContainerRef.current,
+    estimateSize: () => 40,
+    overscan: 14,
+  });
 
   if (rawFilesCount === 0) {
     return (
       <div
         onDragOver={(e) => e.preventDefault()}
         onDrop={onDrop}
-        className="border-2 border-dashed border-border hover:border-emerald-500/50 bg-card/50 rounded-2xl p-12 text-center transition space-y-4"
+        className="border-2 border-dashed border-border hover:border-primary/50 bg-card rounded-xl p-10 text-center transition space-y-3"
       >
-        <div className="w-12 h-12 rounded-xl bg-secondary text-foreground flex items-center justify-center mx-auto border border-border">
-          <UploadCloud className="w-6 h-6 text-emerald-500" />
+        <div className="w-11 h-11 rounded-xl bg-secondary text-primary flex items-center justify-center mx-auto border border-border">
+          <UploadCloud className="w-5 h-5" />
         </div>
         <div className="space-y-1">
           <h3 className="text-sm font-semibold text-foreground">
-            {language === 'ar' ? 'اسحب الصور أو الفيديوهات أو المتجهات هنا' : 'Drop stock files here to organize & ingest'}
+            {language === 'ar' ? 'اسحب الملفات هنا للتنظيف والترقيم' : 'Drop stock files here to sanitize & organize'}
           </h3>
           <p className="text-xs text-muted-foreground max-w-md mx-auto">
             {language === 'ar'
-              ? 'يدعم JPG, PNG, MP4, MOV, EPS. فرز عشوائي، تسمية هجينة (B01_001__name)، وتوزيع تلقائي إلى Photos/ و Videos/ و Vectors/.'
-              : 'Supports JPG, PNG, MP4, MOV, EPS. Shuffle sort, hybrid sequential naming (B01_001__name), and auto-routed to Photos/, Videos/, and Vectors/.'}
+              ? 'يدعم JPG, PNG, MP4, MOV, EPS — تسمية تلقائية وتوزيع حسب النوع.'
+              : 'Supports JPG, PNG, MP4, MOV, EPS — automatic sequential naming and media folder routing.'}
           </p>
         </div>
-        <div className="flex items-center justify-center gap-2 pt-2">
+        <div className="flex items-center justify-center gap-2 pt-1">
           <Button size="sm" onClick={onSelectFilesClick} className="gap-1.5 text-xs cursor-pointer">
             <Plus className="w-3.5 h-3.5" />
-            <span>{language === 'ar' ? 'اختيار ملفات' : 'Select Files'}</span>
+            <span>{t.selectFiles}</span>
           </Button>
           <Button
             variant="outline"
@@ -103,45 +114,50 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
             className="gap-1.5 text-xs cursor-pointer"
           >
             <FolderUp className="w-3.5 h-3.5" />
-            <span>{t.selectFolder || 'Add Folder'}</span>
+            <span>{t.selectFolder}</span>
           </Button>
         </div>
       </div>
     );
   }
 
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const totalSize = rowVirtualizer.getTotalSize();
+  const hasVirtualViewport = virtualRows.length > 0;
+  const paddingTop = hasVirtualViewport ? virtualRows[0]?.start || 0 : 0;
+  const paddingBottom = hasVirtualViewport
+    ? Math.max(0, totalSize - (virtualRows[virtualRows.length - 1]?.end || 0))
+    : 0;
+
+  const rowsToRender = hasVirtualViewport
+    ? virtualRows.map((vr) => ({ item: filteredItems[vr.index], idx: vr.index }))
+    : filteredItems.slice(0, 60).map((item, idx) => ({ item, idx }));
+
   return (
     <div className="space-y-3">
       {/* Batch Allocation Bar */}
-      <div className="p-3.5 bg-card rounded-xl border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+      <div className="p-3 bg-card rounded-xl border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2 flex-wrap text-xs">
           <span className="font-semibold text-foreground flex items-center gap-1.5">
-            <Layers className="w-3.5 h-3.5 text-emerald-500" />
-            <span>{language === 'ar' ? 'خطة التقسيم:' : 'Batch Ingest Plan:'}</span>
+            <Layers className="w-3.5 h-3.5 text-primary" />
+            <span>{language === 'ar' ? 'توزيع الـ Batch:' : 'Batch Allocation:'}</span>
           </span>
 
           {batchDistribution.map((b) => (
-            <Badge
+            <span
               key={`${b.subFolder}-${b.folder}`}
-              variant="outline"
-              className={`text-[11px] font-mono gap-1.5 py-0.5 ${
-                b.isNew
-                  ? 'bg-blue-500/10 text-blue-400 border-blue-500/30'
-                  : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-              }`}
+              dir="ltr"
+              className="px-2 py-0.5 rounded bg-secondary border border-border text-[11px] font-mono tabular-nums text-foreground"
             >
-              <span className="font-bold">{b.subFolder}/{b.folder}:</span>
-              <span>{b.total} items</span>
-              {b.isNew && <span className="text-[9px] uppercase px-1 rounded bg-blue-500/20 font-sans">New</span>}
-            </Badge>
+              <strong>{b.subFolder}/{b.folder}:</strong> {b.total}
+            </span>
           ))}
 
-          <span className="text-muted-foreground font-mono text-[11px]">
-            ({cleanedItems.length} {language === 'ar' ? 'إجمالي' : 'total files'})
+          <span className="text-muted-foreground font-mono tabular-nums text-[11px]">
+            ({cleanedItems.length} {language === 'ar' ? 'إجمالي' : 'total'})
           </span>
         </div>
 
-        {/* Action Buttons */}
         <div className="flex items-center gap-2 flex-wrap justify-between sm:justify-end">
           <Button
             variant="outline"
@@ -151,14 +167,42 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
             className="gap-1.5 text-xs cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>{language === 'ar' ? 'إضافة المزيد' : 'Add More'}</span>
+            <span>{t.selectFiles}</span>
           </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onSelectFolderClick}
+            disabled={isProcessing}
+            className="gap-1.5 text-xs cursor-pointer"
+          >
+            <FolderUp className="w-3.5 h-3.5" />
+            <span>{t.selectFolder}</span>
+          </Button>
+
+          {onSendToStudio && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onSendToStudio}
+              disabled={isProcessing || cleanedItems.length === 0 || blockingErrorCount > 0}
+              className="gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 cursor-pointer"
+            >
+              <Wand2 className="w-3.5 h-3.5" />
+              <span>
+                {language === 'ar'
+                  ? `إرسال إلى استوديو Metadata (${cleanedItems.length})`
+                  : `Send to Metadata Studio (${cleanedItems.length})`}
+              </span>
+            </Button>
+          )}
 
           <Button
             size="sm"
             onClick={onInitiateProcess}
             disabled={isProcessing || cleanedItems.length === 0 || !masterDirectory || blockingErrorCount > 0}
-            className="gap-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer shadow-sm disabled:opacity-50"
+            className="gap-1.5 text-xs font-semibold cursor-pointer"
           >
             {isProcessing ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -167,8 +211,8 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
             )}
             <span>
               {language === 'ar'
-                ? `تنظيم وحفظ ${cleanedItems.length} ملف`
-                : `Process & Ingest ${cleanedItems.length} Files`}
+                ? `حفظ وتنظيم (${cleanedItems.length})`
+                : `Process & Save (${cleanedItems.length})`}
             </span>
           </Button>
         </div>
@@ -176,13 +220,13 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
 
       {/* Duplicate Detection Alert */}
       {totalDuplicateCount > 0 && (
-        <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-500 dark:text-amber-400 text-xs flex items-center justify-between gap-2">
+        <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-600 dark:text-amber-400 text-xs flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Copy className="w-4 h-4 shrink-0" />
             <span>
               {language === 'ar'
-                ? `⚠️ تم اكتشاف ${totalDuplicateCount} ملفات قد تكون مكررة أو نُسخ مكبرة/معدلة. انقر على شارة التكرار لمقارنتها بالمعاينة.`
-                : `⚠️ ${totalDuplicateCount} potential duplicate or upscaled file variants detected. Click duplicate badges to compare.`}
+                ? `تم رصد ${totalDuplicateCount} ملفات مكررة أو متشابهة.`
+                : `${totalDuplicateCount} potential duplicate or variant files detected.`}
             </span>
           </div>
           {duplicateGroupKeys.length > 0 && (
@@ -190,9 +234,9 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
               variant="outline"
               size="sm"
               onClick={() => onOpenDuplicateModal(duplicateGroupKeys[0])}
-              className="h-6 px-2 text-[10px] text-amber-500 border-amber-500/30 hover:bg-amber-500/10 cursor-pointer"
+              className="h-6 px-2.5 text-[11px] cursor-pointer"
             >
-              <span>{language === 'ar' ? 'مقارنة المكررات' : 'Review Duplicates'}</span>
+              <span>{language === 'ar' ? 'مراجعة المكررات' : 'Review Duplicates'}</span>
             </Button>
           )}
         </div>
@@ -201,7 +245,7 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
       {/* Progress Indicator */}
       {progressMsg && (
         <div className="p-2.5 rounded-lg bg-secondary/50 border border-border text-xs flex items-center gap-2 font-mono text-muted-foreground">
-          <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-500" />
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
           <span>{progressMsg}</span>
         </div>
       )}
@@ -211,39 +255,50 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
         <div className="relative w-full max-w-xs">
           <Search className="w-3.5 h-3.5 absolute start-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
           <Input
-            placeholder={language === 'ar' ? 'بحث في أسماء الملفات...' : 'Filter files list...'}
+            placeholder={language === 'ar' ? 'تصفية الأسماء...' : 'Filter filenames...'}
             value={searchFilter}
             onChange={(e) => setSearchFilter(e.target.value)}
             className="h-8 ps-8 text-xs bg-background"
           />
         </div>
-        <span className="text-[11px] text-muted-foreground font-mono">
-          Showing {filteredItems.length} of {cleanedItems.length}
+        <span dir="ltr" className="text-[11px] text-muted-foreground font-mono tabular-nums">
+          {filteredItems.length} / {cleanedItems.length}
         </span>
       </div>
 
-      {/* Live Table */}
-      <div className="rounded-xl border border-border bg-card overflow-hidden shadow-xs">
-        <div className="overflow-x-auto max-h-[500px]" dir="ltr">
-          <table className="w-full text-xs text-left border-collapse" dir="ltr">
-            <thead className="sticky top-0 z-20 bg-zinc-950 text-zinc-200 dark:bg-zinc-950 dark:text-zinc-200 text-[11px] font-mono border-b border-border shadow-xs">
+      {/* TanStack Virtualized Table (60fps for 2,000+ files) */}
+      <div className="rounded-xl border border-border bg-card overflow-hidden">
+        <div ref={tableContainerRef} className="overflow-x-auto overflow-y-auto max-h-[500px]">
+          <table className="w-full text-xs text-start border-collapse">
+            <thead className="sticky top-0 z-20 bg-secondary text-muted-foreground text-[11px] font-mono border-b border-border">
               <tr>
-                <th className="py-2.5 px-3 w-12 text-center bg-zinc-950 dark:bg-zinc-950 sticky top-0">{t.colNumber || '#'}</th>
-                <th className="py-2.5 px-3 w-32 bg-zinc-950 dark:bg-zinc-950 sticky top-0">{t.colBatch || 'Batch & Category'}</th>
-                <th className="py-2.5 px-3 w-1/3 bg-zinc-950 dark:bg-zinc-950 sticky top-0">{t.colOriginalName || 'Original Filename'}</th>
-                <th className="py-2.5 px-2 text-center w-6 bg-zinc-950 dark:bg-zinc-950 sticky top-0"></th>
-                <th className="py-2.5 px-3 w-1/3 bg-zinc-950 dark:bg-zinc-950 sticky top-0">{t.colDestinationName || 'Destination Filename (Relative Path)'}</th>
-                <th className="py-2.5 px-3 w-32 text-center bg-zinc-950 dark:bg-zinc-950 sticky top-0">{t.colResolution || 'Resolution Status'}</th>
-                <th className="py-2.5 px-3 w-20 text-right bg-zinc-950 dark:bg-zinc-950 sticky top-0">{t.colSize || 'Size'}</th>
-                <th className="py-2.5 px-2 w-16 text-center bg-zinc-950 dark:bg-zinc-950 sticky top-0">{t.colActions || 'Actions'}</th>
+                <th className="py-2.5 px-3 w-12 text-center bg-secondary sticky top-0">{t.colNumber}</th>
+                <th className="py-2.5 px-3 w-36 bg-secondary sticky top-0 text-start">{t.colBatch}</th>
+                <th className="py-2.5 px-3 w-1/3 bg-secondary sticky top-0 text-start">{t.colOriginalName}</th>
+                <th className="py-2.5 px-2 text-center w-6 bg-secondary sticky top-0"></th>
+                <th className="py-2.5 px-3 w-1/3 bg-secondary sticky top-0 text-start">{t.colDestinationName}</th>
+                <th className="py-2.5 px-3 w-32 text-center bg-secondary sticky top-0">{t.colResolution}</th>
+                <th className="py-2.5 px-3 w-20 text-end bg-secondary sticky top-0">{t.colSize}</th>
+                <th className="py-2.5 px-2 w-16 text-center bg-secondary sticky top-0">{t.colActions}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/60">
-              {filteredItems.map((item, idx) => {
-                const isNewBatch = !(mediaBatches[item.subFolder] || []).some(
-                  (b: any) => b.name.toLowerCase() === item.batchFolder.toLowerCase()
-                );
+              {paddingTop > 0 && (
+                <tr>
+                  <td style={{ height: `${paddingTop}px` }} colSpan={8} />
+                </tr>
+              )}
+              {rowsToRender.map(({ item, idx }) => {
+                if (!item) return null;
                 const val = item.validation;
+                const localizedSubFolder =
+                  language === 'ar'
+                    ? item.subFolder === 'Photos'
+                      ? 'صور'
+                      : item.subFolder === 'Videos'
+                      ? 'فيديو'
+                      : 'متجهات'
+                    : item.subFolder;
 
                 return (
                   <tr
@@ -253,69 +308,60 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
                         ? 'bg-destructive/10 hover:bg-destructive/15'
                         : val?.warningType === 'photo_low_resolution'
                         ? 'bg-amber-500/5 hover:bg-amber-500/10'
-                        : 'hover:bg-secondary/20'
+                        : 'hover:bg-secondary/40'
                     }`}
                   >
-                    <td className="py-2 px-3 text-center text-muted-foreground font-mono text-[10px]">
+                    <td className="py-2 px-3 text-center text-muted-foreground font-mono tabular-nums text-[10px]">
                       {idx + 1}
                     </td>
 
                     <td className="py-2 px-3">
-                      <div className="flex items-center gap-1.5">
-                        <Badge
-                          variant="outline"
-                          className={`text-[10px] font-mono font-bold ${
-                            isNewBatch
-                              ? 'bg-blue-500/10 text-blue-400 border-blue-500/30'
-                              : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                          }`}
-                        >
-                          {item.batchFolder}
-                        </Badge>
-
-                        <Badge
-                          variant="secondary"
-                          className="text-[9px] font-mono px-1 py-0 flex items-center gap-1 text-zinc-300"
-                        >
+                      <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                        <span dir="ltr" className="font-semibold text-foreground">{item.batchFolder}</span>
+                        <span className="text-muted-foreground">·</span>
+                        <span className="inline-flex items-center gap-1 text-muted-foreground">
                           {item.subFolder === 'Photos' ? (
-                            <ImageIcon className="w-2.5 h-2.5 text-blue-400" />
+                            <ImageIcon className="w-3 h-3 text-primary" />
                           ) : item.subFolder === 'Videos' ? (
-                            <Film className="w-2.5 h-2.5 text-purple-400" />
+                            <Film className="w-3 h-3 text-primary" />
                           ) : (
-                            <PenTool className="w-2.5 h-2.5 text-amber-400" />
+                            <PenTool className="w-3 h-3 text-primary" />
                           )}
-                          <span>{item.subFolder}</span>
-                        </Badge>
+                          <span>{localizedSubFolder}</span>
+                        </span>
                       </div>
                     </td>
 
-                    <td className="py-2 px-3 font-mono text-muted-foreground truncate max-w-xs" title={item.originalName}>
+                    <td className="py-2 px-3 font-mono text-muted-foreground truncate max-w-xs">
                       <div className="flex items-center gap-1.5 truncate">
-                        <span className="truncate">{item.originalName}</span>
+                        <span dir="ltr" className="truncate text-start">{item.originalName}</span>
                         {item.isDuplicate && (
-                          <button
-                            type="button"
-                            onClick={() => onOpenDuplicateModal(item.fuzzyKey)}
-                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-500 hover:bg-amber-500/25 text-[10px] font-mono cursor-pointer shrink-0 transition"
-                            title={language === 'ar' ? 'ملف مكرر أو متطابق - انقر للمقارنة والمعاينة' : 'Fuzzy duplicate detected - Click to compare'}
-                          >
-                            <Copy className="w-2.5 h-2.5 shrink-0" />
-                            <span>⚠️ Dup ({item.duplicateCount})</span>
-                          </button>
+                          <Tooltip content={language === 'ar' ? 'مقارنة النسخ المكررة' : 'Compare duplicate variants'}>
+                            <button
+                              type="button"
+                              onClick={() => onOpenDuplicateModal(item.fuzzyKey)}
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-[10px] font-mono cursor-pointer shrink-0 transition"
+                            >
+                              <Copy className="w-2.5 h-2.5 shrink-0" />
+                              <span>
+                                {language === 'ar' ? `مكرر (${item.duplicateCount})` : `Dup (${item.duplicateCount})`}
+                              </span>
+                            </button>
+                          </Tooltip>
                         )}
                       </div>
                     </td>
 
-                    <td className="py-2 px-2 text-center text-muted-foreground/60">
-                      <ArrowRight className="w-3.5 h-3.5 mx-auto" />
+                    <td className="py-2 px-2 text-center text-muted-foreground/50">
+                      <ArrowRight className="w-3.5 h-3.5 mx-auto rtl:rotate-180" />
                     </td>
 
                     <td className="py-2 px-3 font-mono text-foreground">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-muted-foreground text-[10px] font-semibold">
+                      <div dir="ltr" className="flex items-center gap-1 text-start">
+                        <span className="text-muted-foreground text-[11px]">
                           {item.subFolder}/{item.batchFolder}/
                         </span>
-                        <span className="text-emerald-400 font-bold text-xs tracking-wide">
+                        <span className="text-foreground font-semibold text-xs">
                           {item.customName !== undefined ? item.customName : item.cleanedName}
                         </span>
                       </div>
@@ -324,84 +370,78 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
                     <td className="py-2 px-3 text-center">
                       {val ? (
                         val.isBlocking ? (
-                          <div className="flex flex-col items-center gap-1">
-                            <div
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-destructive/20 border border-destructive/40 text-destructive text-[10px] font-mono font-semibold"
-                              title={val.message}
-                            >
+                          <Tooltip content={val.message}>
+                            <span dir="ltr" className="inline-flex items-center gap-1 text-destructive text-[11px] font-mono font-semibold">
                               <AlertCircle className="w-3 h-3 shrink-0" />
-                              <span>{val.width}x{val.height} Invalid</span>
-                            </div>
-                            {item.nativePath && (
-                              <button
-                                type="button"
-                                onClick={() => window.electronAPI?.showItemInFolder?.(item.nativePath!)}
-                                className="inline-flex items-center gap-1 text-[10px] text-destructive hover:underline font-mono cursor-pointer"
-                                title={language === 'ar' ? 'تحديد الملف في مستكشف ويندوز' : 'Locate in Windows Explorer'}
-                              >
-                                <FolderOpen className="w-3 h-3" />
-                                <span>{language === 'ar' ? '🔍 تحديد' : '🔍 Locate'}</span>
-                              </button>
-                            )}
-                          </div>
+                              <span>{val.width}×{val.height}</span>
+                            </span>
+                          </Tooltip>
                         ) : val.warningType === 'photo_low_resolution' ? (
-                          <div
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-500 text-[10px] font-mono"
-                            title={val.message}
-                          >
-                            <AlertTriangle className="w-3 h-3 shrink-0" />
-                            <span>{val.width}x{val.height} (&lt;3000px)</span>
-                          </div>
+                          <Tooltip content={val.message}>
+                            <span dir="ltr" className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 text-[11px] font-mono">
+                              <AlertTriangle className="w-3 h-3 shrink-0" />
+                              <span>{val.width}×{val.height}</span>
+                            </span>
+                          </Tooltip>
                         ) : (
-                          <div className="inline-flex items-center gap-1 text-emerald-500 text-[10px] font-mono">
+                          <span dir="ltr" className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 text-[11px] font-mono tabular-nums">
                             <CheckCircle2 className="w-3 h-3" />
-                            <span>{val.width ? `${val.width}x${val.height}` : 'Verified'}</span>
-                          </div>
+                            <span>{val.width ? `${val.width}×${val.height}` : 'OK'}</span>
+                          </span>
                         )
                       ) : (
-                        <span className="text-[10px] text-muted-foreground font-mono flex items-center justify-center gap-1">
-                          <Loader2 className="w-3 h-3 animate-spin" /> checking
+                        <span className="text-[10px] text-muted-foreground font-mono inline-flex items-center justify-center gap-1">
+                          <Loader2 className="w-3 h-3 animate-spin" />
                         </span>
                       )}
                     </td>
 
-                    <td className="py-2 px-3 text-right font-mono text-muted-foreground text-[10px]">
+                    <td dir="ltr" className="py-2 px-3 text-end font-mono tabular-nums text-muted-foreground text-[11px]">
                       {(item.size / (1024 * 1024)).toFixed(1)} MB
                     </td>
 
                     <td className="py-2 px-2 text-center">
                       <div className="flex items-center justify-center gap-1">
                         {item.nativePath && (
-                          <button
-                            type="button"
-                            onClick={() => window.electronAPI?.showItemInFolder?.(item.nativePath!)}
-                            className="text-muted-foreground hover:text-foreground p-1 rounded transition cursor-pointer"
-                            title={language === 'ar' ? 'تحديد الملف في مستكشف ويندوز' : 'Show in Windows Explorer'}
-                          >
-                            <FolderOpen className="w-3.5 h-3.5" />
-                          </button>
+                          <Tooltip content={language === 'ar' ? 'إظهار في المجلد' : 'Show in folder'}>
+                            <button
+                              type="button"
+                              onClick={() => window.electronAPI?.showItemInFolder?.(item.nativePath!)}
+                              className="text-muted-foreground hover:text-foreground p-1 rounded transition cursor-pointer"
+                            >
+                              <FolderOpen className="w-3.5 h-3.5" />
+                            </button>
+                          </Tooltip>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => onRemoveItem(item.id, item.file, item)}
-                          className={`p-1 rounded transition cursor-pointer ${
+                        <Tooltip
+                          content={
                             item.validation?.isBlocking || item.validation?.warningType === 'photo_low_resolution'
-                              ? 'text-amber-500 hover:text-destructive hover:bg-destructive/10'
-                              : 'text-muted-foreground hover:text-destructive'
-                          }`}
-                          title={
-                            item.validation?.isBlocking || item.validation?.warningType === 'photo_low_resolution'
-                              ? (language === 'ar' ? 'نقل الملف إلى مجلد _Needs_Fixing وحذفه من القائمة' : 'Move to _Needs_Fixing folder & remove from queue')
-                              : (language === 'ar' ? 'إزالة الملف من القائمة' : 'Remove file from queue')
+                              ? language === 'ar'
+                                ? 'نقل إلى _Needs_Fixing'
+                                : 'Move to _Needs_Fixing'
+                              : language === 'ar'
+                              ? 'إزالة من القائمة'
+                              : 'Remove from list'
                           }
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => onRemoveItem(item.id, item.file, item)}
+                            className="p-1 rounded text-muted-foreground hover:text-destructive transition cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </Tooltip>
                       </div>
                     </td>
                   </tr>
                 );
               })}
+              {paddingBottom > 0 && (
+                <tr>
+                  <td style={{ height: `${paddingBottom}px` }} colSpan={8} />
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

@@ -1,16 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Dialog, DialogContent, DialogTitle } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
+import { Tooltip } from '../components/ui/tooltip';
 import {
   ChevronLeft,
   ChevronRight,
-  Download,
   Film,
-  Maximize2,
-  Minimize2,
-  Volume2,
-  VolumeX,
   X,
   ZoomIn,
   ZoomOut,
@@ -57,7 +52,6 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
 
   const currentAsset = assets[currentIndex] || null;
 
-  // Manage video object URL when switching assets
   useEffect(() => {
     if (!open || !currentAsset) {
       if (videoObjectUrl) {
@@ -82,7 +76,6 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
     }
   }, [currentIndex, open, currentAsset?.id]);
 
-  // Keyboard navigation (Arrow keys + Esc)
   useEffect(() => {
     if (!open) return;
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -114,6 +107,7 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
 
   const isVideo = currentAsset.mediaType === 'video';
   const isVector = currentAsset.mediaType === 'vector';
+  const isAr = typeof document !== 'undefined' && document.documentElement.lang === 'ar';
 
   return (
     <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col justify-between select-none animate-in fade-in-0 duration-150">
@@ -122,86 +116,87 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
         <div className="flex items-center gap-2.5 min-w-0">
           <Badge
             variant="outline"
-            className="text-[10px] font-mono uppercase bg-zinc-900 border-zinc-700 text-zinc-300 gap-1 shrink-0"
+            className="text-[10px] font-mono uppercase bg-zinc-900 border-zinc-700 text-zinc-200 gap-1 shrink-0"
           >
             {isVideo ? (
               <>
-                <Film className="w-3 h-3 text-sky-400" /> VIDEO
+                <Film className="w-3 h-3 text-primary" /> {isAr ? 'فيديو' : 'VIDEO'}
               </>
             ) : isVector ? (
               <>
-                <Layers className="w-3 h-3 text-blue-400" /> EPS VECTOR
+                <Layers className="w-3 h-3 text-primary" /> {isAr ? 'متجه EPS' : 'EPS VECTOR'}
               </>
             ) : (
               <>
-                <Camera className="w-3 h-3 text-emerald-400" /> PHOTO
+                <Camera className="w-3 h-3 text-primary" /> {isAr ? 'صورة' : 'PHOTO'}
               </>
             )}
           </Badge>
 
-          <span className="text-xs font-semibold text-zinc-100 truncate max-w-[200px] sm:max-w-md font-mono">
+          <span dir="ltr" className="text-xs font-semibold text-zinc-100 truncate max-w-[200px] sm:max-w-md font-mono">
             {currentAsset.filename}
           </span>
 
-          <span className="text-[11px] text-zinc-400 font-mono hidden sm:inline">
+          <span dir="ltr" className="text-[11px] text-zinc-400 font-mono tabular-nums hidden sm:inline">
             ({currentIndex + 1} / {assets.length})
           </span>
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
           {!isVideo && (
-            <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-lg p-0.5">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setZoomLevel((z) => Math.max(0.5, z - 0.25))}
-                className="h-7 w-7 text-zinc-300 hover:text-white"
-                title="Zoom Out"
-              >
-                <ZoomOut className="w-3.5 h-3.5" />
-              </Button>
-              <span className="text-[10px] font-mono text-zinc-400 w-9 text-center">
+            <div dir="ltr" className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-lg p-0.5">
+              <Tooltip content={isAr ? 'تصغير' : 'Zoom Out'} side="bottom">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setZoomLevel((z) => Math.max(0.5, z - 0.25))}
+                  className="h-7 w-7 text-zinc-300 hover:text-white cursor-pointer"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </Button>
+              </Tooltip>
+              <span className="text-[10px] font-mono tabular-nums text-zinc-400 w-9 text-center">
                 {Math.round(zoomLevel * 100)}%
               </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setZoomLevel((z) => Math.min(3, z + 0.25))}
-                className="h-7 w-7 text-zinc-300 hover:text-white"
-                title="Zoom In"
-              >
-                <ZoomIn className="w-3.5 h-3.5" />
-              </Button>
+              <Tooltip content={isAr ? 'تكبير' : 'Zoom In'} side="bottom">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setZoomLevel((z) => Math.min(3, z + 0.25))}
+                  className="h-7 w-7 text-zinc-300 hover:text-white cursor-pointer"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </Button>
+              </Tooltip>
             </div>
           )}
 
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onClose}
-            className="h-8 w-8 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg cursor-pointer"
-            title="Close Lightbox (Esc)"
-          >
-            <X className="w-4 h-4" />
-          </Button>
+          <Tooltip content={isAr ? 'إغلاق (Esc)' : 'Close (Esc)'} side="bottom">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onClose}
+              className="h-8 w-8 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          </Tooltip>
         </div>
       </div>
 
       {/* Main Media Preview Area */}
       <div className="relative flex-1 flex items-center justify-center p-4 overflow-hidden min-h-0">
-        {/* Navigation Arrow Left */}
         {assets.length > 1 && (
           <button
             type="button"
             onClick={handlePrev}
+            aria-label="Previous asset"
             className="absolute left-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-700/80 text-white flex items-center justify-center transition shadow-lg cursor-pointer"
-            title="Previous (Left Arrow)"
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
         )}
 
-        {/* Content Viewer */}
         <div className="flex items-center justify-center w-full h-full">
           {isVideo ? (
             videoObjectUrl ? (
@@ -216,13 +211,11 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
                 className="w-full h-full max-h-[85vh] object-contain rounded-lg shadow-2xl bg-black"
                 style={{ minHeight: '400px', maxWidth: '95vw' }}
                 onCanPlay={(e) => {
-                  // Unmute after autoplay starts (browser policy: autoplay requires muted initially)
                   const vid = e.currentTarget;
                   vid.muted = false;
                 }}
               />
             ) : (
-              /* File not in memory (e.g. loaded from DB after reload) — show the storyboard thumbnail */
               <div className="flex flex-col items-center justify-center gap-3">
                 <img
                   src={currentAsset.previewUrl}
@@ -230,7 +223,7 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
                   className="max-h-[65vh] max-w-full rounded-xl shadow-2xl object-contain bg-zinc-900 border border-zinc-800 opacity-60"
                 />
                 <p className="text-zinc-400 text-xs font-mono bg-zinc-900/80 px-3 py-1.5 rounded-md border border-zinc-700">
-                  Video preview — original file not in memory. Re-upload to play.
+                  {isAr ? 'معاينة الفيديو — الملف الأصلي غير محمّل في الذاكرة.' : 'Video preview — original file not in memory.'}
                 </p>
               </div>
             )
@@ -248,13 +241,12 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
           )}
         </div>
 
-        {/* Navigation Arrow Right */}
         {assets.length > 1 && (
           <button
             type="button"
             onClick={handleNext}
+            aria-label="Next asset"
             className="absolute right-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-700/80 text-white flex items-center justify-center transition shadow-lg cursor-pointer"
-            title="Next (Right Arrow)"
           >
             <ChevronRight className="w-5 h-5" />
           </button>
@@ -263,15 +255,15 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
 
       {/* Bottom Metadata & Specs Strip */}
       <div className="px-6 py-2.5 bg-zinc-950/90 border-t border-zinc-800/80 flex flex-wrap items-center justify-between gap-3 text-xs z-10">
-        <div className="flex items-center gap-3 font-mono text-[11px] text-zinc-400">
+        <div className="flex items-center gap-3 font-mono tabular-nums text-[11px] text-zinc-400">
           {currentAsset.width && currentAsset.height && (
             <span>
               {currentAsset.width} × {currentAsset.height} px
             </span>
           )}
           {currentAsset.durationSeconds !== undefined && (
-            <span className="text-sky-400">
-              Duration: {currentAsset.durationSeconds}s
+            <span className="text-zinc-200">
+              {currentAsset.durationSeconds}s
             </span>
           )}
           {currentAsset.resolution && (

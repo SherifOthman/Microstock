@@ -1,7 +1,6 @@
 import React, { useRef, useState, useMemo, useCallback, useTransition } from 'react';
-import { db } from '../../db';
+import { db, useSqliteQuery } from '../../db';
 import { useLanguage } from '../../context/LanguageContext';
-import { useLiveQuery } from 'dexie-react-hooks';
 import {
   useBatchQueue,
   useUnifiedAssets,
@@ -21,17 +20,16 @@ import { ConfirmDialog } from '../../components/ui/alert-dialog';
 import { Button } from '../../components/ui/button';
 import { PLATFORMS_CONFIG } from '../../constants/platforms';
 import { getPlatformLogo } from '../../components/icons/StockLogos';
-import { MasterMetadataRecord, SupportedPlatform } from '../../types';
-import { Archive, Copy, Eye, Check, Download, AlertTriangle, KeyRound } from 'lucide-react';
+import { MasterMetadataRecord } from '../../types';
+import { Archive, Copy, Eye, Check, Download, KeyRound, FolderDown, Loader2, AlertTriangle } from 'lucide-react';
 import { Alert, AlertTitle, AlertDescription } from '../../components/ui/alert';
 
 export const StudioView: React.FC = () => {
-  const { t, isRtl, language } = useLanguage();
+  const { t, language } = useLanguage();
   const [, startTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
-  // Modular Hooks
   const {
     queueState,
     isRunning,
@@ -51,13 +49,11 @@ export const StudioView: React.FC = () => {
   const settings = useStudioMarketplaceSettings();
   const dialogs = useStudioDialogs();
 
-  // Keys & API Health Query
-  const keys = useLiveQuery(() => db.apiKeys.toArray(), []) || [];
+  const keys = useSqliteQuery(() => db.apiKeys.toArray(), [], []) || [];
   const healthyKeys = useMemo(() => keys.filter((k) => k.status !== 'invalid' && k.status !== 'disabled'), [keys]);
   const combinedRpm = useMemo(() => healthyKeys.reduce((acc, k) => acc + (k.rpmLimit || 15), 0), [healthyKeys]);
   const [isKeyShake, setIsKeyShake] = useState(false);
 
-  // Assets & View Mode
   const [viewMode, setViewMode] = useState<'compact' | 'detailed'>(() => {
     return (localStorage.getItem('stock_view_mode') as 'compact' | 'detailed') || 'detailed';
   });
@@ -65,7 +61,6 @@ export const StudioView: React.FC = () => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
 
-  // Unified Reactive Assets (In-Place sorting by createdAt)
   const { unifiedAssets, filteredAssets, completedCount, pendingCount, brandNewPendingCount, failedCount } =
     useUnifiedAssets(queueState, searchQuery, 'all');
 
@@ -74,19 +69,25 @@ export const StudioView: React.FC = () => {
     [unifiedAssets]
   );
 
-  // CSV Export Engine with Strict Lockout
   const {
     previewPlatform,
     previewCsvContent,
     previewCopied,
     setPreviewPlatform,
     copyPreviewCsv,
+    isSavingToFolder,
+    folderSaveSuccess,
+    setFolderSaveSuccess,
+    noticeDialog,
+    setNoticeDialog,
+    incompleteExportDialog,
+    setIncompleteExportDialog,
     handlePreviewCsv,
-    handleSingleExport,
-    handleZipExport,
+    handleSingleExportWithCheck,
+    handleExportZipWithCheck,
+    handleSaveToFolderWithCheck,
   } = useCsvExport(records, settings.selectedPlatforms, isRunning, settings.getTransformOptions);
 
-  // Ingest Handlers
   const handleFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
     await addFiles(files);
@@ -107,7 +108,6 @@ export const StudioView: React.FC = () => {
     }
   }, [handleFiles]);
 
-  // Action Dispatchers
   const handleStart = useCallback(() => {
     if (healthyKeys.length === 0) {
       setIsKeyShake(true);
@@ -174,12 +174,10 @@ export const StudioView: React.FC = () => {
   }, []);
 
   return (
-    <div className="flex flex-col lg:flex-row gap-5 items-start h-full min-h-0 overflow-hidden">
-      {/* Hidden File / Folder Inputs */}
+    <div className="flex flex-col lg:flex-row gap-4 items-start h-full min-h-0 overflow-hidden">
       <input ref={fileInputRef} type="file" multiple accept="image/*,video/*,.eps,.ai,.svg" onChange={onFileInputChange} className="hidden" />
       <input ref={folderInputRef} type="file" multiple {...({ webkitdirectory: '', directory: '' } as any)} onChange={onFileInputChange} className="hidden" />
 
-      {/* Left Sidebar: Marketplaces, Tools, & API Key Status */}
       <MarketplaceSidebar
         settings={settings}
         healthyKeysCount={healthyKeys.length}
@@ -190,29 +188,26 @@ export const StudioView: React.FC = () => {
         onUnlockShutter={() => dialogs.setIsShutterUnlockDialogOpen(true)}
       />
 
-      {/* Main Workspace */}
-      <main className="flex-1 w-full min-w-0 space-y-4 h-full min-h-0 overflow-y-auto pr-1">
-        {/* Missing API Key Warning Banner */}
+      <main className="flex-1 w-full min-w-0 space-y-3 h-full min-h-0 overflow-y-auto pr-1">
         {healthyKeys.length === 0 && (
-          <Alert variant="warning" className={`shadow-2xs ${isKeyShake ? 'animate-shake ring-2 ring-amber-500/50' : ''}`}>
+          <Alert variant="warning" className={isKeyShake ? 'animate-shake ring-2 ring-amber-500/50' : ''}>
             <KeyRound className="w-4 h-4" />
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full">
               <div>
                 <AlertTitle className="text-xs font-semibold text-amber-700 dark:text-amber-400">
-                  {t.apiKeyMissingBannerTitle || 'API Key Required for AI Generation'}
+                  {t.apiKeyMissingBannerTitle}
                 </AlertTitle>
                 <AlertDescription className="text-xs text-amber-800/90 dark:text-amber-300/80">
-                  {t.apiKeyMissingBannerDesc || 'Please add at least one API key to start generating metadata.'}
+                  {t.apiKeyMissingBannerDesc}
                 </AlertDescription>
               </div>
-              <Button size="sm" onClick={() => dialogs.setIsKeyRingOpen(true)} className="h-8 px-3 text-xs bg-amber-500 hover:bg-amber-600 text-white shrink-0 cursor-pointer">
-                {t.manageKeys || 'Manage Keys'}
+              <Button size="sm" onClick={() => dialogs.setIsKeyRingOpen(true)} className="h-7 px-3 text-xs shrink-0 cursor-pointer">
+                {t.manageKeys}
               </Button>
             </div>
           </Alert>
         )}
 
-        {/* Global Toolbar */}
         <StudioToolbar
           searchQuery={searchQuery}
           onSearchChange={(q) => startTransition(() => setSearchQuery(q))}
@@ -234,7 +229,10 @@ export const StudioView: React.FC = () => {
           onResumeQueue={handleResume}
           onRetryFailed={handleRetryFailed}
           onRegenerateAll={handleRegenerateAll}
-          onExportCsvs={() => dialogs.setIsExportOpen(true)}
+          onExportCsvs={() => {
+            setFolderSaveSuccess(null);
+            dialogs.setIsExportOpen(true);
+          }}
           onClearAll={() => dialogs.setClearAllConfirmOpen(true)}
           onKeyAlertShake={() => {
             setIsKeyShake(true);
@@ -244,15 +242,14 @@ export const StudioView: React.FC = () => {
           t={t as any}
         />
 
-        {/* Live Progress Bar Banner */}
         <GlobalProgressBanner
           queueState={queueState}
           showProgressBar={showProgressBar}
           isRunning={isRunning}
           onRetryFailed={handleRetryFailed}
+          language={language as any}
         />
 
-        {/* Assets Cards Grid List */}
         <AssetCardList
           assets={filteredAssets}
           viewMode={viewMode}
@@ -281,52 +278,128 @@ export const StudioView: React.FC = () => {
       </main>
 
       {/* Modals & Dialogs */}
-      <Dialog open={dialogs.isKeyRingOpen} onClose={() => dialogs.setIsKeyRingOpen(false)} title={t.keysTitle || 'API Keys & Priority'} className="max-w-3xl">
+      <Dialog open={dialogs.isKeyRingOpen} onClose={() => dialogs.setIsKeyRingOpen(false)} title={t.keysTitle} size="lg">
         <KeyRingView />
       </Dialog>
 
-      <Dialog open={dialogs.isExportOpen} onClose={() => dialogs.setIsExportOpen(false)} title="Export Marketplace CSV Files" className="max-w-2xl">
+      <Dialog
+        open={dialogs.isExportOpen}
+        onClose={() => dialogs.setIsExportOpen(false)}
+        title={language === 'ar' ? 'تصدير ملفات CSV للمنصات' : 'Export Agency CSV Files'}
+        size="md"
+      >
         <div className="space-y-4 text-xs">
+          {unifiedAssets.length > completedCount && (
+            <div className="p-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400 flex items-center gap-2 text-[11px]">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>
+                {language === 'ar'
+                  ? `سيتم تصدير ${completedCount} ملف مكتمل فقط واستبعاد ${unifiedAssets.length - completedCount} ملف قيد الانتظار أو فاشل.`
+                  : `Only the ${completedCount} completed asset(s) will be exported (${unifiedAssets.length - completedCount} pending/failed excluded).`}
+              </span>
+            </div>
+          )}
+
+          {folderSaveSuccess && (
+            <div className="p-2.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center gap-2 text-[11px]">
+              <Check className="w-4 h-4 shrink-0" />
+              <span>{folderSaveSuccess}</span>
+            </div>
+          )}
+
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <span className="text-muted-foreground text-xs">CSVs for {settings.selectedPlatforms.length} active marketplaces.</span>
-            <Button size="sm" onClick={() => handleZipExport()} disabled={settings.selectedPlatforms.length === 0} className="gap-1.5 text-xs font-semibold shrink-0 cursor-pointer">
-              <Archive className="w-3.5 h-3.5" /> Download All Selected (.ZIP)
-            </Button>
+            <span className="text-muted-foreground text-xs font-mono tabular-nums">
+              {language === 'ar'
+                ? `${settings.selectedPlatforms.length} منصات · ${completedCount} أصل جاهز`
+                : `${settings.selectedPlatforms.length} agencies · ${completedCount} ready`}
+            </span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => handleSaveToFolderWithCheck(unifiedAssets.length, completedCount)}
+                disabled={settings.selectedPlatforms.length === 0 || isSavingToFolder}
+                className="gap-1.5 text-xs font-semibold shrink-0 cursor-pointer"
+              >
+                {isSavingToFolder ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <FolderDown className="w-3.5 h-3.5" />
+                )}
+                <span>{language === 'ar' ? 'حفظ CSV في مجلد' : 'Save CSVs to Folder'}</span>
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => handleExportZipWithCheck(unifiedAssets.length, completedCount)}
+                disabled={settings.selectedPlatforms.length === 0}
+                className="gap-1.5 text-xs font-semibold shrink-0 cursor-pointer"
+              >
+                <Archive className="w-3.5 h-3.5" />
+                <span>{language === 'ar' ? 'تحميل الكل (.ZIP)' : 'Download All (.ZIP)'}</span>
+              </Button>
+            </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            {Object.values(PLATFORMS_CONFIG).filter((p: any) => settings.selectedPlatforms.includes(p.id)).map((p: any) => (
-              <div key={p.id} className="p-3 rounded-lg border border-border bg-card flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  {getPlatformLogo(p.id, 20)}
-                  <div>
-                    <div className="font-semibold text-foreground">{p.name}</div>
-                    <div className="text-[10px] text-muted-foreground font-mono">{p.filenameSuffix}</div>
+            {Object.values(PLATFORMS_CONFIG)
+              .filter((p: any) => settings.selectedPlatforms.includes(p.id))
+              .map((p: any) => (
+                <div
+                  key={p.id}
+                  className="p-3 rounded-lg border border-border bg-secondary/40 flex items-center justify-between"
+                >
+                  <div className="flex items-center gap-2">
+                    {getPlatformLogo(p.id, 18)}
+                    <div>
+                      <div className="font-semibold text-foreground">{p.name}</div>
+                      <div dir="ltr" className="text-[10px] text-muted-foreground font-mono text-start">{p.filenameSuffix}</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handlePreviewCsv(p.id)}
+                      className="h-6 px-1.5 text-[10px] gap-1 cursor-pointer"
+                    >
+                      <Eye className="w-3 h-3" /> {language === 'ar' ? 'معاينة' : 'Preview'}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleSingleExportWithCheck(p.id, unifiedAssets.length, completedCount)}
+                      className="h-6 px-2 text-[10px] gap-1 cursor-pointer"
+                    >
+                      <Download className="w-3 h-3" /> CSV
+                    </Button>
                   </div>
                 </div>
-                <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="sm" onClick={() => handlePreviewCsv(p.id)} className="h-6 px-1.5 text-[10px] gap-1 cursor-pointer">
-                    <Eye className="w-3 h-3" /> Preview
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => handleSingleExport(p.id)} className="h-6 px-2 text-[10px] gap-1 cursor-pointer">
-                    <Download className="w-3 h-3" /> CSV
-                  </Button>
-                </div>
-              </div>
-            ))}
+              ))}
           </div>
         </div>
       </Dialog>
 
       {previewPlatform && (
-        <Dialog open={!!previewPlatform} onClose={() => setPreviewPlatform(null)} title={`CSV Preview: ${PLATFORMS_CONFIG[previewPlatform].name}`} className="max-w-2xl">
+        <Dialog
+          open={!!previewPlatform}
+          onClose={() => setPreviewPlatform(null)}
+          title={
+            language === 'ar'
+              ? `معاينة CSV: ${PLATFORMS_CONFIG[previewPlatform].name}`
+              : `CSV Preview: ${PLATFORMS_CONFIG[previewPlatform].name}`
+          }
+          size="lg"
+        >
           <div className="space-y-3">
             <div className="flex justify-end">
               <Button size="sm" variant="outline" onClick={copyPreviewCsv} className="h-7 text-xs gap-1 cursor-pointer">
-                {previewCopied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                {previewCopied ? 'Copied' : 'Copy CSV'}
+                {previewCopied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                {previewCopied ? t.copied : language === 'ar' ? 'نسخ CSV' : 'Copy CSV'}
               </Button>
             </div>
-            <pre dir="ltr" className="p-3 bg-secondary/50 rounded-lg text-[11px] font-mono text-foreground overflow-x-auto max-h-80 whitespace-pre text-left">
+            <pre
+              dir="ltr"
+              className="p-3 bg-secondary/60 rounded-lg text-[11px] font-mono text-foreground overflow-x-auto max-h-80 whitespace-pre text-left border border-border"
+            >
               {previewCsvContent}
             </pre>
           </div>
@@ -364,9 +437,14 @@ export const StudioView: React.FC = () => {
       <ConfirmDialog
         open={!!dialogs.assetToDelete}
         onOpenChange={(open) => !open && dialogs.setAssetToDelete(null)}
-        title="Delete Asset"
-        description={`Delete "${dialogs.assetToDelete?.filename}" from studio and local database?`}
-        confirmText="Delete"
+        title={t.deleteAsset}
+        description={
+          language === 'ar'
+            ? `هل تريد حذف "${dialogs.assetToDelete?.filename}" من الاستوديو؟`
+            : `Remove "${dialogs.assetToDelete?.filename}" from the workspace?`
+        }
+        confirmText={language === 'ar' ? 'حذف' : 'Delete'}
+        cancelText={t.cancel}
         variant="destructive"
         onConfirm={handleDeleteSingle}
       />
@@ -374,11 +452,47 @@ export const StudioView: React.FC = () => {
       <ConfirmDialog
         open={dialogs.clearAllConfirmOpen}
         onOpenChange={dialogs.setClearAllConfirmOpen}
-        title="Clear All Assets"
-        description="Are you sure you want to clear all assets, queues, and metadata records? This action cannot be undone."
-        confirmText="Clear Everything"
+        title={t.clearAll}
+        description={
+          language === 'ar'
+            ? 'سيتم مسح جميع الملفات وسجلات الـ Metadata الحالية. لا يمكن التراجع عن هذا الإجراء.'
+            : 'Clear all queued files and generated metadata records? This action cannot be undone.'
+        }
+        confirmText={t.clearAll}
+        cancelText={t.cancel}
         variant="destructive"
         onConfirm={handleClearAll}
+      />
+
+      <ConfirmDialog
+        open={Boolean(incompleteExportDialog)}
+        onOpenChange={(open) => !open && setIncompleteExportDialog(null)}
+        title={language === 'ar' ? 'توجد ملفات غير مكتملة في الدفعة' : 'Incomplete Assets in Batch'}
+        description={
+          language === 'ar'
+            ? `يوجد ${incompleteExportDialog?.incompleteCount || 0} ملف قيد الانتظار أو فشل توليد بياناته. هل تريد المتابعة وتصدير الـ ${incompleteExportDialog?.completedCount || 0} ملف المكتمل فقط؟`
+            : `${incompleteExportDialog?.incompleteCount || 0} assets are still pending or failed. Do you want to export only the ${incompleteExportDialog?.completedCount || 0} completed assets?`
+        }
+        confirmText={
+          language === 'ar'
+            ? `تصدير المكتمل فقط (${incompleteExportDialog?.completedCount || 0})`
+            : `Export Only Completed (${incompleteExportDialog?.completedCount || 0})`
+        }
+        cancelText={t.cancel}
+        onConfirm={() => {
+          incompleteExportDialog?.onProceed();
+        }}
+        onCancel={() => setIncompleteExportDialog(null)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(noticeDialog)}
+        onOpenChange={(open) => !open && setNoticeDialog(null)}
+        title={noticeDialog?.title || 'Notice'}
+        description={noticeDialog?.message || ''}
+        confirmText={language === 'ar' ? 'حسناً' : 'OK'}
+        hideCancel={true}
+        onConfirm={() => setNoticeDialog(null)}
       />
 
       {dialogs.lightboxIndex !== null && (

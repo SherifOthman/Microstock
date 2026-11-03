@@ -1,376 +1,103 @@
-import React, { useRef, useState, useMemo, useCallback, useEffect } from 'react';
-import { rasterizeEpsFile, EpsRenderResult } from '../../services/eps/epsEngine';
+import React, { useRef } from 'react';
 import { Button } from '../../components/ui/button';
-import { Badge } from '../../components/ui/badge';
-import { Card } from '../../components/ui/card';
+import { Tooltip } from '../../components/ui/tooltip';
 import {
   CheckCircle2,
   FolderDown,
+  FolderUp,
   Layers,
   Loader2,
+  Plus,
   RefreshCw,
   Trash2,
   UploadCloud,
   Wand2,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
-import { saveFilesToLocalDirectory, FileToSave } from '../../services/desktop/desktopFs';
+import { useEpsConverter, EpsConvertItem } from './hooks/useEpsConverter';
+import { EpsVirtualGrid } from './components/EpsVirtualGrid';
 
-export interface EpsConvertItem {
-  id: string;
-  file: File;
-  originalName: string;
-  outputJpgName: string;
-  size: number;
-  status: 'idle' | 'rendering' | 'completed' | 'error';
-  progressMsg?: string;
-  errorMessage?: string;
-  result?: EpsRenderResult;
-}
+export type { EpsConvertItem };
 
 interface EpsConverterViewProps {
   onSendToStudio?: (files: File[]) => void;
 }
 
-interface EpsItemCardProps {
-  item: EpsConvertItem;
-  onRenderSingle: (item: EpsConvertItem) => void;
-  onSaveSingleJpg: (item: EpsConvertItem) => void;
-}
-
-/**
- * Isolated, React.memo protected card component.
- * Prevents full-grid render thrashing when individual EPS items change state.
- */
-const EpsItemCard: React.FC<EpsItemCardProps> = React.memo(
-  ({ item, onRenderSingle, onSaveSingleJpg }) => {
-    const previewSrc = item.result?.objectUrl || item.result?.dataUrl;
-
-    return (
-      <Card className="overflow-hidden flex flex-col justify-between border-border bg-card">
-        <div className="p-3 space-y-2.5">
-          {/* Thumbnail Preview Area with Async Zero-Copy Rendering */}
-          <div className="aspect-square rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex items-center justify-center overflow-hidden relative">
-            {previewSrc ? (
-              <img
-                src={previewSrc}
-                alt={item.outputJpgName}
-                loading="lazy"
-                decoding="async"
-                className="w-full h-full object-contain bg-white"
-              />
-            ) : item.status === 'rendering' ? (
-              <div className="flex flex-col items-center gap-1.5 text-blue-400">
-                <Loader2 className="w-6 h-6 animate-spin" />
-                <span className="text-[10px] font-mono">Rasterizing...</span>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center gap-1 text-muted-foreground">
-                <Layers className="w-8 h-8 text-blue-500/50" />
-                <span className="text-[10px] font-mono uppercase">EPS Vector</span>
-              </div>
-            )}
-
-            {item.result && (
-              <Badge
-                variant="outline"
-                className="absolute bottom-1.5 right-1.5 bg-black/80 text-white text-[9px] font-mono border-zinc-700 py-0"
-              >
-                {item.result.width} × {item.result.height}
-              </Badge>
-            )}
-          </div>
-
-          {/* Filenames */}
-          <div className="space-y-0.5">
-            <p className="text-xs font-semibold text-foreground truncate" title={item.originalName}>
-              {item.originalName}
-            </p>
-            <p className="text-[11px] text-muted-foreground font-mono truncate" title={item.outputJpgName}>
-              &rarr; {item.outputJpgName}
-            </p>
-          </div>
-        </div>
-
-        {/* Card Footer Actions */}
-        <div className="p-3 pt-0 flex items-center justify-between border-t border-border/50 mt-2">
-          <span className="text-[10px] text-muted-foreground font-mono">
-            {(item.size / 1024).toFixed(0)} KB
-          </span>
-
-          <div className="flex items-center gap-1">
-            {item.status === 'completed' ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onSaveSingleJpg(item)}
-                className="h-7 text-xs px-2 gap-1 text-emerald-500 border-emerald-500/30"
-              >
-                <FolderDown className="w-3 h-3" /> Save
-              </Button>
-            ) : (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => onRenderSingle(item)}
-                disabled={item.status === 'rendering'}
-                className="h-7 text-xs px-2 gap-1"
-              >
-                {item.status === 'rendering' ? (
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                ) : (
-                  <RefreshCw className="w-3 h-3" />
-                )}
-                Convert
-              </Button>
-            )}
-          </div>
-        </div>
-      </Card>
-    );
-  }
-);
-EpsItemCard.displayName = 'EpsItemCard';
-
 export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStudio }) => {
-  const { language } = useLanguage();
+  const { language, t } = useLanguage();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
-  const [items, setItems] = useState<EpsConvertItem[]>([]);
-  const [isConvertingBatch, setIsConvertingBatch] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const {
+    items,
+    sortedItems,
+    completedCount,
+    isConvertingBatch,
+    statusMessage,
+    handleAddFiles,
+    handleRenderSingle,
+    handleConvertAll,
+    handleSaveSingleJpg,
+    handleSaveToDirectory,
+    handleSendToStudio,
+    handleClearAll,
+  } = useEpsConverter(language, onSendToStudio);
 
-  // Revoke object URLs on unmount to ensure 0 memory leaks
-  useEffect(() => {
-    return () => {
-      items.forEach((item) => {
-        if (item.result?.objectUrl) {
-          try {
-            URL.revokeObjectURL(item.result.objectUrl);
-          } catch {
-            // ignore
-          }
-        }
-      });
-    };
-  }, [items]);
-
-  // Natural alphanumeric sorting matching Windows File Explorer
-  const sortedItems = useMemo(() => {
-    return [...items].sort((a, b) =>
-      a.originalName.localeCompare(b.originalName, undefined, { numeric: true, sensitivity: 'base' })
-    );
-  }, [items]);
-
-  const handleAddFiles = useCallback((newFiles: File[]) => {
-    const epsFiles = newFiles.filter((f) => {
-      const ext = f.name.split('.').pop()?.toLowerCase();
-      return ext === 'eps' || ext === 'ai';
-    });
-
-    if (epsFiles.length === 0) {
-      setStatusMessage({
-        type: 'error',
-        text: language === 'ar' ? 'الرجاء اختيار ملفات بتنسيق .eps أو .ai فقط' : 'Please select only .eps or .ai vector files',
-      });
-      return;
+  const onFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      handleAddFiles(Array.from(e.target.files));
+      e.target.value = '';
     }
-
-    const newItems: EpsConvertItem[] = epsFiles.map((file) => {
-      const base = file.name.replace(/\.[^/.]+$/, '');
-      return {
-        id: crypto.randomUUID(),
-        file,
-        originalName: file.name,
-        outputJpgName: `${base}.jpg`,
-        size: file.size,
-        status: 'idle',
-      };
-    });
-
-    setItems((prev) => {
-      const existing = new Set(prev.map((p) => p.originalName));
-      return [...prev, ...newItems.filter((n) => !existing.has(n.originalName))];
-    });
-
-    setStatusMessage(null);
-  }, [language]);
-
-  const handleRenderSingle = useCallback(async (item: EpsConvertItem) => {
-    setItems((prev) =>
-      prev.map((i) => (i.id === item.id ? { ...i, status: 'rendering', progressMsg: 'Rasterizing vector...' } : i))
-    );
-
-    try {
-      const res = await rasterizeEpsFile(item.file);
-      setItems((prev) =>
-        prev.map((i) => (i.id === item.id ? { ...i, status: 'completed', result: res, progressMsg: undefined } : i))
-      );
-    } catch (err: any) {
-      setItems((prev) =>
-        prev.map((i) =>
-          i.id === item.id
-            ? { ...i, status: 'error', errorMessage: err.message || 'Rasterization failed', progressMsg: undefined }
-            : i
-        )
-      );
-    }
-  }, []);
-
-  const handleConvertAll = useCallback(async () => {
-    setIsConvertingBatch(true);
-    setStatusMessage(null);
-
-    const pending = sortedItems.filter((i) => i.status !== 'completed');
-    
-    // Concurrency is strictly bounded by the Web Worker Concurrency Pool (max 2-3 workers).
-    // Dispatching via Promise.all processes tasks through the queue with 0 CPU starvation.
-    await Promise.all(pending.map((item) => handleRenderSingle(item)));
-
-    setIsConvertingBatch(false);
-    setStatusMessage({
-      type: 'success',
-      text: language === 'ar' ? 'اكتمل تحويل جميع ملفات الـ EPS بنجاح!' : 'All EPS files converted successfully!',
-    });
-  }, [sortedItems, handleRenderSingle, language]);
-
-  const handleSaveSingleJpg = useCallback(async (item: EpsConvertItem) => {
-    if (!item.result?.blob) return;
-    try {
-      const res = await saveFilesToLocalDirectory([
-        { name: item.outputJpgName, data: item.result.blob },
-      ]);
-      if (res.success) {
-        setStatusMessage({
-          type: 'success',
-          text: language === 'ar' ? `تم حفظ ${item.outputJpgName} في المجلد بنجاح!` : `Saved ${item.outputJpgName} directly to folder!`,
-        });
-      }
-    } catch (err: any) {
-      setStatusMessage({
-        type: 'error',
-        text: err.message || 'Failed to save',
-      });
-    }
-  }, [language]);
-
-  const handleSaveToDirectory = useCallback(async () => {
-    const completed = items.filter((i) => i.result?.blob);
-    if (completed.length === 0) return;
-
-    try {
-      const filesToSave: FileToSave[] = completed.map((item) => ({
-        name: item.outputJpgName,
-        data: item.result!.blob!,
-      }));
-
-      const res = await saveFilesToLocalDirectory(filesToSave, {
-        folderName: 'EPS_Converted_JPGs',
-      });
-
-      if (res.success) {
-        setStatusMessage({
-          type: 'success',
-          text: language === 'ar' ? `تم حفظ ${res.savedCount} صورة JPG في المجلد بنجاح!` : `Saved ${res.savedCount} JPG images directly to folder!`,
-        });
-      } else if (!res.canceled) {
-        setStatusMessage({
-          type: 'error',
-          text: res.error || 'Failed to save to directory',
-        });
-      }
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
-        setStatusMessage({
-          type: 'error',
-          text: err.message || 'Failed to save to directory',
-        });
-      }
-    }
-  }, [items, language]);
-
-  const handleSendToStudio = useCallback(() => {
-    if (!onSendToStudio) return;
-    const completed = items.filter((i) => i.result?.blob);
-    if (completed.length === 0) return;
-
-    const filesToSend: File[] = completed.map(
-      (item) => new File([item.result!.blob], item.outputJpgName, { type: 'image/jpeg' })
-    );
-
-    onSendToStudio(filesToSend);
-  }, [items, onSendToStudio]);
-
-  const completedCount = useMemo(() => items.filter((i) => i.status === 'completed').length, [items]);
+  };
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto py-2">
-      {/* Header Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card border border-border p-4 sm:p-6 rounded-2xl shadow-xs">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <div className="p-2 rounded-xl bg-blue-500/10 text-blue-500 border border-blue-500/20">
-              <Layers className="w-5 h-5" />
-            </div>
-            <div>
-              <h1 className="text-lg sm:text-xl font-bold text-foreground">
-                {language === 'ar' ? 'محول ملفات EPS إلى صور JPG الاحترافية (300 DPI)' : 'Native EPS to JPG Extractor (300 DPI)'}
-              </h1>
-              <p className="text-xs text-muted-foreground">
-                {language === 'ar'
-                  ? 'رسترة متجهات Illustrator بمحرك Ghostscript بدقة 300 DPI ونظام ألوان DeviceRGB وتنعيم فائق (4-bit Supersampling) وجودة 100% مع خلفية بيضاء نقية.'
-                  : 'Native Ghostscript rasterizer at 300 DPI, DeviceRGB color space, art-optimized supersampling anti-aliasing, and 100% JPEG quality matching Adobe Illustrator.'}
-              </p>
-            </div>
+    <div className="space-y-4 max-w-6xl mx-auto">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".eps,.ai"
+        multiple
+        className="hidden"
+        onChange={onFileInputChange}
+      />
+      <input
+        ref={folderInputRef}
+        type="file"
+        multiple
+        {...({ webkitdirectory: '', directory: '' } as any)}
+        className="hidden"
+        onChange={onFileInputChange}
+      />
+
+      {/* Compact Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card border border-border p-4 rounded-xl">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-secondary text-primary border border-border">
+            <Layers className="w-4 h-4" />
+          </div>
+          <div className="text-start">
+            <h1 className="text-sm sm:text-base font-semibold text-foreground tracking-tight">
+              {language === 'ar' ? 'محول EPS إلى JPG (300 DPI)' : 'EPS 10 to High-Res JPG Engine'}
+            </h1>
+            <p className="text-xs text-muted-foreground">
+              {language === 'ar'
+                ? 'تحويل متجهات Illustrator إلى صور JPG بدقة 300 DPI ونظام ألوان RGB وخلفية بيضاء.'
+                : 'Ghostscript 300 DPI vector rasterization in sRGB with pure white canvas.'}
+            </p>
           </div>
         </div>
 
-        {/* Engine Badge */}
-        <div className="flex items-center gap-2 bg-secondary/50 px-3 py-1.5 rounded-xl border border-border text-xs font-mono text-zinc-300">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span>Ghostscript 300 DPI • RGB • Art-Optimized (100% Quality)</span>
-        </div>
-      </div>
-
-      {/* Upload Drop Zone */}
-      <div
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          e.preventDefault();
-          if (e.dataTransfer.files) handleAddFiles(Array.from(e.dataTransfer.files));
-        }}
-        className="border-2 border-dashed border-border hover:border-blue-500/50 bg-card/50 hover:bg-card rounded-2xl p-6 text-center transition flex flex-col items-center justify-center gap-3 cursor-pointer"
-        onClick={() => fileInputRef.current?.click()}
-      >
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".eps,.ai"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            if (e.target.files) handleAddFiles(Array.from(e.target.files));
-          }}
-        />
-        <div className="w-12 h-12 rounded-2xl bg-blue-500/10 text-blue-500 flex items-center justify-center">
-          <UploadCloud className="w-6 h-6" />
-        </div>
-        <div className="space-y-1">
-          <p className="text-sm font-semibold text-foreground">
-            {language === 'ar' ? 'اسحب ملفات EPS 10 هنا أو انقر للاختيار' : 'Drop Illustrator EPS files here or click to browse'}
-          </p>
-          <p className="text-xs text-muted-foreground font-mono">
-            {language === 'ar' ? 'يدعم ملفات .eps و .ai (EPS 10 / EPS 8)' : 'Supports .eps and .ai (EPS 10 / EPS 8 standard)'}
-          </p>
-        </div>
+        <span className="text-[11px] font-mono text-muted-foreground shrink-0">
+          {language === 'ar' ? '300 DPI · RGB · جودة 100%' : '300 DPI · RGB · 100% Quality'}
+        </span>
       </div>
 
       {/* Status Notice */}
       {statusMessage && (
         <div
-          className={`p-3 rounded-xl border text-xs font-medium flex items-center gap-2 ${
+          className={`p-3 rounded-lg border text-xs font-medium flex items-center gap-2 ${
             statusMessage.type === 'success'
-              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-500'
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
               : 'bg-destructive/10 border-destructive/30 text-destructive'
           }`}
         >
@@ -379,82 +106,137 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
         </div>
       )}
 
-      {/* Action Toolbar */}
-      {items.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-card border border-border p-3.5 rounded-xl">
-          <div className="flex items-center gap-2 text-xs font-mono">
-            <Badge variant="outline">
-              {items.length} {language === 'ar' ? 'ملفات' : 'files'}
-            </Badge>
-            <span className="text-muted-foreground">
-              {completedCount} / {items.length} {language === 'ar' ? 'جاهز' : 'ready'}
-            </span>
+      {/* Upload Drop Zone (Empty State) with Consistent "Add Files" and "Add Folder" Buttons */}
+      {items.length === 0 ? (
+        <div
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            if (e.dataTransfer.files) handleAddFiles(Array.from(e.dataTransfer.files));
+          }}
+          className="border-2 border-dashed border-border hover:border-primary/50 bg-card rounded-xl p-10 text-center transition space-y-3"
+        >
+          <div className="w-11 h-11 rounded-xl bg-secondary text-primary flex items-center justify-center mx-auto border border-border">
+            <UploadCloud className="w-5 h-5" />
           </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              onClick={handleConvertAll}
-              disabled={isConvertingBatch}
-              className={`gap-1.5 transition-all ${
-                completedCount < items.length
-                  ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-md font-semibold cursor-pointer'
-                  : 'variant-outline text-muted-foreground'
-              }`}
-            >
-              {isConvertingBatch ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-              {language === 'ar' ? 'بدء تحويل الكل' : 'Convert All to JPG'}
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold text-foreground">
+              {language === 'ar' ? 'اسحب ملفات EPS هنا للتحويل' : 'Drop EPS vector files here'}
+            </h3>
+            <p dir="ltr" className="text-xs text-muted-foreground font-mono">
+              .eps · .ai (EPS 10 / EPS 8)
+            </p>
+          </div>
+          <div className="flex items-center justify-center gap-2 pt-1">
+            <Button size="sm" onClick={() => fileInputRef.current?.click()} className="gap-1.5 text-xs font-semibold cursor-pointer">
+              <Plus className="w-3.5 h-3.5" />
+              <span>{t.selectFiles}</span>
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => folderInputRef.current?.click()}
+              className="gap-1.5 text-xs cursor-pointer"
+            >
+              <FolderUp className="w-3.5 h-3.5" />
+              <span>{t.selectFolder}</span>
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Action Toolbar with Both "Add Files" & "Add Folder" */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-card border border-border p-3 rounded-xl">
+            <div className="flex items-center gap-2 text-xs font-mono tabular-nums">
+              <span className="font-semibold text-foreground">
+                {items.length} {language === 'ar' ? 'ملف' : 'files'}
+              </span>
+              <span className="text-muted-foreground">·</span>
+              <span className="text-muted-foreground">
+                {completedCount}/{items.length} {language === 'ar' ? 'جاهز' : 'ready'}
+              </span>
+            </div>
 
-            {completedCount > 0 && (
-              <>
-                <Button
-                  size="sm"
-                  onClick={handleSaveToDirectory}
-                  className="gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white shadow-md font-semibold cursor-pointer"
-                >
-                  <FolderDown className="w-3.5 h-3.5" />
-                  {language === 'ar' ? `حفظ (${completedCount}) في مجلد` : `Save to Folder (${completedCount})`}
-                </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                className="gap-1.5 text-xs cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>{t.selectFiles}</span>
+              </Button>
 
-                {onSendToStudio && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => folderInputRef.current?.click()}
+                className="gap-1.5 text-xs cursor-pointer"
+              >
+                <FolderUp className="w-3.5 h-3.5" />
+                <span>{t.selectFolder}</span>
+              </Button>
+
+              <Button
+                size="sm"
+                onClick={handleConvertAll}
+                disabled={isConvertingBatch}
+                className="gap-1.5 text-xs font-semibold cursor-pointer"
+              >
+                {isConvertingBatch ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                <span>{language === 'ar' ? 'تحويل الكل إلى JPG' : 'Render All to JPG'}</span>
+              </Button>
+
+              {completedCount > 0 && (
+                <>
                   <Button
-                    variant="secondary"
+                    variant="outline"
                     size="sm"
-                    onClick={handleSendToStudio}
-                    className="gap-1.5 text-blue-400 hover:text-blue-300 cursor-pointer"
+                    onClick={handleSaveToDirectory}
+                    className="gap-1.5 text-xs font-semibold cursor-pointer"
                   >
-                    <Wand2 className="w-3.5 h-3.5" />
-                    {language === 'ar' ? 'إرسال إلى استوديو الـ Metadata' : 'Send to Metadata Studio'}
+                    <FolderDown className="w-3.5 h-3.5" />
+                    <span>
+                      {language === 'ar' ? `حفظ (${completedCount}) في مجلد` : `Save to Folder (${completedCount})`}
+                    </span>
                   </Button>
-                )}
-              </>
-            )}
 
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setItems([])}
-              className="text-muted-foreground hover:text-destructive h-8 px-2 cursor-pointer"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </Button>
+                  {onSendToStudio && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleSendToStudio}
+                      className="gap-1.5 text-xs text-primary hover:text-primary/80 cursor-pointer"
+                    >
+                      <Wand2 className="w-3.5 h-3.5" />
+                      <span>{language === 'ar' ? 'إرسال إلى استوديو Metadata' : 'Send to Metadata Studio'}</span>
+                    </Button>
+                  )}
+                </>
+              )}
+
+              <Tooltip content={language === 'ar' ? 'مسح الكل' : 'Clear All'}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleClearAll}
+                  className="text-muted-foreground hover:text-destructive h-8 w-8 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              </Tooltip>
+            </div>
           </div>
-        </div>
-      )}
 
-      {/* Items Grid with React.memo protected cards */}
-      {sortedItems.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          {sortedItems.map((item) => (
-            <EpsItemCard
-              key={item.id}
-              item={item}
-              onRenderSingle={handleRenderSingle}
-              onSaveSingleJpg={handleSaveSingleJpg}
-            />
-          ))}
-        </div>
+          {/* TanStack Virtualized 4-Column Grid */}
+          <EpsVirtualGrid
+            items={sortedItems}
+            language={language}
+            onRenderSingle={handleRenderSingle}
+            onSaveSingleJpg={handleSaveSingleJpg}
+          />
+        </>
       )}
     </div>
   );

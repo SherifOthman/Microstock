@@ -1,48 +1,85 @@
-import React, { useState } from 'react';
-import { cn } from '../../lib/utils';
+import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { cn } from '@/lib/utils';
 
-interface TooltipProps {
-  content: string | React.ReactNode;
+export interface TooltipProps {
+  content?: React.ReactNode;
   children: React.ReactNode;
-  position?: 'top' | 'bottom' | 'left' | 'right';
   className?: string;
+  side?: 'top' | 'bottom' | 'left' | 'right';
 }
 
 export const Tooltip: React.FC<TooltipProps> = ({
   content,
   children,
-  position = 'top',
   className,
+  side = 'top',
 }) => {
-  const [isVisible, setIsVisible] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const triggerRef = useRef<HTMLDivElement>(null);
 
-  const positionClasses = {
-    top: 'bottom-full left-1/2 -translate-x-1/2 mb-2',
-    bottom: 'top-full left-1/2 -translate-x-1/2 mt-2',
-    left: 'right-full top-1/2 -translate-y-1/2 mr-2',
-    right: 'left-full top-1/2 -translate-y-1/2 ml-2',
-  };
+  useEffect(() => {
+    if (!visible || !triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const gap = 6;
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 1440;
+    let top = rect.top - gap;
+    let left = Math.max(48, Math.min(vw - 48, rect.left + rect.width / 2));
+
+    if (side === 'bottom') {
+      top = rect.bottom + gap;
+      left = Math.max(48, Math.min(vw - 48, rect.left + rect.width / 2));
+    } else if (side === 'left') {
+      top = rect.top + rect.height / 2;
+      left = rect.left - gap;
+    } else if (side === 'right') {
+      top = rect.top + rect.height / 2;
+      left = rect.right + gap;
+    }
+
+    setCoords({ top, left });
+  }, [visible, side]);
+
+  if (!content) {
+    return <>{children}</>;
+  }
+
+  const transformClass =
+    side === 'top'
+      ? '-translate-x-1/2 -translate-y-full'
+      : side === 'bottom'
+      ? '-translate-x-1/2'
+      : side === 'left'
+      ? '-translate-x-full -translate-y-1/2'
+      : '-translate-y-1/2';
 
   return (
     <div
-      className={cn('relative inline-flex items-center', className)}
-      onMouseEnter={() => setIsVisible(true)}
-      onMouseLeave={() => setIsVisible(false)}
-      onFocus={() => setIsVisible(true)}
-      onBlur={() => setIsVisible(false)}
+      ref={triggerRef}
+      className="inline-flex items-center"
+      onMouseEnter={() => setVisible(true)}
+      onMouseLeave={() => setVisible(false)}
+      onFocus={() => setVisible(true)}
+      onBlur={() => setVisible(false)}
     >
       {children}
-      {isVisible && (
-        <div
-          role="tooltip"
-          className={cn(
-            'absolute z-50 px-2.5 py-1.5 text-[11px] font-normal text-zinc-100 bg-zinc-900 border border-zinc-800 rounded-md shadow-lg whitespace-normal min-w-[160px] max-w-xs pointer-events-none transition-opacity duration-150 leading-relaxed text-left',
-            positionClasses[position]
-          )}
-        >
-          {content}
-        </div>
-      )}
+      {visible &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            role="tooltip"
+            style={{ top: `${coords.top}px`, left: `${coords.left}px` }}
+            className={cn(
+              'fixed z-[100] w-max max-w-xs px-2.5 py-1 text-[11px] font-medium leading-snug text-popover-foreground bg-popover border border-border rounded-md shadow-md pointer-events-none animate-in fade-in-0 zoom-in-95 duration-100',
+              transformClass,
+              className
+            )}
+          >
+            {content}
+          </div>,
+          document.body
+        )}
     </div>
   );
 };

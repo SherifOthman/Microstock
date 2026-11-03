@@ -2,6 +2,7 @@ import { isElectron } from '../desktop/desktopFs';
 import { sanitizeRenamerFilename } from '../../utils/renamerSanitizer';
 import { type SegregatedTrack, SEGREGATED_TRACKS, NEEDS_FIXING_FOLDER } from '../../constants/renamerRules';
 import { AssetBatchType, RenamerFileItem, RenamerMediaType, RenamerJobResult } from '../../types/renamer';
+import { parseImageHeaderBuffer } from '../../workers/mediaInspector.worker';
 
 export type { SegregatedTrack };
 export { SEGREGATED_TRACKS, NEEDS_FIXING_FOLDER };
@@ -244,7 +245,115 @@ export async function validateMediaDimensions(file: File): Promise<MediaResoluti
     });
   }
 
-  // 3. Photo / Image files (.jpg, .jpeg, .png, etc.)
+// Web Worker Pool for fast 64KB binary image header dimension parsing
+const INSPECTOR_POOL_SIZE = 4;
+let inspectorWorkers: Worker[] = [];
+let inspectorNextIdx = 0;
+let inspectorJobSeq = 1;
+const inspectorPending = new Map<number, (dims: { width: number; height: number } | null) => void>();
+
+function getNextInspectorWorker(): Worker | null {
+  if (typeof window === 'undefined' || typeof Worker === 'undefined') return null;
+  if (inspectorWorkers.length === 0) {
+    try {
+      for (let i = 0; i < INSPECTOR_POOL_SIZE; i++) {
+        const w = new Worker(new URL('../../workers/mediaInspector.worker.ts', import.meta.url), {
+          type: 'module',
+        });
+        w.onmessage = (e) => {
+          const { id, width, height, parsed } = e.data || {};
+          const cb = inspectorPending.get(id);
+          if (cb) {
+            inspectorPending.delete(id);
+            cb(parsed && width && height ? { width, height } : null);
+          }
+        };
+        w.onerror = () => {
+          // Fallback handled per request timeout
+        };
+        inspectorWorkers.push(w);
+      }
+    } catch {
+      inspectorWorkers = [];
+      return null;
+    }
+  }
+  const worker = inspectorWorkers[inspectorNextIdx % inspectorWorkers.length];
+  inspectorNextIdx = (inspectorNextIdx + 1) % inspectorWorkers.length;
+  return worker;
+}
+
+async function parseHeaderDimsOffThread(file: File, ext: string): Promise<{ width: number; height: number } | null> {
+  try {
+    const sliceSize = Math.min(file.size, 65536);
+    const buffer = await file.slice(0, sliceSize).arrayBuffer();
+    const worker = getNextInspectorWorker();
+    if (worker) {
+      return await new Promise<{ width: number; height: number } | null>((resolve) => {
+        const id = inspectorJobSeq++;
+        const timer = setTimeout(() => {
+          if (inspectorPending.has(id)) {
+            inspectorPending.delete(id);
+            resolve(null);
+          }
+        }, 1200);
+        inspectorPending.set(id, (dims) => {
+          clearTimeout(timer);
+          resolve(dims);
+        });
+        worker.postMessage({ id, buffer, ext }, [buffer]);
+      });
+    }
+    return parseImageHeaderBuffer(buffer);
+  } catch {
+    return null;
+  }
+}
+
+function buildPhotoValidationResult(width: number, height: number): MediaResolutionValidation {
+  const megapixels = (width * height) / 1000000;
+  if (width < 3000 || height < 3000) {
+    return {
+      width,
+      height,
+      isValid: true,
+      isBlocking: false,
+      warningType: 'photo_low_resolution',
+      message: `Needs Upscaling: ${width}x${height} (${megapixels.toFixed(1)} MP). Both dimensions must be 3000px+ for microstock readiness.`,
+    };
+  }
+  return {
+    width,
+    height,
+    isValid: true,
+    isBlocking: false,
+    warningType: 'none',
+  };
+}
+
+  // 3. Photo / Image files (.jpg, .jpeg, .png, .webp, etc.)
+  // Fast Path 1: 64KB Binary Header Parser via Web Worker Pool (<0.5ms per file, 0 pixel decode)
+  const fastDims = await parseHeaderDimsOffThread(file, ext);
+  if (fastDims && fastDims.width > 0 && fastDims.height > 0) {
+    return buildPhotoValidationResult(fastDims.width, fastDims.height);
+  }
+
+  // Fast Path 2: Hardware-accelerated createImageBitmap (if SOF marker was beyond 64KB)
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bmp = await createImageBitmap(file);
+      const width = bmp.width;
+      const height = bmp.height;
+      bmp.close();
+      if (width > 0 && height > 0) {
+        return buildPhotoValidationResult(width, height);
+      }
+    } catch {
+      // Fall through to FileReader/Image fallback for JSDOM test environments
+    }
+  }
+
+  // Fallback Path 3: Standard Image element (for JSDOM / unit test environments)
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -252,27 +361,7 @@ export async function validateMediaDimensions(file: File): Promise<MediaResoluti
       img.onload = () => {
         const width = img.naturalWidth || img.width;
         const height = img.naturalHeight || img.height;
-        const megapixels = (width * height) / 1000000;
-
-        // Microstock readiness: images output at ~2000px need upscaling to 4K+ (~3000px+ on both sides)
-        if (width < 3000 || height < 3000) {
-          resolve({
-            width,
-            height,
-            isValid: true,
-            isBlocking: false,
-            warningType: 'photo_low_resolution',
-            message: `Needs Upscaling: ${width}x${height} (${megapixels.toFixed(1)} MP). Both dimensions must be 3000px+ for microstock readiness.`,
-          });
-        } else {
-          resolve({
-            width,
-            height,
-            isValid: true,
-            isBlocking: false,
-            warningType: 'none',
-          });
-        }
+        resolve(buildPhotoValidationResult(width, height));
       };
       img.onerror = () => {
         resolve({ isValid: true, isBlocking: false, warningType: 'none' });
