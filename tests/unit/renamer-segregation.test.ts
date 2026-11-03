@@ -192,7 +192,7 @@ describe('Tier 1 Unit: 6-Way Track Segregation & Vector Pairing', () => {
       for (const f of handoffFiles) {
         expect((f as any).__isAiGenerated).toBe(true);
         expect((f as any).__assetOrigin).toBe('ai');
-        expect((f as any).__nativePath).toMatch(/^C:\/MasterStock\/AI_(Photos|Videos|Vectors)\/B01\//);
+        expect((f as any).__nativePath).toMatch(/^C:\/MasterStock\/AI\/AI_(Photos|Videos|Vectors)\/B01\//);
       }
     });
 
@@ -227,8 +227,8 @@ describe('Tier 1 Unit: 6-Way Track Segregation & Vector Pairing', () => {
       expect(aiResult[0].subFolder).toBe('AI_Photos');
       expect(aiResult[0].batchFolder).toBe('B01');
       expect(aiResult[0].batchIndex).toBe(41);
-      expect(aiResult[0].cleanedName).toBe('B01_041__futuristic_hologram_interface.jpg');
-      expect(aiResult[0].relativePath).toBe('AI_Photos/B01/B01_041__futuristic_hologram_interface.jpg');
+      expect(aiResult[0].cleanedName).toBe('B01_041_AI__futuristic_hologram_interface.jpg');
+      expect(aiResult[0].relativePath).toBe('AI/AI_Photos/B01/B01_041_AI__futuristic_hologram_interface.jpg');
     });
   });
 });

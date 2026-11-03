@@ -208,8 +208,10 @@ export const StudioView: React.FC<StudioViewProps> = ({ onOpenVideoMuter }) => {
   }, [dialogs, remove]);
 
   const handleClearAll = useCallback(async () => {
-    await db.masterRecords.clear();
+    // 1. Immediately abort active background workers and clear in-memory queue
     clear();
+    // 2. Wipe persisted records from SQLite
+    await db.masterRecords.clear();
     dialogs.setClearAllConfirmOpen(false);
   }, [clear, dialogs]);
 

@@ -759,11 +759,25 @@ export function processFilesForBatchIngest(
     const indexStr = String(tracker.currentItemIdx).padStart(3, '0');
     const cleanedOriginal = cleanOriginalBaseName(file.name);
 
-    // Hybrid Sequential Naming: [BATCH]_[SEQUENCE]__[CLEANED_ORIGINAL_NAME].ext
-    const targetFilename = `${batchFolder}_${indexStr}__${cleanedOriginal}.${ext}`;
+    // For AI files, ensure the word "AI" is explicitly present in the filename as a safety measure
+    let targetFilename: string;
+    if (assetOrigin === 'ai') {
+      const aiTokenRegex = /(?:^|_)(ai)(?:_|$)/i;
+      if (aiTokenRegex.test(cleanedOriginal)) {
+        // AI is already present in cleanedOriginal, keep it clearly uppercase
+        const withUpperAi = cleanedOriginal.replace(aiTokenRegex, (match, p1) => match.replace(p1, 'AI'));
+        targetFilename = `${batchFolder}_${indexStr}__${withUpperAi}.${ext}`;
+      } else {
+        // Embed AI token so the file is unmistakably marked as AI even if moved out of the directory
+        targetFilename = `${batchFolder}_${indexStr}_AI__${cleanedOriginal}.${ext}`;
+      }
+    } else {
+      targetFilename = `${batchFolder}_${indexStr}__${cleanedOriginal}.${ext}`;
+    }
 
-    // 6-Track Media-First Hierarchy: Master / [Photos | AI_Photos | ...] / [Batch] / [Filename]
-    const relativePath = `${subFolder}/${batchFolder}/${targetFilename}`;
+    // Media-First Dual-Root Hierarchy: Master / [Real | AI] / [Photos | AI_Photos | ...] / [Batch] / [Filename]
+    const rootFolder = assetOrigin === 'ai' ? 'AI' : 'Real';
+    const relativePath = `${rootFolder}/${subFolder}/${batchFolder}/${targetFilename}`;
 
     const fuzzyKey = getFuzzyNormalizedBaseName(file.name);
     const dupCount = fuzzyKey.length >= 2 ? fuzzyCounts.get(fuzzyKey) || 1 : 1;

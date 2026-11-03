@@ -134,6 +134,7 @@ export class BatchQueueService {
   private completedSinceLastRetry = 0; // Track successes for opportunistic retry
   private readonly OPPORTUNISTIC_RETRY_THRESHOLD = 3; // Re-queue cooled-down failed items after every 3 successes
   private activeAbortControllers: Set<AbortController> = new Set();
+  private queueSessionId = 0;
 
   private constructor() {}
 
@@ -552,6 +553,8 @@ export class BatchQueueService {
     titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal'
   ): Promise<void> {
     this.status = 'running';
+    this.queueSessionId++;
+    const currentSession = this.queueSessionId;
     this.startTimer();
     this.notify();
 
@@ -560,7 +563,7 @@ export class BatchQueueService {
     }
 
     // Fill concurrency slots up to maximum healthy keys capacity
-    this.dispatchLoop(isAiGenerated, userPrompt, defaultModelName, keywordPhrasing, titleLengthPreset);
+    this.dispatchLoop(isAiGenerated, userPrompt, defaultModelName, keywordPhrasing, titleLengthPreset, currentSession);
   }
 
   private async dispatchLoop(
@@ -568,13 +571,15 @@ export class BatchQueueService {
     userPrompt?: string,
     defaultModelName?: string,
     keywordPhrasing: KeywordPhrasing = 'mixed',
-    titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal'
+    titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal',
+    session?: number
   ): Promise<void> {
     if (this.isLoopActive) return;
     this.isLoopActive = true;
+    const currentSession = session !== undefined ? session : this.queueSessionId;
 
     try {
-      while (this.status === 'running') {
+      while (this.status === 'running' && this.queueSessionId === currentSession) {
         // Enforce sequential processing: one asset at a time prevents rate limits and queue freezes
         if (this.activeWorkers >= 1) {
           await new Promise((r) => setTimeout(r, 100));
@@ -640,7 +645,7 @@ export class BatchQueueService {
         this.notify();
 
         // Launch async worker for this item
-        this.processSingleItem(pendingItem, isAiGenerated, userPrompt, defaultModelName, keywordPhrasing, titleLengthPreset)
+        this.processSingleItem(pendingItem, isAiGenerated, userPrompt, defaultModelName, keywordPhrasing, titleLengthPreset, currentSession)
           .catch((err) => {
             console.error(`Item processing failed for ${pendingItem.filename}:`, err);
           })
@@ -662,8 +667,14 @@ export class BatchQueueService {
     userPrompt?: string,
     defaultModelName = 'Nano Banana',
     keywordPhrasing: KeywordPhrasing = 'mixed',
-    titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal'
+    titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal',
+    currentSession = 0
   ): Promise<void> {
+    const isCancelled = () => {
+      return this.status !== 'running' || (currentSession !== 0 && this.queueSessionId !== currentSession) || !this.items.has(item.id);
+    };
+
+    if (isCancelled()) return;
     if (!item.thumbnailBase64) {
       item.status = 'error';
       item.error = 'Thumbnail data missing';
@@ -695,9 +706,11 @@ export class BatchQueueService {
       this.activeAbortControllers.add(abortController);
 
       try {
+        if (isCancelled()) return;
         await db.masterRecords.update(item.id, { status: 'processing' });
 
         const processingTask = (async () => {
+          if (isCancelled()) return;
           // 1. Acquire key lease from KeyRingScheduler
           // Exclude failed KEY IDs, and if a provider failed with high-demand/timeout/auth or failed >= 2 times on this item,
           // also exclude that provider so retries immediately cascade to OpenRouter, Groq, Mistral, and Cloudflare!
@@ -850,6 +863,11 @@ export class BatchQueueService {
           this.completedSinceLastRetry++; // Track successful completions for opportunistic retry
           this.notify(); // UI update: item completed
 
+          if (isCancelled()) {
+            await release(false, new Error('Queue cancelled'));
+            return;
+          }
+
           // Persist master record to IndexedDB
           await db.masterRecords.put(masterRecord);
 
@@ -878,6 +896,12 @@ export class BatchQueueService {
         return;
       } catch (err: any) {
         abortController.abort();
+        if (isCancelled()) {
+          if (lease) {
+            try { await lease.release(false, new Error('Queue cancelled')); } catch {}
+          }
+          return;
+        }
         lastError = err;
         item.retryCount++;
 
@@ -916,6 +940,8 @@ export class BatchQueueService {
       }
     }
 
+    if (isCancelled()) return;
+
     // All immediate attempts exhausted: mark as error and schedule for automatic background self-healing
     item.status = 'error';
     const finalErrMsg = `${item.assignedProvider ? `[${item.assignedProvider}] ` : ''}${lastError?.message || String(lastError)}`;
@@ -946,8 +972,10 @@ export class BatchQueueService {
   public pause(): void {
     if (this.status === 'running') {
       this.status = 'paused';
+      this.queueSessionId++;
       this.abortAllInFlight();
       this.stopTimer();
+      this.activeWorkers = 0;
       this.notify();
     }
   }
@@ -960,13 +988,16 @@ export class BatchQueueService {
 
   public stop(): void {
     this.status = 'idle';
+    this.queueSessionId++;
     this.abortAllInFlight();
     this.stopTimer();
+    this.activeWorkers = 0;
     this.notify();
   }
 
   public clear(): void {
     this.stop();
+    terminateEpsWorker();
     this.items.clear();
     this.elapsedSeconds = 0;
     this.notify();

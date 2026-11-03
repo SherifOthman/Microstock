@@ -716,14 +716,44 @@ function setupIpcHandlers() {
         return batches.sort((a, b) => a.number - b.number);
       };
 
-      // 1. Scan 6-Track Media-First Hierarchies: Real (Photos, Videos, Vectors) & AI (AI_Photos, AI_Videos, AI_Vectors)
+      // Helper to merge and deduplicate batches from dual-root folders (e.g. Real/Photos and legacy Photos)
+      const mergeBatches = (listA, listB) => {
+        const map = new Map();
+        for (const b of [...listA, ...listB]) {
+          if (!map.has(b.number) || map.get(b.number).highestIndex < b.highestIndex) {
+            map.set(b.number, b);
+          }
+        }
+        return Array.from(map.values()).sort((a, b) => a.number - b.number);
+      };
+
+      // 1. Scan Dual-Root Hierarchies: Real (Photos, Videos, Vectors) & AI (AI_Photos, AI_Videos, AI_Vectors)
+      // Supports both Real/Photos and Photos for seamless backward compatibility
       const mediaBatches = {
-        Photos: scanBatchesInDir(path.join(masterPath, 'Photos')),
-        Videos: scanBatchesInDir(path.join(masterPath, 'Videos')),
-        Vectors: scanBatchesInDir(path.join(masterPath, 'Vectors')),
-        AI_Photos: scanBatchesInDir(path.join(masterPath, 'AI_Photos')),
-        AI_Videos: scanBatchesInDir(path.join(masterPath, 'AI_Videos')),
-        AI_Vectors: scanBatchesInDir(path.join(masterPath, 'AI_Vectors')),
+        Photos: mergeBatches(
+          scanBatchesInDir(path.join(masterPath, 'Real', 'Photos')),
+          scanBatchesInDir(path.join(masterPath, 'Photos'))
+        ),
+        Videos: mergeBatches(
+          scanBatchesInDir(path.join(masterPath, 'Real', 'Videos')),
+          scanBatchesInDir(path.join(masterPath, 'Videos'))
+        ),
+        Vectors: mergeBatches(
+          scanBatchesInDir(path.join(masterPath, 'Real', 'Vectors')),
+          scanBatchesInDir(path.join(masterPath, 'Vectors'))
+        ),
+        AI_Photos: mergeBatches(
+          scanBatchesInDir(path.join(masterPath, 'AI', 'AI_Photos')),
+          scanBatchesInDir(path.join(masterPath, 'AI_Photos'))
+        ),
+        AI_Videos: mergeBatches(
+          scanBatchesInDir(path.join(masterPath, 'AI', 'AI_Videos')),
+          scanBatchesInDir(path.join(masterPath, 'AI_Videos'))
+        ),
+        AI_Vectors: mergeBatches(
+          scanBatchesInDir(path.join(masterPath, 'AI', 'AI_Vectors')),
+          scanBatchesInDir(path.join(masterPath, 'AI_Vectors'))
+        ),
       };
 
       // 2. Also scan Root Master for legacy B01, B02 batches if any

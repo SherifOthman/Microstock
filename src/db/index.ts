@@ -473,6 +473,44 @@ export async function saveAppSettings(settings: Partial<AppSettings>): Promise<A
   return updated;
 }
 
+// Universal Desktop SQLite Settings Storage
+export async function getDesktopSetting<T>(key: string, fallback: T): Promise<T> {
+  try {
+    const item = await db.settings.get(key);
+    if (item && item.value !== undefined && item.value !== null) {
+      return item.value as T;
+    }
+  } catch (err) {
+    console.warn('[DB] getDesktopSetting failed:', err);
+  }
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const stored = window.localStorage.getItem(key);
+      if (stored !== null) {
+        try {
+          return JSON.parse(stored) as T;
+        } catch {
+          return stored as unknown as T;
+        }
+      }
+    }
+  } catch {}
+  return fallback;
+}
+
+export async function setDesktopSetting<T>(key: string, value: T): Promise<void> {
+  try {
+    await db.settings.put({ key, value });
+  } catch (err) {
+    console.warn('[DB] setDesktopSetting failed:', err);
+  }
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+    }
+  } catch {}
+}
+
 // API Keys Operations
 export async function getAllApiKeys(): Promise<ApiKeyRecord[]> {
   const records = await db.apiKeys.toArray();

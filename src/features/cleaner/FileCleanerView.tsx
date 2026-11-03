@@ -158,6 +158,7 @@ export const FileCleanerView: React.FC<FileCleanerViewProps> = ({ onSendToStudio
         onOpenDuplicateModal={(key) => c.setActiveDuplicateKey(key)}
         onRemoveItem={c.handleRemoveItem}
         onPreviewItem={(item) => setPreviewItemId(item.id)}
+        onClearAll={c.handleClearAll}
       />
 
       {/* Modals for Duplicate Comparison & Completion */}

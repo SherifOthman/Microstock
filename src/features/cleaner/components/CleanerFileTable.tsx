@@ -53,6 +53,7 @@ export interface CleanerFileTableProps {
   onOpenDuplicateModal: (key: string) => void;
   onRemoveItem: (id: string, file: File, item: CleanedFileItem) => void;
   onPreviewItem?: (item: CleanedFileItem) => void;
+  onClearAll?: () => void;
 }
 
 export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
@@ -79,6 +80,7 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
   onOpenDuplicateModal,
   onRemoveItem,
   onPreviewItem,
+  onClearAll,
 }) => {
   const { t } = useLanguage();
   const tableContainerRef = useRef<HTMLDivElement>(null);
@@ -261,6 +263,19 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
 
         {/* Action Buttons Toolbar */}
         <div className="flex items-center gap-2 flex-wrap justify-between md:justify-end shrink-0">
+          {onClearAll && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onClearAll}
+              disabled={isProcessing}
+              className="gap-1.5 text-xs text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive cursor-pointer font-medium"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>{language === 'ar' ? 'مسح الكل' : 'Clear All'}</span>
+            </Button>
+          )}
+
           <Button
             variant="outline"
             size="sm"

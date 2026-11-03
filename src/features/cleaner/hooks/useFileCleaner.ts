@@ -1,3 +1,4 @@
+import { getDesktopSetting, setDesktopSetting } from "../../../db";
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   AssetOrigin,
@@ -54,7 +55,7 @@ export function buildRenamedFilesFromCleanedItems(items: CleanedFileItem[], mast
         configurable: true,
       });
       const resolvedPath = masterDir
-        ? `${masterDir.replace(/[\\/]+$/, '')}/${item.subFolder}/${item.batchFolder}/${finalName}`
+        ? `${masterDir.replace(/[\\/]+$/, '')}/${item.assetOrigin === 'ai' ? 'AI' : 'Real'}/${item.subFolder}/${item.batchFolder}/${finalName}`
         : item.nativePath || (item.file as any).__nativePath || (item.file as any).path || '';
       if (resolvedPath) {
         Object.defineProperty(renamedFile, '__nativePath', {
@@ -68,6 +69,31 @@ export function buildRenamedFilesFromCleanedItems(items: CleanedFileItem[], mast
 }
 
 export function useFileCleaner(language: string, onSendToStudio?: (files: File[]) => void) {
+  // Load desktop settings on mount from SQLite
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      const [savedDir, savedOrigin, savedBatchSize] = await Promise.all([
+        getDesktopSetting<string>('stock_cleaner_master_dir', ''),
+        getDesktopSetting<AssetOrigin>('stock_cleaner_asset_origin', 'real'),
+        getDesktopSetting<number>('stock_cleaner_batch_size', 100),
+      ]);
+      if (!isMounted) return;
+      if (savedDir) {
+        setMasterDirectory(savedDir);
+        scanMasterDirectory(savedDir);
+      }
+      setOptionsState((prev) => ({
+        ...prev,
+        assetOrigin: savedOrigin,
+        maxItemsPerBatch: savedBatchSize,
+      }));
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // Master Destination Directory & Disk State
   const [masterDirectory, setMasterDirectory] = useState<string>(() => {
     return localStorage.getItem('stock_cleaner_master_dir') || '';
@@ -97,11 +123,11 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
     setOptionsState((prev) => {
       const next = typeof updater === 'function' ? updater(prev) : updater;
       if (next.assetOrigin && next.assetOrigin !== prev.assetOrigin) {
-        localStorage.setItem('stock_cleaner_asset_origin', next.assetOrigin);
+        setDesktopSetting('stock_cleaner_asset_origin', next.assetOrigin);
         setIsBatchSaved(false);
       }
       if (next.maxItemsPerBatch && next.maxItemsPerBatch !== prev.maxItemsPerBatch) {
-        localStorage.setItem('stock_cleaner_batch_size', String(next.maxItemsPerBatch));
+        setDesktopSetting('stock_cleaner_batch_size', next.maxItemsPerBatch);
       }
       return next;
     });
@@ -136,6 +162,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
   // File Validations Map (Keyed by file unique identifier)
   const [validations, setValidations] = useState<Record<string, MediaResolutionValidation>>({});
   const validatedKeysRef = useRef<Set<string>>(new Set());
+  const validationRunIdRef = useRef(0);
 
   // Scan Master Directory from disk via Electron native fs
   const scanMasterDirectory = useCallback(async (dirPath: string) => {
@@ -188,7 +215,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
 
       if (!res.canceled && res.path) {
         setMasterDirectory(res.path);
-        localStorage.setItem('stock_cleaner_master_dir', res.path);
+        setDesktopSetting('stock_cleaner_master_dir', res.path);
         setStatusNotification(null);
         await scanMasterDirectory(res.path);
       }
@@ -208,6 +235,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
   // Validate imported files resolutions asynchronously in bounded chunks of 50 (no effect loop)
   useEffect(() => {
     let isCancelled = false;
+    const currentRun = ++validationRunIdRef.current;
 
     const unvalidatedFiles = rawFiles.filter((file) => {
       const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
@@ -221,18 +249,18 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
       const CONCURRENCY = 8;
 
       for (let i = 0; i < unvalidatedFiles.length; i += CHUNK_SIZE) {
-        if (isCancelled) break;
+        if (isCancelled || validationRunIdRef.current !== currentRun) break;
         const chunk = unvalidatedFiles.slice(i, i + CHUNK_SIZE);
         const chunkResults: Record<string, MediaResolutionValidation> = {};
 
         for (let j = 0; j < chunk.length; j += CONCURRENCY) {
-          if (isCancelled) break;
+          if (isCancelled || validationRunIdRef.current !== currentRun) break;
           const subBatch = chunk.slice(j, j + CONCURRENCY);
           await Promise.all(
             subBatch.map(async (file) => {
               const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
               const val = await validateMediaDimensions(file);
-              if (!isCancelled) {
+              if (!isCancelled && validationRunIdRef.current === currentRun) {
                 validatedKeysRef.current.add(fileKey);
                 chunkResults[fileKey] = val;
               }
@@ -240,7 +268,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
           );
         }
 
-        if (!isCancelled && Object.keys(chunkResults).length > 0) {
+        if (!isCancelled && validationRunIdRef.current === currentRun && Object.keys(chunkResults).length > 0) {
           setValidations((prev) => ({ ...prev, ...chunkResults }));
         }
       }
@@ -504,6 +532,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
   }, [lowResPhotos, masterDirectory, language, options.assetOrigin]);
 
   const handleClearAll = useCallback(() => {
+    validationRunIdRef.current++;
     setRawFiles([]);
     setManualOverrides({});
     setValidations({});
@@ -530,7 +559,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
         if (!pickRes.canceled && pickRes.path) {
           targetMasterDir = pickRes.path;
           setMasterDirectory(pickRes.path);
-          localStorage.setItem('stock_cleaner_master_dir', pickRes.path);
+          setDesktopSetting('stock_cleaner_master_dir', pickRes.path);
           await scanMasterDirectory(pickRes.path);
         }
       } catch {
