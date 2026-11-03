@@ -425,10 +425,10 @@ export function App() {
                 onOpenTemplates={() => setIsTemplatesOpen(true)}
               />
             </div>
-            <div className={activeTab === 'studio' ? 'flex-1 min-h-0 h-full px-3 sm:px-4 py-3 overflow-hidden' : 'hidden'}>
+            <div className={activeTab === 'studio' ? 'flex-1 min-h-0 h-full px-3 sm:px-4 py-3 overflow-hidden flex flex-col' : 'hidden'}>
               <StudioView />
             </div>
-            <div className={activeTab === 'cleaner' ? 'flex-1 overflow-y-auto px-4 sm:px-6 py-4' : 'hidden'}>
+            <div className={activeTab === 'cleaner' ? 'flex-1 min-h-0 h-full px-4 sm:px-6 py-4 overflow-hidden flex flex-col' : 'hidden'}>
               <FileCleanerView
                 onSendToStudio={(files) => {
                   batchQueueService.addFiles(files);
@@ -436,15 +436,10 @@ export function App() {
                 }}
               />
             </div>
-            <div className={activeTab === 'muter' ? 'flex-1 overflow-y-auto px-4 sm:px-6 py-4' : 'hidden'}>
-              <VideoMuterView
-                onSendToStudio={(files) => {
-                  batchQueueService.addFiles(files);
-                  handleTabChange('studio');
-                }}
-              />
+            <div className={activeTab === 'muter' ? 'flex-1 min-h-0 h-full px-4 sm:px-6 py-4 overflow-hidden flex flex-col' : 'hidden'}>
+              <VideoMuterView />
             </div>
-            <div className={activeTab === 'eps' ? 'flex-1 overflow-y-auto px-4 sm:px-6 py-4' : 'hidden'}>
+            <div className={activeTab === 'eps' ? 'flex-1 min-h-0 h-full px-4 sm:px-6 py-4 overflow-hidden flex flex-col' : 'hidden'}>
               <EpsConverterView
                 onSendToStudio={(files) => {
                   batchQueueService.addFiles(files);

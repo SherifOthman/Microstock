@@ -1,5 +1,5 @@
 import { ModelInfo, ProviderType } from '../../types';
-import { IVisionProvider, ProviderTestResult } from './types';
+import { IVisionProvider, ProviderTestResult, combineAbortSignals } from './types';
 import { PROVIDERS_META, TEST_PIXEL_BASE64 } from '../../constants/providers';
 
 export class MistralAdapter implements IVisionProvider {
@@ -111,7 +111,8 @@ export class MistralAdapter implements IVisionProvider {
     modelId: string,
     imageBase64: string,
     prompt: string,
-    systemPrompt?: string
+    systemPrompt?: string,
+    signal?: AbortSignal
   ): Promise<string> {
     const cleanKey = apiKey.trim();
     const targetModel = modelId || PROVIDERS_META.mistral.defaultModelId;
@@ -140,15 +141,30 @@ export class MistralAdapter implements IVisionProvider {
       response_format: { type: 'json_object' },
     };
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${cleanKey}`,
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(15000),
-    });
+    const { signal: combinedSignal, cleanup } = combineAbortSignals(signal, 15000);
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${cleanKey}`,
+        },
+        body: JSON.stringify(payload),
+        signal: combinedSignal,
+      });
+    } catch (err: any) {
+      const msg = String(err?.message || err || '');
+      if (err?.name === 'TimeoutError' || err?.name === 'AbortError' || msg.toLowerCase().includes('timed out')) {
+        const timeoutErr: any = new Error(`Mistral inference timed out after 15s (${targetModel}).`);
+        timeoutErr.status = 408;
+        timeoutErr.isTimeout = true;
+        throw timeoutErr;
+      }
+      throw err;
+    } finally {
+      cleanup();
+    }
 
     if (!res.ok) {
       let errText = `HTTP ${res.status} ${res.statusText}`;

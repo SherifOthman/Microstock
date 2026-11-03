@@ -1,5 +1,5 @@
 import { ModelInfo, ProviderType } from '../../types';
-import { IVisionProvider, ProviderTestResult } from './types';
+import { IVisionProvider, ProviderTestResult, combineAbortSignals } from './types';
 import { PROVIDERS_META, TEST_PIXEL_BASE64 } from '../../constants/providers';
 
 export class GeminiAdapter implements IVisionProvider {
@@ -159,7 +159,8 @@ export class GeminiAdapter implements IVisionProvider {
     modelId: string,
     imageBase64: string,
     prompt: string,
-    systemPrompt?: string
+    systemPrompt?: string,
+    signal?: AbortSignal
   ): Promise<string> {
     const cleanKey = apiKey.trim();
     const targetModel = modelId || PROVIDERS_META.gemini.defaultModelId;
@@ -191,12 +192,32 @@ export class GeminiAdapter implements IVisionProvider {
       };
     }
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(15000),
-    });
+    const { signal: combinedSignal, cleanup } = combineAbortSignals(signal, 20000);
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: combinedSignal,
+      });
+    } catch (err: any) {
+      const msg = String(err?.message || err || '');
+      if (
+        err?.name === 'TimeoutError' ||
+        err?.name === 'AbortError' ||
+        msg.toLowerCase().includes('timed out') ||
+        msg.toLowerCase().includes('aborted')
+      ) {
+        const timeoutError: any = new Error(`Gemini request timed out (20s) on ${targetModel}: signal timed out`);
+        timeoutError.status = 408;
+        timeoutError.isTimeout = true;
+        throw timeoutError;
+      }
+      throw err;
+    } finally {
+      cleanup();
+    }
 
     if (!res.ok) {
       let errText = `HTTP ${res.status} ${res.statusText}`;

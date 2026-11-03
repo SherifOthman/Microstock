@@ -1,5 +1,4 @@
 import { useState, useCallback, useRef } from 'react';
-import JSZip from 'jszip';
 import {
   inspectVideoAudioTrack,
   stripAudioTrackLossless,
@@ -11,6 +10,7 @@ export interface VideoMuteItem {
   file: File;
   originalName: string;
   size: number;
+  nativePath?: string;
   hasAudio: boolean | null;
   status: 'idle' | 'processing' | 'completed' | 'error';
   errorMessage?: string;
@@ -35,14 +35,25 @@ export function useVideoMuter(language: string, onSendToStudio?: (files: File[])
     if (videoFiles.length === 0) return;
 
     const now = Date.now();
-    const createdItems: VideoMuteItem[] = videoFiles.map((file, idx) => ({
-      id: `${file.name}-${file.size}-${now}-${idx}`,
-      file,
-      originalName: file.name,
-      size: file.size,
-      hasAudio: null,
-      status: 'idle',
-    }));
+    const createdItems: VideoMuteItem[] = videoFiles.map((file, idx) => {
+      let nativePath = (file as any).__nativePath || (file as any).path || '';
+      if (!nativePath && typeof window !== 'undefined' && window.electronAPI?.getPathForFile) {
+        try {
+          nativePath = window.electronAPI.getPathForFile(file) || '';
+        } catch {
+          // ignore
+        }
+      }
+      return {
+        id: `${file.name}-${file.size}-${now}-${idx}`,
+        file,
+        originalName: file.name,
+        size: file.size,
+        nativePath: nativePath || undefined,
+        hasAudio: null,
+        status: 'idle',
+      };
+    });
 
     setItems((prev) => {
       const next = [...prev, ...createdItems];
@@ -140,7 +151,8 @@ export function useVideoMuter(language: string, onSendToStudio?: (files: File[])
 
     try {
       const pending = itemsRef.current.filter((i) => i.status !== 'completed');
-      const CONCURRENCY = 2;
+      const hwThreads = typeof navigator !== 'undefined' && navigator.hardwareConcurrency ? navigator.hardwareConcurrency : 4;
+      const CONCURRENCY = Math.min(4, Math.max(2, Math.floor(hwThreads / 2)));
       for (let i = 0; i < pending.length; i += CONCURRENCY) {
         const sub = pending.slice(i, i + CONCURRENCY);
         await Promise.all(sub.map((item) => handleMuteSingle(item.id)));
@@ -168,55 +180,6 @@ export function useVideoMuter(language: string, onSendToStudio?: (files: File[])
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   }, []);
-
-  const handleDownloadAllZip = useCallback(async () => {
-    if (items.length === 0) return;
-    setIsExporting(true);
-    setExportSuccessMessage(null);
-
-    try {
-      const zip = new JSZip();
-      for (const item of items) {
-        let blobData: Blob = item.mutedBlob || item.file;
-        if (item.status !== 'completed' && !item.mutedBlob) {
-          try {
-            blobData = await stripAudioTrackLossless(item.file);
-            const finalSize = blobData.size;
-            setItems((prev) =>
-              prev.map((i) =>
-                i.id === item.id
-                  ? { ...i, status: 'completed', hasAudio: false, mutedBlob: blobData, mutedSize: finalSize }
-                  : i
-              )
-            );
-          } catch {
-            blobData = item.file;
-          }
-        }
-        zip.file(item.originalName, blobData);
-      }
-
-      const content = await zip.generateAsync({ type: 'blob' });
-      const url = URL.createObjectURL(content);
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `muted_stock_videos_${Date.now()}.zip`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-
-      setExportSuccessMessage(
-        language === 'ar'
-          ? `تم تصدير ${items.length} فيديو صامت داخل أرشيف ZIP.`
-          : `Exported ${items.length} silent videos as ZIP archive.`
-      );
-    } catch (err: any) {
-      console.error('ZIP export failed:', err);
-    } finally {
-      setIsExporting(false);
-    }
-  }, [items, language]);
 
   const handleExportToFolder = useCallback(async () => {
     if (items.length === 0) return;
@@ -276,10 +239,18 @@ export function useVideoMuter(language: string, onSendToStudio?: (files: File[])
 
     const filesToSend: File[] = targetItems.map((item) => {
       const blob = item.mutedBlob || item.file;
-      return new File([blob], item.originalName, {
+      const f = new File([blob], item.originalName, {
         type: item.file.type || 'video/mp4',
         lastModified: item.file.lastModified || Date.now(),
       });
+      if (item.nativePath) {
+        Object.defineProperty(f, '__nativePath', {
+          value: item.nativePath,
+          enumerable: false,
+          configurable: true,
+        });
+      }
+      return f;
     });
 
     onSendToStudio(filesToSend);
@@ -296,7 +267,6 @@ export function useVideoMuter(language: string, onSendToStudio?: (files: File[])
     handleMuteSingle,
     handleMuteAll,
     handleDownloadSingle,
-    handleDownloadAllZip,
     handleExportToFolder,
     handleSendToStudio,
   };

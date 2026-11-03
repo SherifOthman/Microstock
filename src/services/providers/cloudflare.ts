@@ -1,5 +1,5 @@
 import { ModelInfo, ProviderType } from '../../types';
-import { IVisionProvider, ProviderTestResult } from './types';
+import { IVisionProvider, ProviderTestResult, combineAbortSignals } from './types';
 import { PROVIDERS_META, TEST_PIXEL_BASE64 } from '../../constants/providers';
 
 export class CloudflareAdapter implements IVisionProvider {
@@ -197,7 +197,9 @@ export class CloudflareAdapter implements IVisionProvider {
     apiKey: string,
     modelId: string,
     imageBase64: string,
-    prompt: string
+    prompt: string,
+    _systemPrompt?: string,
+    signal?: AbortSignal
   ): Promise<string> {
     const targetModel = modelId || PROVIDERS_META.cloudflare.defaultModelId;
     const { accountId, apiToken } = this.parseCredentials(apiKey);
@@ -212,41 +214,57 @@ export class CloudflareAdapter implements IVisionProvider {
       image: Array.from(Uint8Array.from(atob(imageBase64), (c) => c.charCodeAt(0))),
     };
 
-    let res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiToken}`,
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(15000),
-    });
+    const { signal: combinedSignal, cleanup } = combineAbortSignals(signal, 15000);
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiToken}`,
+        },
+        body: JSON.stringify(payload),
+        signal: combinedSignal,
+      });
 
-    // Auto-agree handling if encountered during inference
-    if (!res.ok && res.status === 403) {
-      try {
-        const errJson = await res.json();
-        if (errJson.errors?.[0]?.message?.includes("'agree'")) {
-          await fetch(url, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${apiToken}`,
-            },
-            body: JSON.stringify({ prompt: 'agree' }),
-          });
-          // Retry inference
-          res = await fetch(url, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${apiToken}`,
-            },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(10000),
-          });
-        }
-      } catch {}
+      // Auto-agree handling if encountered during inference
+      if (!res.ok && res.status === 403) {
+        try {
+          const errJson = await res.json();
+          if (errJson.errors?.[0]?.message?.includes("'agree'")) {
+            await fetch(url, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${apiToken}`,
+              },
+              body: JSON.stringify({ prompt: 'agree' }),
+              signal: combinedSignal,
+            });
+            // Retry inference
+            res = await fetch(url, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${apiToken}`,
+              },
+              body: JSON.stringify(payload),
+              signal: combinedSignal,
+            });
+          }
+        } catch {}
+      }
+    } catch (err: any) {
+      const msg = String(err?.message || err || '');
+      if (err?.name === 'TimeoutError' || err?.name === 'AbortError' || msg.toLowerCase().includes('timed out')) {
+        const timeoutErr: any = new Error(`Cloudflare Workers AI timed out after 15s (${targetModel}).`);
+        timeoutErr.status = 408;
+        timeoutErr.isTimeout = true;
+        throw timeoutErr;
+      }
+      throw err;
+    } finally {
+      cleanup();
     }
 
     if (!res.ok) {
@@ -255,7 +273,9 @@ export class CloudflareAdapter implements IVisionProvider {
         const errJson = await res.json();
         if (errJson.errors?.[0]?.message) errText = errJson.errors[0].message;
       } catch {}
-      throw new Error(`Cloudflare Workers AI Error: ${errText}`);
+      const error: any = new Error(`Cloudflare Workers AI Error: ${errText}`);
+      error.status = res.status;
+      throw error;
     }
 
     const data = await res.json();

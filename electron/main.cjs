@@ -1,9 +1,27 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { Readable } = require('stream');
 const { spawn, spawnSync } = require('child_process');
 const { sqliteDb } = require('./sqliteDb.cjs');
+
+// Register custom stockflow:// protocol as privileged before app is ready
+// Enables native <img src="stockflow://..."> and <video src="stockflow://..."> streaming
+if (protocol && typeof protocol.registerSchemesAsPrivileged === 'function') {
+  protocol.registerSchemesAsPrivileged([
+    {
+      scheme: 'stockflow',
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        stream: true,
+        bypassCSP: true,
+      },
+    },
+  ]);
+}
 
 let mainWindow = null;
 
@@ -164,6 +182,180 @@ function createWindow() {
   });
 }
 
+function getMimeTypeForFile(filePath) {
+  const ext = path.extname(filePath || '').toLowerCase();
+  const mimeMap = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+    '.gif': 'image/gif',
+    '.bmp': 'image/bmp',
+    '.svg': 'image/svg+xml',
+    '.tif': 'image/tiff',
+    '.tiff': 'image/tiff',
+    '.avif': 'image/avif',
+    '.mp4': 'video/mp4',
+    '.m4v': 'video/mp4',
+    '.mov': 'video/quicktime',
+    '.webm': 'video/webm',
+    '.avi': 'video/x-msvideo',
+    '.mkv': 'video/x-matroska',
+    '.eps': 'application/postscript',
+    '.ai': 'application/postscript',
+  };
+  return mimeMap[ext] || 'application/octet-stream';
+}
+
+function registerStockflowProtocol() {
+  if (!protocol || typeof protocol.handle !== 'function') return;
+
+  protocol.handle('stockflow', async (request) => {
+    try {
+      const parsedUrl = new URL(request.url);
+      let filePath = parsedUrl.searchParams.get('path') || '';
+      if (!filePath) {
+        const rawPath = decodeURIComponent(parsedUrl.pathname || '').replace(/^\/+/, '');
+        if (rawPath && rawPath !== 'local') {
+          filePath = rawPath;
+        }
+      }
+
+      if (!filePath || !fs.existsSync(filePath)) {
+        return new Response('File not found', { status: 404 });
+      }
+
+      const stat = fs.statSync(filePath);
+      if (!stat.isFile()) {
+        return new Response('Not a file', { status: 404 });
+      }
+
+      const mimeType = getMimeTypeForFile(filePath);
+      const totalSize = stat.size;
+      const rangeHeader = request.headers.get('range') || request.headers.get('Range');
+
+      if (rangeHeader) {
+        const match = rangeHeader.match(/bytes=(\d*)-(\d*)/);
+        if (match) {
+          const start = match[1] ? parseInt(match[1], 10) : 0;
+          const end = match[2] ? Math.min(parseInt(match[2], 10), totalSize - 1) : totalSize - 1;
+
+          if (start >= totalSize || start > end) {
+            return new Response(null, {
+              status: 416,
+              headers: { 'Content-Range': `bytes */${totalSize}` },
+            });
+          }
+
+          const chunkLength = end - start + 1;
+          const nodeStream = fs.createReadStream(filePath, { start, end });
+          return new Response(Readable.toWeb(nodeStream), {
+            status: 206,
+            headers: {
+              'Content-Type': mimeType,
+              'Content-Length': String(chunkLength),
+              'Content-Range': `bytes ${start}-${end}/${totalSize}`,
+              'Accept-Ranges': 'bytes',
+              'Cache-Control': 'no-cache',
+            },
+          });
+        }
+      }
+
+      const nodeStream = fs.createReadStream(filePath);
+      return new Response(Readable.toWeb(nodeStream), {
+        status: 200,
+        headers: {
+          'Content-Type': mimeType,
+          'Content-Length': String(totalSize),
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'no-cache',
+        },
+      });
+    } catch (err) {
+      console.error('[Electron Main] stockflow:// protocol error:', err);
+      return new Response('Internal protocol error', { status: 500 });
+    }
+  });
+}
+
+/**
+ * Strips any existing `_Needs_Fixing` or `Needs_Fixing` tail segments from a directory path
+ * so quarantine operations never nest `_Needs_Fixing/_Needs_Fixing`.
+ */
+function stripNeedsFixingSegments(dirPath) {
+  const resolved = path.resolve(dirPath);
+  const parsed = path.parse(resolved);
+  const relativePart = resolved.slice(parsed.root.length);
+  const segments = relativePart.split(/[\\/]+/).filter(Boolean);
+  const needsFixingIdx = segments.findIndex((seg) => /^_?needs[_-\s]?fixing$/i.test(seg));
+  if (needsFixingIdx !== -1) {
+    const cleanSegments = segments.slice(0, needsFixingIdx);
+    return cleanSegments.length > 0 ? path.join(parsed.root, ...cleanSegments) : parsed.root;
+  }
+  return resolved;
+}
+
+/**
+ * Resolves the target quarantine directory for a flagged file and detects if the file
+ * is already inside a `_Needs_Fixing` folder to prevent recursive folder duplication.
+ */
+function resolveQuarantineTarget(filePath, mediaType = 'Photos', masterDir = null) {
+  const resolvedFile = path.resolve(filePath);
+  const currentFileDir = path.dirname(resolvedFile);
+
+  // Check if the file is already inside a _Needs_Fixing / Needs_Fixing directory tree
+  const cleanFromFileDir = stripNeedsFixingSegments(currentFileDir);
+  const isAlreadyInNeedsFixing =
+    path.resolve(cleanFromFileDir).toLowerCase() !== path.resolve(currentFileDir).toLowerCase();
+
+  if (isAlreadyInNeedsFixing) {
+    const canonicalTargetDir = path.join(cleanFromFileDir, '_Needs_Fixing', mediaType);
+    // If the file is already inside _Needs_Fixing (either directly or in its media subfolder),
+    // do not create another nested _Needs_Fixing folder!
+    if (
+      path.resolve(currentFileDir).toLowerCase() === path.resolve(canonicalTargetDir).toLowerCase() ||
+      /^_?needs[_-\s]?fixing$/i.test(path.basename(currentFileDir)) ||
+      /^_?needs[_-\s]?fixing$/i.test(path.basename(path.dirname(currentFileDir)))
+    ) {
+      return {
+        alreadyQuarantined: true,
+        targetDir: currentFileDir,
+        targetPath: resolvedFile,
+      };
+    }
+  }
+
+  let baseDir;
+  if (masterDir && typeof masterDir === 'string' && fs.existsSync(masterDir)) {
+    const resolvedMaster = path.resolve(masterDir);
+    const strippedMaster = stripNeedsFixingSegments(resolvedMaster);
+    // If masterDir itself was a _Needs_Fixing folder, use its parent root; otherwise beside masterDir
+    if (strippedMaster.toLowerCase() !== resolvedMaster.toLowerCase()) {
+      baseDir = strippedMaster;
+    } else {
+      baseDir = path.dirname(resolvedMaster);
+    }
+  } else {
+    baseDir = cleanFromFileDir;
+  }
+
+  const targetDir = path.join(baseDir, '_Needs_Fixing', mediaType);
+  if (path.resolve(targetDir).toLowerCase() === path.resolve(currentFileDir).toLowerCase()) {
+    return {
+      alreadyQuarantined: true,
+      targetDir: currentFileDir,
+      targetPath: resolvedFile,
+    };
+  }
+
+  return {
+    alreadyQuarantined: false,
+    targetDir,
+    targetPath: path.join(targetDir, path.basename(resolvedFile)),
+  };
+}
+
 // Ensure single instance lock
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -177,6 +369,7 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(() => {
+    registerStockflowProtocol();
     setupIpcHandlers();
     createWindow();
 
@@ -309,15 +502,19 @@ function setupIpcHandlers() {
         return { success: true, moved: false, reason: 'File already moved or deleted (ENOENT)' };
       }
 
-      // Root for quarantine: beside the master folder if available, else beside original file
-      let baseDir;
-      if (masterDir && typeof masterDir === 'string' && fs.existsSync(masterDir)) {
-        baseDir = path.dirname(masterDir);
-      } else {
-        baseDir = path.dirname(filePath);
+      const resolved = resolveQuarantineTarget(filePath, mediaType, masterDir);
+      if (resolved.alreadyQuarantined) {
+        return {
+          success: true,
+          moved: false,
+          alreadyQuarantined: true,
+          targetPath: resolved.targetPath,
+          targetDir: resolved.targetDir,
+          reason: 'File is already inside _Needs_Fixing folder',
+        };
       }
 
-      const targetDir = path.join(baseDir, '_Needs_Fixing', mediaType);
+      const targetDir = resolved.targetDir;
 
       // Automatically create _Needs_Fixing / [Media Type] directory if it does not exist
       if (!fs.existsSync(targetDir)) {
@@ -676,9 +873,10 @@ function setupIpcHandlers() {
 
   // IPC: High-Fidelity Native EPS to JPG Rasterization via Ghostscript (Non-Blocking Async Pool)
   ipcMain.handle('eps:rasterizeNative', async (event, payload) => {
-    const { fileBuffer, fileName } = payload || {};
-    if (!fileBuffer) {
-      return { success: false, error: 'No EPS buffer provided' };
+    const { fileBuffer, filePath, fileName, maxDim, quality } = payload || {};
+    const hasValidPath = typeof filePath === 'string' && filePath.trim().length > 0 && fs.existsSync(filePath);
+    if (!hasValidPath && !fileBuffer) {
+      return { success: false, error: 'No EPS file path or buffer provided' };
     }
 
     const gsBinary = findGhostscriptExecutable();
@@ -692,27 +890,40 @@ function setupIpcHandlers() {
     await acquireGsSlot();
     const tempDir = os.tmpdir();
     const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-    const tempEps = path.join(tempDir, `eps_input_${uniqueId}.eps`);
+    const tempEps = hasValidPath ? null : path.join(tempDir, `eps_input_${uniqueId}.eps`);
     const tempJpg = path.join(tempDir, `eps_out_${uniqueId}.jpg`);
 
     try {
-      await fs.promises.writeFile(tempEps, Buffer.from(fileBuffer));
+      if (tempEps && fileBuffer) {
+        await fs.promises.writeFile(tempEps, Buffer.from(fileBuffer));
+      }
+      const inputEpsPath = hasValidPath ? filePath : tempEps;
+
+      // Use lightweight 72 DPI when generating thumbnails (maxDim <= 1024), or 300 DPI for full conversion
+      const isThumbnailMode = typeof maxDim === 'number' && maxDim > 0 && maxDim <= 1024;
+      const targetDpi = isThumbnailMode ? 72 : 300;
+      const targetJpegQ =
+        typeof quality === 'number' && quality > 0 && quality <= 1
+          ? Math.max(50, Math.min(100, Math.round(quality * 100)))
+          : isThumbnailMode
+          ? 75
+          : 95;
 
       const gsArgs = [
         '-dSAFER',
         '-dBATCH',
         '-dNOPAUSE',
         '-dEPSCrop',
-        '-r300',
+        `-r${targetDpi}`,
         '-sDEVICE=jpeg',
-        '-dJPEGQ=100',
+        `-dJPEGQ=${targetJpegQ}`,
         '-dTextAlphaBits=4',
         '-dGraphicsAlphaBits=4',
         '-sColorConversionStrategy=RGB',
         '-dProcessColorModel=/DeviceRGB',
         '-dBackgroundColor=16#FFFFFF',
         '-sOutputFile=' + tempJpg,
-        tempEps,
+        inputEpsPath,
       ];
 
       const proc = await runGhostscriptAsync(gsBinary, gsArgs, 25000);
@@ -745,7 +956,9 @@ function setupIpcHandlers() {
       console.error(`[Electron Main] eps:rasterizeNative error on "${fileName || 'unknown'}":`, err);
       return { success: false, error: err.message || 'EPS rasterization failed.' };
     } finally {
-      try { await fs.promises.unlink(tempEps); } catch {}
+      if (tempEps) {
+        try { await fs.promises.unlink(tempEps); } catch {}
+      }
       try { await fs.promises.unlink(tempJpg); } catch {}
       releaseGsSlot();
     }

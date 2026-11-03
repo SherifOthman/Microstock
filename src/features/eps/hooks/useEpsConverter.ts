@@ -8,6 +8,7 @@ export interface EpsConvertItem {
   originalName: string;
   outputJpgName: string;
   size: number;
+  nativePath?: string;
   status: 'idle' | 'rendering' | 'completed' | 'error';
   progressMsg?: string;
   errorMessage?: string;
@@ -70,12 +71,21 @@ export function useEpsConverter(
 
     const newItems: EpsConvertItem[] = epsFiles.map((file) => {
       const base = file.name.replace(/\.[^/.]+$/, '');
+      let nativePath = (file as any).__nativePath || (file as any).path || '';
+      if (!nativePath && typeof window !== 'undefined' && window.electronAPI?.getPathForFile) {
+        try {
+          nativePath = window.electronAPI.getPathForFile(file) || '';
+        } catch {
+          // ignore
+        }
+      }
       return {
         id: crypto.randomUUID(),
         file,
         originalName: file.name,
         outputJpgName: `${base}.jpg`,
         size: file.size,
+        nativePath: nativePath || undefined,
         status: 'idle',
       };
     });
@@ -128,8 +138,7 @@ export function useEpsConverter(
     setStatusMessage(null);
 
     const pending = sortedItems.filter((i) => i.status !== 'completed');
-    // Process in bounded concurrent batches of 4 to avoid flooding React state with 1,000 simultaneous promises
-    const CONCURRENCY = 4;
+    const CONCURRENCY = 2;
     for (let i = 0; i < pending.length; i += CONCURRENCY) {
       const subBatch = pending.slice(i, i + CONCURRENCY);
       await Promise.all(subBatch.map((item) => handleRenderSingle(item)));
@@ -199,22 +208,55 @@ export function useEpsConverter(
 
   const handleSendToStudio = useCallback(() => {
     if (!onSendToStudio) return;
-    const completed = items.filter((i) => i.result?.blob);
+    const completed = items.filter((i) => i.result?.blob || i.result?.dataUrl);
     if (completed.length === 0) return;
 
+    // Pass the canonical .eps filename with pre-rendered JPG blob attached
+    // so Metadata Studio displays .eps, downscales the JPEG blob to 384px, and avoids re-running Ghostscript
     const filesToSend: File[] = completed.map((item) => {
-      const jpgFile = new File([item.result!.blob], item.outputJpgName, { type: 'image/jpeg' });
-      Object.defineProperty(jpgFile, '__sourceMediaType', {
+      const vectorFile = new File([item.result!.blob || item.file], item.originalName, {
+        type: 'image/jpeg',
+        lastModified: item.file.lastModified || Date.now(),
+      });
+      Object.defineProperty(vectorFile, '__sourceMediaType', {
         value: 'vector',
         enumerable: false,
         configurable: true,
       });
-      Object.defineProperty(jpgFile, '__companionEpsName', {
+      Object.defineProperty(vectorFile, '__companionEpsName', {
         value: item.originalName,
         enumerable: false,
         configurable: true,
       });
-      return jpgFile;
+      if (item.result?.dataUrl && item.result.dataUrl.startsWith('data:image/') && item.result.dataUrl.length <= 120_000) {
+        Object.defineProperty(vectorFile, '__preRenderedDataUrl', {
+          value: item.result.dataUrl,
+          enumerable: false,
+          configurable: true,
+        });
+      }
+      if (item.result?.width) {
+        Object.defineProperty(vectorFile, '__preRenderedWidth', {
+          value: item.result.width,
+          enumerable: false,
+          configurable: true,
+        });
+      }
+      if (item.result?.height) {
+        Object.defineProperty(vectorFile, '__preRenderedHeight', {
+          value: item.result.height,
+          enumerable: false,
+          configurable: true,
+        });
+      }
+      if (item.nativePath) {
+        Object.defineProperty(vectorFile, '__nativePath', {
+          value: item.nativePath,
+          enumerable: false,
+          configurable: true,
+        });
+      }
+      return vectorFile;
     });
 
     onSendToStudio(filesToSend);

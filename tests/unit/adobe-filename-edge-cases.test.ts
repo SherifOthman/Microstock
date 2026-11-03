@@ -135,7 +135,7 @@ describe('Microstock Platform CSV Rules & Filename Edge Cases (platformTransform
       expect(rows).toHaveLength(2); // Only photo and vector, drone_video.mp4 excluded!
       const filenames = rows.map((r) => r['File name']);
       expect(filenames).toContain('photo.jpg');
-      expect(filenames).toContain('vector.eps');
+      expect(filenames).toContain('vector.jpg');
       expect(filenames).not.toContain('drone_video.mp4');
     });
   });

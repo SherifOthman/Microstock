@@ -176,6 +176,41 @@ export function sanitizeExportFilename(filename: string): string {
   return clean;
 }
 
+/**
+ * Formats vector asset filenames according to each microstock agency's exact CSV ingestion specification:
+ * - Adobe Stock & Shutterstock: Force `.eps` extension
+ * - Freepik, Dreamstime, & 123RF: Force `.jpg` extension (companion JPEG preview pair rule)
+ * - Vecteezy: Strip extension completely (NO extension for vector uploads)
+ */
+export function formatVectorFilenameForPlatform(
+  filename: string,
+  mediaType: string | undefined,
+  platform: 'adobe' | 'shutterstock' | 'freepik' | 'vecteezy' | 'dreamstime' | '123rf'
+): string {
+  const clean = sanitizeExportFilename(filename ?? '');
+  if (!clean) return '';
+
+  const isVector = mediaType === 'vector' || /\.(eps|ai|svg)$/i.test(clean);
+  if (!isVector) {
+    return clean;
+  }
+
+  const baseWithoutExt = clean.replace(/\.[^/.]+$/, '');
+  switch (platform) {
+    case 'adobe':
+    case 'shutterstock':
+      return `${baseWithoutExt}.eps`;
+    case 'freepik':
+    case 'dreamstime':
+    case '123rf':
+      return `${baseWithoutExt}.jpg`;
+    case 'vecteezy':
+      return baseWithoutExt;
+    default:
+      return clean;
+  }
+}
+
 // 1. Adobe Stock Transformer
 export function transformForAdobeStock(records: MasterMetadataRecord[]): PlatformExportRow[] {
   return records.map((rec) => {
@@ -185,11 +220,11 @@ export function transformForAdobeStock(records: MasterMetadataRecord[]): Platfor
     const cleanKw = sanitizeKeywords(rec.rankedKeywords ?? []).slice(0, 49);
 
     // If media is vector (EPS), default to Category 8 (Graphic Resources) if not explicitly set
-    const isVector = rec.mediaType === 'vector' || (rec.filename && /\.(eps|ai)$/i.test(rec.filename));
+    const isVector = rec.mediaType === 'vector' || (rec.filename && /\.(eps|ai|svg)$/i.test(rec.filename));
     const defaultCat = isVector ? 8 : (rec.categories?.adobeCategoryId || 8);
 
     return {
-      Filename: sanitizeExportFilename(rec.filename ?? ''),
+      Filename: formatVectorFilenameForPlatform(rec.filename ?? '', rec.mediaType, 'adobe'),
       Title: cleanTitle,
       Keywords: cleanKw.join(', '),
       Category: rec.categories?.adobeCategoryId || defaultCat,
@@ -272,7 +307,7 @@ export function transformForFreepik(
       : '';
 
     return {
-      'File name': sanitizeExportFilename(rec.filename ?? ''),
+      'File name': formatVectorFilenameForPlatform(rec.filename ?? '', rec.mediaType, 'freepik'),
       Title: cleanTitle,
       Keywords: keywords,
       Prompt: prompt,
@@ -300,11 +335,11 @@ export function transformForShutterstock(
     const cleanDesc = smartTruncate(rec.detailedDescription ?? '', 200, true);
 
     // Auto-detect illustration flag: if options specify yes OR media is vector (.eps/.ai), set illustration to 'yes'
-    const isVectorMedia = rec.mediaType === 'vector' || (rec.filename && /\.(eps|ai)$/i.test(rec.filename));
+    const isVectorMedia = rec.mediaType === 'vector' || (rec.filename && /\.(eps|ai|svg)$/i.test(rec.filename));
     const effectiveIllustration = isVectorMedia ? 'yes' : illustrationVal;
 
     return {
-      Filename: sanitizeExportFilename(rec.filename ?? ''),
+      Filename: formatVectorFilenameForPlatform(rec.filename ?? '', rec.mediaType, 'shutterstock'),
       Description: cleanDesc,
       Keywords: (rec.rankedKeywords ?? []).slice(0, 50).join(', '),
       Categories: categoriesStr || 'Miscellaneous',
@@ -353,10 +388,11 @@ export function transformForVecteezy(
   const useWebParity = options?.webUploaderParity !== false;
 
   return records.map((rec) => {
-    // 1. Filename: Apply Web Uploader parity (no underscores/spaces) by default
-    const exportFilename = useWebParity
+    // 1. Filename: Apply Web Uploader parity (no underscores/spaces) by default, and strip extension for Vectors
+    const baseFilename = useWebParity
       ? sanitizeForVecteezyWeb(rec.filename ?? '')
       : (rec.filename ?? '');
+    const exportFilename = formatVectorFilenameForPlatform(baseFilename, rec.mediaType, 'vecteezy');
 
     // 2. Strict Title: Title Case, max 100 chars, no special symbols, no trailing period/ellipsis
     let titleCase = toTitleCase(rec.baseTitle ?? '');
@@ -442,7 +478,7 @@ export function transformForDreamstime(
     }
 
     return {
-      Filename: sanitizeExportFilename(rec.filename ?? ''),
+      Filename: formatVectorFilenameForPlatform(rec.filename ?? '', rec.mediaType, 'dreamstime'),
       'Image Name': cleanTitle,
       Description: cleanDesc,
       'Category 1': cat1,
@@ -548,7 +584,7 @@ export function transformFor123rf(
     const keywords = (rec.rankedKeywords ?? []).slice(0, 50).join(', ');
 
     return {
-      oldfilename: sanitizeExportFilename(rec.filename ?? ''),
+      oldfilename: formatVectorFilenameForPlatform(rec.filename ?? '', rec.mediaType, '123rf'),
       '123rf_filename': '',
       description: cleanDesc,
       keywords: keywords,

@@ -106,7 +106,9 @@ export function useUnifiedAssets(
       const existing = rowMap.get(rec.filename);
       if (existing) {
         existing.masterRecord = rec;
-        if (recIsRetry) existing.isRetry = true;
+        if (recIsRetry && existing.status !== 'queued') {
+          existing.isRetry = true;
+        }
 
         if (queueState.status === 'running' || queueState.status === 'resizing') {
           // If in-memory is completed or error, reflect it (do NOT override if actively queued or processing!)
@@ -114,12 +116,12 @@ export function useUnifiedAssets(
             existing.status = 'completed';
           }
         } else {
-          // When queue is idle, adopt status from DB (unless in-memory item was just queued for re-processing)
+          // When queue is idle, adopt status from DB only if in-memory item is NOT freshly queued or processing
           if (existing.status !== 'queued' && existing.status !== 'processing') {
             existing.status = recStatus;
-          }
-          if (rec.errorMessage && !existing.error) {
-            existing.error = rec.errorMessage;
+            if (rec.errorMessage && !existing.error) {
+              existing.error = rec.errorMessage;
+            }
           }
         }
         if (!existing.thumbnailUrl) existing.thumbnailUrl = rec.thumbnailBase64;

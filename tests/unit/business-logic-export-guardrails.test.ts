@@ -140,10 +140,16 @@ describe('Tier 1: Microstock Business Logic & Export Guardrails', () => {
         expect(res.rowCount).toBe(2);
         if (pid === 'vecteezy') {
           expect(res.csvString).toContain('B01NTPH001.jpg');
-          expect(res.csvString).toContain('B01NTVC001.jpg');
+          expect(res.csvString).toContain('B01NTVC001,');
           expect(res.csvString).not.toContain('B01NTPH002.jpg');
           expect(res.csvString).not.toContain('B01NTPH003.jpg');
           expect(res.csvString).not.toContain('B01NTPH004.jpg');
+        } else if (pid === 'adobe' || pid === 'shutterstock') {
+          expect(res.csvString).toContain('B01_NT_PH_001.jpg');
+          expect(res.csvString).toContain('B01_NT_VC_001.eps');
+          expect(res.csvString).not.toContain('B01_NT_PH_002.jpg');
+          expect(res.csvString).not.toContain('B01_NT_PH_003.jpg');
+          expect(res.csvString).not.toContain('B01_NT_PH_004.jpg');
         } else {
           expect(res.csvString).toContain('B01_NT_PH_001.jpg');
           expect(res.csvString).toContain('B01_NT_VC_001.jpg');

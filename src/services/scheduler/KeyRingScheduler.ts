@@ -398,16 +398,32 @@ export class KeyRingScheduler {
     } else if (error) {
       const status = error.status || error.statusCode;
       const errorMsg = error.message || String(error);
+      const errorMsgLower = errorMsg.toLowerCase();
 
       // Classify error type
       const isDailyQuota =
         status === 429 &&
-        (errorMsg.toLowerCase().includes('quota') ||
-          errorMsg.toLowerCase().includes('per-day') ||
-          errorMsg.toLowerCase().includes('daily') ||
+        (errorMsgLower.includes('quota') ||
+          errorMsgLower.includes('per-day') ||
+          errorMsgLower.includes('daily') ||
           errorMsg.includes('RESOURCE_EXHAUSTED'));
 
       const isRateLimit = status === 429 && !isDailyQuota;
+      const isServerOverload =
+        status === 503 ||
+        status === 502 ||
+        status === 504 ||
+        errorMsgLower.includes('high demand') ||
+        errorMsgLower.includes('overloaded') ||
+        errorMsgLower.includes('service unavailable') ||
+        errorMsgLower.includes('UNAVAILABLE'.toLowerCase());
+      const isTimeout =
+        status === 408 ||
+        Boolean(error.isTimeout) ||
+        error.name === 'TimeoutError' ||
+        error.name === 'AbortError' ||
+        errorMsgLower.includes('timed out') ||
+        errorMsgLower.includes('signal timed out');
       const isAuthOrModel = status === 401 || status === 403 || status === 404;
 
       if (isDailyQuota) {
@@ -430,6 +446,28 @@ export class KeyRingScheduler {
         key.status = 'cooling_down';
         key.cooldownUntil = now + retrySeconds * 1000;
         key.lastError = `Rate limit hit (429). Cooldown: ${retrySeconds}s`;
+
+        await this.persistKeyUpdate(keyId, {
+          status: 'cooling_down',
+          cooldownUntil: key.cooldownUntil,
+          lastError: key.lastError,
+        });
+      } else if (isServerOverload) {
+        const retrySeconds = error.retryAfterSeconds || 20;
+        key.status = 'cooling_down';
+        key.cooldownUntil = now + retrySeconds * 1000;
+        key.lastError = `Model experiencing high demand (${status || 503}). Cooldown: ${retrySeconds}s`;
+
+        await this.persistKeyUpdate(keyId, {
+          status: 'cooling_down',
+          cooldownUntil: key.cooldownUntil,
+          lastError: key.lastError,
+        });
+      } else if (isTimeout) {
+        const retrySeconds = 15;
+        key.status = 'cooling_down';
+        key.cooldownUntil = now + retrySeconds * 1000;
+        key.lastError = `Request timed out. Cooldown: ${retrySeconds}s`;
 
         await this.persistKeyUpdate(keyId, {
           status: 'cooling_down',
@@ -467,7 +505,6 @@ export class KeyRingScheduler {
    * Resets all keys back to healthy status
    */
   public async resetAllCooldowns(): Promise<void> {
-    const now = Date.now();
     for (const [id, key] of this.keysCache.entries()) {
       key.status = 'healthy';
       key.cooldownUntil = undefined;
@@ -501,18 +538,25 @@ export class KeyRingScheduler {
       const adapter = getProviderAdapter(keyRecord.providerId);
       const plainKey = await decryptSecret(keyRecord.key);
       const testRes = await adapter.testKey(plainKey, keyRecord.modelId);
+      const errLower = (testRes.error || '').toLowerCase();
+      const isTransientBusy =
+        testRes.statusCode === 429 ||
+        testRes.statusCode === 503 ||
+        testRes.statusCode === 408 ||
+        errLower.includes('high demand') ||
+        errLower.includes('overloaded') ||
+        errLower.includes('timed out');
 
       const updatedStatus = testRes.success
         ? 'healthy'
-        : testRes.statusCode === 429
+        : isTransientBusy
         ? 'cooling_down'
         : 'invalid';
 
       keyRecord.status = updatedStatus;
       keyRecord.lastLatencyMs = testRes.latencyMs;
       keyRecord.lastError = testRes.success ? '' : (testRes.error || '');
-      keyRecord.cooldownUntil =
-        testRes.statusCode === 429 ? Date.now() + 30000 : undefined;
+      keyRecord.cooldownUntil = isTransientBusy ? Date.now() + 20000 : undefined;
 
       await this.persistKeyUpdate(keyRecord.id, {
         status: keyRecord.status,

@@ -171,12 +171,12 @@ describe('Tier 3 E2E: Seamless Microstock Contributor Pipeline & 3,000-File Chao
       epsHook.current.handleSendToStudio();
     });
 
-    // Verify both arrived in Studio DB as 'vector' even though their filenames end with .jpg!
+    // Verify both arrived in Studio DB as 'vector' with canonical .eps filenames and pre-rendered preview data!
     let studioRecords = await db.masterRecords.toArray();
     expect(studioRecords).toHaveLength(2);
-    expect(studioRecords[0].filename).toBe('B01_NT_VC_001.jpg');
+    expect(studioRecords[0].filename).toBe('B01_NT_VC_001.eps');
     expect(studioRecords[0].mediaType).toBe('vector');
-    expect(studioRecords[1].filename).toBe('B01_NT_VC_002.jpg');
+    expect(studioRecords[1].filename).toBe('B01_NT_VC_002.eps');
     expect(studioRecords[1].mediaType).toBe('vector');
 
     // Simulate AI completing asset 1 while asset 2 remains 'pending'
@@ -225,13 +225,13 @@ describe('Tier 3 E2E: Seamless Microstock Contributor Pipeline & 3,000-File Chao
     const adobeCsv = savedFilesCapture.find((f) => f.name.includes('adobe'))!.data;
     const shutterCsv = savedFilesCapture.find((f) => f.name.includes('shutterstock'))!.data;
 
-    // Only completed B01_NT_VC_001.jpg is in the CSV; pending B01_NT_VC_002.jpg is strictly excluded!
-    expect(adobeCsv).toContain('B01_NT_VC_001.jpg');
-    expect(adobeCsv).not.toContain('B01_NT_VC_002.jpg');
+    // Only completed B01_NT_VC_001.eps is in the CSV; pending B01_NT_VC_002.eps is strictly excluded!
+    expect(adobeCsv).toContain('B01_NT_VC_001.eps');
+    expect(adobeCsv).not.toContain('B01_NT_VC_002');
     expect(adobeCsv).toContain(',8,'); // Vector default Category 8
 
-    expect(shutterCsv).toContain('B01_NT_VC_001.jpg');
-    expect(shutterCsv).not.toContain('B01_NT_VC_002.jpg');
+    expect(shutterCsv).toContain('B01_NT_VC_001.eps');
+    expect(shutterCsv).not.toContain('B01_NT_VC_002');
     expect(shutterCsv).toContain(',yes'); // Vector illustration = yes
   });
 

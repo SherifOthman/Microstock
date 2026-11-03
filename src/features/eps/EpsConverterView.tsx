@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useMemo } from 'react';
 import { Button } from '../../components/ui/button';
 import { Tooltip } from '../../components/ui/tooltip';
 import {
@@ -16,6 +16,7 @@ import {
 import { useLanguage } from '../../context/LanguageContext';
 import { useEpsConverter, EpsConvertItem } from './hooks/useEpsConverter';
 import { EpsVirtualGrid } from './components/EpsVirtualGrid';
+import { MediaLightboxModal, LightboxAsset } from '../../components/MediaLightboxModal';
 
 export type { EpsConvertItem };
 
@@ -27,6 +28,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
   const { language, t } = useLanguage();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const [previewItemId, setPreviewItemId] = useState<string | null>(null);
 
   const {
     items,
@@ -50,8 +52,23 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
     }
   };
 
+  const allCompleted = items.length > 0 && completedCount === items.length && !isConvertingBatch;
+
+  const lightboxAssets: LightboxAsset[] = useMemo(() => {
+    return sortedItems.map((item) => ({
+      id: item.id,
+      filename: `${item.originalName} → ${item.outputJpgName}`,
+      mediaType: 'vector',
+      previewUrl: item.result?.objectUrl || item.result?.dataUrl,
+      file: item.file,
+      nativePath: item.nativePath || (item.file as any)?.path,
+      width: item.result?.width,
+      height: item.result?.height,
+    }));
+  }, [sortedItems]);
+
   return (
-    <div className="space-y-4 max-w-6xl mx-auto">
+    <div className="w-full max-w-6xl mx-auto flex-1 min-h-0 h-full flex flex-col gap-3 overflow-hidden">
       <input
         ref={fileInputRef}
         type="file"
@@ -70,7 +87,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
       />
 
       {/* Compact Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card border border-border p-4 rounded-xl">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card border border-border p-3.5 rounded-xl shrink-0">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-lg bg-secondary text-primary border border-border">
             <Layers className="w-4 h-4" />
@@ -95,7 +112,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
       {/* Status Notice */}
       {statusMessage && (
         <div
-          className={`p-3 rounded-lg border text-xs font-medium flex items-center gap-2 ${
+          className={`p-3 rounded-lg border text-xs font-medium flex items-center gap-2 shrink-0 ${
             statusMessage.type === 'success'
               ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
               : 'bg-destructive/10 border-destructive/30 text-destructive'
@@ -144,9 +161,9 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
           </div>
         </div>
       ) : (
-        <>
-          {/* Action Toolbar with Both "Add Files" & "Add Folder" */}
-          <div className="flex flex-wrap items-center justify-between gap-3 bg-card border border-border p-3 rounded-xl">
+        <div className="flex-1 min-h-0 h-full flex flex-col gap-2.5 overflow-hidden">
+          {/* Sticky Action Toolbar with Both "Add Files" & "Add Folder" */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-card border border-border p-3 rounded-xl shrink-0 sticky top-0 z-10">
             <div className="flex items-center gap-2 text-xs font-mono tabular-nums">
               <span className="font-semibold text-foreground">
                 {items.length} {language === 'ar' ? 'ملف' : 'files'}
@@ -181,39 +198,55 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
               <Button
                 size="sm"
                 onClick={handleConvertAll}
-                disabled={isConvertingBatch}
+                disabled={isConvertingBatch || allCompleted}
                 className="gap-1.5 text-xs font-semibold cursor-pointer"
               >
                 {isConvertingBatch ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                 <span>{language === 'ar' ? 'تحويل الكل إلى JPG' : 'Render All to JPG'}</span>
               </Button>
 
-              {completedCount > 0 && (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleSaveToDirectory}
-                    className="gap-1.5 text-xs font-semibold cursor-pointer"
-                  >
-                    <FolderDown className="w-3.5 h-3.5" />
-                    <span>
-                      {language === 'ar' ? `حفظ (${completedCount}) في مجلد` : `Save to Folder (${completedCount})`}
-                    </span>
-                  </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleSaveToDirectory}
+                disabled={completedCount === 0 || isConvertingBatch}
+                className="gap-1.5 text-xs font-semibold cursor-pointer"
+              >
+                <FolderDown className="w-3.5 h-3.5" />
+                <span>
+                  {language === 'ar' ? `حفظ (${completedCount}) في مجلد` : `Save to Folder (${completedCount})`}
+                </span>
+              </Button>
 
-                  {onSendToStudio && (
+              {onSendToStudio && (
+                <Tooltip
+                  content={
+                    !allCompleted
+                      ? language === 'ar'
+                        ? 'أكمل تحويل جميع ملفات EPS إلى JPG أولاً قبل الإرسال إلى استوديو Metadata'
+                        : 'Render all EPS files to JPG first before sending to Metadata Studio'
+                      : language === 'ar'
+                      ? 'إرسال المتجهات المحولة إلى استوديو Metadata'
+                      : 'Send converted vectors to Metadata Studio'
+                  }
+                >
+                  <span>
                     <Button
                       variant="secondary"
                       size="sm"
                       onClick={handleSendToStudio}
-                      className="gap-1.5 text-xs text-primary hover:text-primary/80 cursor-pointer"
+                      disabled={!allCompleted}
+                      className="gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 cursor-pointer"
                     >
                       <Wand2 className="w-3.5 h-3.5" />
-                      <span>{language === 'ar' ? 'إرسال إلى استوديو Metadata' : 'Send to Metadata Studio'}</span>
+                      <span>
+                        {language === 'ar'
+                          ? `إرسال إلى استوديو Metadata (${completedCount})`
+                          : `Send to Metadata Studio (${completedCount})`}
+                      </span>
                     </Button>
-                  )}
-                </>
+                  </span>
+                </Tooltip>
               )}
 
               <Tooltip content={language === 'ar' ? 'مسح الكل' : 'Clear All'}>
@@ -229,15 +262,27 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
             </div>
           </div>
 
-          {/* TanStack Virtualized 4-Column Grid */}
+          {/* TanStack Virtualized 4-Column Grid (Full Window Height) */}
           <EpsVirtualGrid
             items={sortedItems}
             language={language}
             onRenderSingle={handleRenderSingle}
             onSaveSingleJpg={handleSaveSingleJpg}
+            onPreviewItem={(item) => setPreviewItemId(item.id)}
           />
-        </>
+        </div>
       )}
+
+      {/* Full-Screen EPS / Vector Preview Modal */}
+      <MediaLightboxModal
+        open={Boolean(previewItemId)}
+        onOpenChange={(open) => {
+          if (!open) setPreviewItemId(null);
+        }}
+        assets={lightboxAssets}
+        initialAssetId={previewItemId}
+        onNavigate={(id) => setPreviewItemId(id)}
+      />
     </div>
   );
 };

@@ -67,8 +67,37 @@ export async function rasterizeEpsFile(
   if (typeof window !== 'undefined' && window.electronAPI?.rasterizeEpsNative) {
     try {
       const nativeResult = await runInEpsPool(async () => {
+        let nativePath = (file as any).__nativePath || (file as any).path || '';
+        if (!nativePath && typeof window.electronAPI?.getPathForFile === 'function' && file instanceof File) {
+          try {
+            nativePath = window.electronAPI.getPathForFile(file) || '';
+          } catch {
+            // ignore
+          }
+        }
+
+        if (nativePath) {
+          return await window.electronAPI!.rasterizeEpsNative!(
+            {
+              filePath: nativePath,
+              fileName: rawFileName,
+              maxDim: targetLongestSide,
+              quality: jpegQuality,
+            },
+            rawFileName
+          );
+        }
+
         const buffer = await file.arrayBuffer();
-        return await window.electronAPI!.rasterizeEpsNative!(buffer, rawFileName);
+        return await window.electronAPI!.rasterizeEpsNative!(
+          {
+            fileBuffer: buffer,
+            fileName: rawFileName,
+            maxDim: targetLongestSide,
+            quality: jpegQuality,
+          },
+          rawFileName
+        );
       });
 
       if (nativeResult.success && nativeResult.buffer) {

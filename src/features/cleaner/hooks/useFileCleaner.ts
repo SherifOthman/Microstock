@@ -12,7 +12,7 @@ import {
   validateMediaDimensions,
 } from '../../../services/cleaner/fileCleanerEngine';
 
-export function buildRenamedFilesFromCleanedItems(items: CleanedFileItem[]): File[] {
+export function buildRenamedFilesFromCleanedItems(items: CleanedFileItem[], masterDir?: string): File[] {
   return items
     .filter((i) => !i.validation?.isBlocking)
     .map((item) => {
@@ -24,6 +24,16 @@ export function buildRenamedFilesFromCleanedItems(items: CleanedFileItem[]): Fil
       if (item.subFolder === 'Vectors') {
         Object.defineProperty(renamedFile, '__sourceMediaType', {
           value: 'vector',
+          enumerable: false,
+          configurable: true,
+        });
+      }
+      const resolvedPath = masterDir
+        ? `${masterDir.replace(/[\\/]+$/, '')}/${item.subFolder}/${item.batchFolder}/${finalName}`
+        : item.nativePath || (item.file as any).__nativePath || (item.file as any).path || '';
+      if (resolvedPath) {
+        Object.defineProperty(renamedFile, '__nativePath', {
+          value: resolvedPath,
           enumerable: false,
           configurable: true,
         });
@@ -48,6 +58,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
   // Imported Files & Configuration
   const [rawFiles, setRawFiles] = useState<File[]>([]);
   const [lastProcessedFiles, setLastProcessedFiles] = useState<File[]>([]);
+  const [isBatchSaved, setIsBatchSaved] = useState(false);
   const [nativePaths, setNativePaths] = useState<Record<string, string>>({});
   const [options, setOptions] = useState<CleanerOptions>(DEFAULT_CLEANER_OPTIONS);
   const [shuffleSeed, setShuffleSeed] = useState(1);
@@ -226,6 +237,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
       }
       return Array.from(uniqueMap.values());
     });
+    setIsBatchSaved(false);
     setStatusNotification(null);
   }, []);
 
@@ -243,12 +255,17 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
     }
   }, [handleAddFiles]);
 
-  // Process files into batches based on sorting, slot allocation, and duplicate matching
-  const cleanedItems: CleanedFileItem[] = useMemo(() => {
+  // Step 1: Compute base batch routing & fuzzy duplicate matching ONLY when files/options/slots change
+  // (Decoupled from `validations` so bulk-drop resolution checks do not re-trigger O(N log N) sorting & Levenshtein)
+  const baseProcessedItems: CleanedFileItem[] = useMemo(() => {
     if (rawFiles.length === 0) return [];
-    const processed = processFilesForBatchIngest(rawFiles, options, mediaSlots, shuffleSeed, nativePaths);
+    return processFilesForBatchIngest(rawFiles, options, mediaSlots, shuffleSeed, nativePaths);
+  }, [rawFiles, options, mediaSlots, shuffleSeed, nativePaths]);
 
-    return processed.map((item) => {
+  // Step 2: Lightweight O(N) merge of manual overrides and async resolution validations
+  const cleanedItems: CleanedFileItem[] = useMemo(() => {
+    if (baseProcessedItems.length === 0) return [];
+    return baseProcessedItems.map((item) => {
       const fileKey = `${item.file.name}-${item.file.size}-${item.file.lastModified}`;
       const custom = manualOverrides[item.id];
       const finalName = custom || item.cleanedName;
@@ -259,7 +276,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
         validation: validations[fileKey],
       };
     });
-  }, [rawFiles, options, mediaSlots, shuffleSeed, nativePaths, manualOverrides, validations]);
+  }, [baseProcessedItems, manualOverrides, validations]);
 
   // Count blocking errors and soft warnings
   const blockingErrorCount = useMemo(() => {
@@ -424,16 +441,37 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
     setManualOverrides({});
     setValidations({});
     validatedKeysRef.current.clear();
+    setIsBatchSaved(false);
     setStatusNotification(null);
   }, []);
 
   const handleReShuffle = useCallback(() => {
     setShuffleSeed((prev) => prev + 1);
+    setIsBatchSaved(false);
   }, []);
 
   // Native Process & Save Directly to Hard Drive
   const handleProcessAndSave = useCallback(async () => {
-    if (!masterDirectory) {
+    let targetMasterDir = masterDirectory;
+
+    // If user hasn't picked a Master Directory yet, open native folder picker on the spot
+    if (!targetMasterDir && typeof window !== 'undefined' && window.electronAPI?.selectDirectory) {
+      try {
+        const pickRes = await window.electronAPI.selectDirectory({
+          title: language === 'ar' ? 'حدد مجلد الوجهة لحفظ الملفات المنظمة' : 'Select Destination Folder to Save Organized Files',
+        });
+        if (!pickRes.canceled && pickRes.path) {
+          targetMasterDir = pickRes.path;
+          setMasterDirectory(pickRes.path);
+          localStorage.setItem('stock_cleaner_master_dir', pickRes.path);
+          await scanMasterDirectory(pickRes.path);
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (!targetMasterDir) {
       setStatusNotification({
         type: 'error',
         message: language === 'ar' ? 'الرجاء تحديد مجلد الوجهة الرئيسي أولاً' : 'Please select a Master Destination Directory first.',
@@ -460,7 +498,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
 
     try {
       const res = await saveBatchFilesToMasterDirectory(
-        masterDirectory,
+        targetMasterDir,
         cleanedItems,
         (done, total, cur) => {
           setProgressMsg(
@@ -472,18 +510,19 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
       );
 
       if (res.success) {
-        const preparedFiles = buildRenamedFilesFromCleanedItems(cleanedItems);
+        const preparedFiles = buildRenamedFilesFromCleanedItems(cleanedItems, targetMasterDir);
         setLastProcessedFiles(preparedFiles);
+        setIsBatchSaved(true);
 
         const touchedBatches = Array.from(new Set(cleanedItems.map((i) => `${i.subFolder}/${i.batchFolder}`)));
         setSuccessDialogInfo({
           savedCount: res.savedCount,
           batches: touchedBatches,
-          masterDir: masterDirectory,
+          masterDir: targetMasterDir,
         });
         setShowSuccessDialog(true);
 
-        await scanMasterDirectory(masterDirectory);
+        await scanMasterDirectory(targetMasterDir);
         setRawFiles([]);
         setManualOverrides({});
       } else {
@@ -514,17 +553,17 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
 
   const handleSendToStudio = useCallback(() => {
     if (!onSendToStudio) return;
+    if (lastProcessedFiles.length > 0) {
+      onSendToStudio(lastProcessedFiles);
+      return;
+    }
     if (cleanedItems.length > 0) {
-      const files = buildRenamedFilesFromCleanedItems(cleanedItems);
+      const files = buildRenamedFilesFromCleanedItems(cleanedItems, masterDirectory);
       if (files.length > 0) {
         onSendToStudio(files);
       }
-      return;
     }
-    if (lastProcessedFiles.length > 0) {
-      onSendToStudio(lastProcessedFiles);
-    }
-  }, [cleanedItems, lastProcessedFiles, onSendToStudio]);
+  }, [cleanedItems, lastProcessedFiles, masterDirectory, onSendToStudio]);
 
   return {
     masterDirectory,
@@ -533,6 +572,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
     isScanningDisk,
     rawFiles,
     lastProcessedFiles,
+    isBatchSaved,
     options,
     setOptions,
     searchFilter,

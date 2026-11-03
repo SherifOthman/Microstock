@@ -188,7 +188,7 @@ export const StudioView: React.FC = () => {
         onUnlockShutter={() => dialogs.setIsShutterUnlockDialogOpen(true)}
       />
 
-      <main className="flex-1 w-full min-w-0 space-y-3 h-full min-h-0 overflow-y-auto pr-1">
+      <main className="flex-1 w-full min-w-0 space-y-3 h-full min-h-0 flex flex-col overflow-hidden pr-1">
         {healthyKeys.length === 0 && (
           <Alert variant="warning" className={isKeyShake ? 'animate-shake ring-2 ring-amber-500/50' : ''}>
             <KeyRound className="w-4 h-4" />
@@ -315,7 +315,6 @@ export const StudioView: React.FC = () => {
             </span>
             <div className="flex items-center gap-2 flex-wrap">
               <Button
-                variant="secondary"
                 size="sm"
                 onClick={() => handleSaveToFolderWithCheck(unifiedAssets.length, completedCount)}
                 disabled={settings.selectedPlatforms.length === 0 || isSavingToFolder}
@@ -327,15 +326,6 @@ export const StudioView: React.FC = () => {
                   <FolderDown className="w-3.5 h-3.5" />
                 )}
                 <span>{language === 'ar' ? 'حفظ CSV في مجلد' : 'Save CSVs to Folder'}</span>
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => handleExportZipWithCheck(unifiedAssets.length, completedCount)}
-                disabled={settings.selectedPlatforms.length === 0}
-                className="gap-1.5 text-xs font-semibold shrink-0 cursor-pointer"
-              >
-                <Archive className="w-3.5 h-3.5" />
-                <span>{language === 'ar' ? 'تحميل الكل (.ZIP)' : 'Download All (.ZIP)'}</span>
               </Button>
             </div>
           </div>

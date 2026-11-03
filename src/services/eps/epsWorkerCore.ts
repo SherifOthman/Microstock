@@ -52,22 +52,46 @@ export async function canvasToBlobAndDataUrl(
   canvas: HTMLCanvasElement | OffscreenCanvas,
   quality = 0.98
 ): Promise<{ blob: Blob; dataUrl: string; objectUrl?: string }> {
-  if ('convertToBlob' in canvas && typeof (canvas as OffscreenCanvas).convertToBlob === 'function') {
-    const blob = await (canvas as OffscreenCanvas).convertToBlob({ type: 'image/jpeg', quality });
-    return { blob, dataUrl: '' };
-  } else {
-    const htmlCanvas = canvas as HTMLCanvasElement;
-    const dataUrl = htmlCanvas.toDataURL('image/jpeg', quality);
-    const blob = await new Promise<Blob>((resolve) => htmlCanvas.toBlob((b) => resolve(b!), 'image/jpeg', quality));
-    let objectUrl = '';
-    try {
-      if (typeof URL !== 'undefined' && URL.createObjectURL) {
-        objectUrl = URL.createObjectURL(blob);
+  try {
+    if ('convertToBlob' in canvas && typeof (canvas as OffscreenCanvas).convertToBlob === 'function') {
+      const blob = await (canvas as OffscreenCanvas).convertToBlob({ type: 'image/jpeg', quality });
+      return { blob, dataUrl: '' };
+    } else {
+      const htmlCanvas = canvas as HTMLCanvasElement;
+      const dataUrl = htmlCanvas.toDataURL('image/jpeg', quality);
+      const blob = await new Promise<Blob>((resolve) =>
+        htmlCanvas.toBlob(
+          (b) => {
+            if (b) return resolve(b);
+            // Fallback in JSDOM if toBlob returns null
+            const b64 = dataUrl.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
+            const bin = typeof atob === 'function' ? atob(b64) : '';
+            const bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            resolve(new Blob([bytes], { type: 'image/jpeg' }));
+          },
+          'image/jpeg',
+          quality
+        )
+      );
+      let objectUrl = '';
+      try {
+        if (typeof URL !== 'undefined' && URL.createObjectURL) {
+          objectUrl = URL.createObjectURL(blob);
+        }
+      } catch {
+        // ignore
       }
+      return { blob, dataUrl, objectUrl };
+    }
+  } finally {
+    // Aggressively release uncompressed RGBA backing store immediately after encoding
+    try {
+      canvas.width = 0;
+      canvas.height = 0;
     } catch {
       // ignore
     }
-    return { blob, dataUrl, objectUrl };
   }
 }
 
@@ -87,9 +111,24 @@ export async function loadUniversalDrawable(source: Blob | string): Promise<Canv
     return new Promise((resolve, reject) => {
       const img = new Image();
       img.crossOrigin = 'anonymous';
-      img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error('Failed to load raster image preview'));
-      img.src = typeof source === 'string' ? source : URL.createObjectURL(source);
+      const tempObjUrl = typeof source === 'string' ? null : URL.createObjectURL(source);
+      img.onload = () => {
+        if (tempObjUrl) {
+          try {
+            URL.revokeObjectURL(tempObjUrl);
+          } catch {}
+        }
+        resolve(img);
+      };
+      img.onerror = () => {
+        if (tempObjUrl) {
+          try {
+            URL.revokeObjectURL(tempObjUrl);
+          } catch {}
+        }
+        reject(new Error('Failed to load raster image preview'));
+      };
+      img.src = typeof source === 'string' ? source : tempObjUrl!;
     });
   }
   throw new Error('No image decoding capability available');
@@ -811,7 +850,6 @@ export async function rasterizeEpsBufferDirect(
     return {
       width: canvasWidth,
       height: canvasHeight,
-      canvas,
       dataUrl,
       blob,
       sourceTier: 'vector',
@@ -827,12 +865,18 @@ export async function rasterizeEpsBufferDirect(
   const dosPreview = extractBinaryDosEpsPreview(buffer);
   if (dosPreview) {
     if (dosPreview.canvas) {
-      drawFittedImage(ctx, dosPreview.canvas, dosPreview.canvas.width, dosPreview.canvas.height, canvasWidth, canvasHeight);
+      try {
+        drawFittedImage(ctx, dosPreview.canvas, dosPreview.canvas.width, dosPreview.canvas.height, canvasWidth, canvasHeight);
+      } finally {
+        try {
+          dosPreview.canvas.width = 0;
+          dosPreview.canvas.height = 0;
+        } catch {}
+      }
       const { blob, dataUrl } = await canvasToBlobAndDataUrl(canvas, jpegQuality);
       return {
         width: canvasWidth,
         height: canvasHeight,
-        canvas,
         dataUrl,
         blob,
         sourceTier: 'binary_preview',
@@ -840,8 +884,9 @@ export async function rasterizeEpsBufferDirect(
         pathOpCount: 100, // real artwork
       };
     } else if (dosPreview.blob) {
+      let drawable: CanvasImageSource | null = null;
       try {
-        const drawable = await loadUniversalDrawable(dosPreview.blob);
+        drawable = await loadUniversalDrawable(dosPreview.blob);
         const dWidth = (drawable as any).naturalWidth || (drawable as any).width;
         const dHeight = (drawable as any).naturalHeight || (drawable as any).height;
         drawFittedImage(ctx, drawable, dWidth, dHeight, canvasWidth, canvasHeight);
@@ -849,7 +894,6 @@ export async function rasterizeEpsBufferDirect(
         return {
           width: canvasWidth,
           height: canvasHeight,
-          canvas,
           dataUrl,
           blob,
           sourceTier: 'binary_preview',
@@ -858,6 +902,12 @@ export async function rasterizeEpsBufferDirect(
         };
       } catch {
         // Fall through
+      } finally {
+        if (drawable && typeof (drawable as any).close === 'function') {
+          try {
+            (drawable as any).close();
+          } catch {}
+        }
       }
     }
   }
@@ -865,8 +915,9 @@ export async function rasterizeEpsBufferDirect(
   // 2B. Embedded XMP Base64 Thumbnail
   const xmpB64 = extractXmpThumbnail(fullText) || extractXmpThumbnail(decoder.decode(buffer.slice(0, Math.min(buffer.byteLength, 2 * 1024 * 1024))));
   if (xmpB64) {
+    let drawable: CanvasImageSource | null = null;
     try {
-      const drawable = await loadUniversalDrawable(xmpB64);
+      drawable = await loadUniversalDrawable(xmpB64);
       const dWidth = (drawable as any).naturalWidth || (drawable as any).width;
       const dHeight = (drawable as any).naturalHeight || (drawable as any).height;
       drawFittedImage(ctx, drawable, dWidth, dHeight, canvasWidth, canvasHeight);
@@ -874,7 +925,6 @@ export async function rasterizeEpsBufferDirect(
       return {
         width: canvasWidth,
         height: canvasHeight,
-        canvas,
         dataUrl,
         blob,
         sourceTier: 'xmp',
@@ -883,14 +933,21 @@ export async function rasterizeEpsBufferDirect(
       };
     } catch {
       // Fall through to other tiers
+    } finally {
+      if (drawable && typeof (drawable as any).close === 'function') {
+        try {
+          (drawable as any).close();
+        } catch {}
+      }
     }
   }
 
   // 2C. Embedded JPEG Stream anywhere in buffer
   const jpegStream = extractEmbeddedJpegStream(buffer);
   if (jpegStream) {
+    let drawable: CanvasImageSource | null = null;
     try {
-      const drawable = await loadUniversalDrawable(jpegStream);
+      drawable = await loadUniversalDrawable(jpegStream);
       const dWidth = (drawable as any).naturalWidth || (drawable as any).width;
       const dHeight = (drawable as any).naturalHeight || (drawable as any).height;
       drawFittedImage(ctx, drawable, dWidth, dHeight, canvasWidth, canvasHeight);
@@ -898,7 +955,6 @@ export async function rasterizeEpsBufferDirect(
       return {
         width: canvasWidth,
         height: canvasHeight,
-        canvas,
         dataUrl,
         blob,
         sourceTier: 'binary_preview',
@@ -907,6 +963,12 @@ export async function rasterizeEpsBufferDirect(
       };
     } catch {
       // Fall through
+    } finally {
+      if (drawable && typeof (drawable as any).close === 'function') {
+        try {
+          (drawable as any).close();
+        } catch {}
+      }
     }
   }
 
@@ -941,7 +1003,6 @@ export async function rasterizeEpsBufferDirect(
   return {
     width: canvasWidth,
     height: canvasHeight,
-    canvas,
     dataUrl,
     blob,
     sourceTier: 'vector',

@@ -1,8 +1,7 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useMemo } from 'react';
 import { Button } from '../../components/ui/button';
 import { Tooltip } from '../../components/ui/tooltip';
 import {
-  Archive,
   CheckCircle2,
   FolderUp,
   Loader2,
@@ -10,11 +9,11 @@ import {
   Trash2,
   UploadCloud,
   VolumeX,
-  Wand2,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
 import { useVideoMuter, VideoMuteItem } from './hooks/useVideoMuter';
 import { VideoMuterTable } from './components/VideoMuterTable';
+import { MediaLightboxModal, LightboxAsset } from '../../components/MediaLightboxModal';
 
 export type { VideoMuteItem };
 
@@ -23,7 +22,7 @@ export interface VideoMuterViewProps {
 }
 
 /**
- * Lossless Video Audio Stripper
+ * Lossless Video Audio Stripper (Standalone Utility)
  * Strictly preserves exact original filenames without renaming so sequence matching
  * with File Cleaner and CSV exports remains 100% intact.
  */
@@ -31,6 +30,7 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
   const { language, t } = useLanguage();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const [previewItemId, setPreviewItemId] = useState<string | null>(null);
 
   const {
     items,
@@ -43,9 +43,7 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
     handleMuteSingle,
     handleMuteAll,
     handleDownloadSingle,
-    handleDownloadAllZip,
     handleExportToFolder,
-    handleSendToStudio,
   } = useVideoMuter(language, onSendToStudio);
 
   const onFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -63,10 +61,19 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
   };
 
   const completedCount = items.filter((i) => i.status === 'completed').length;
-  const readyForStudioCount = items.filter((i) => i.status === 'completed' || i.hasAudio === false).length;
+
+  const lightboxAssets: LightboxAsset[] = useMemo(() => {
+    return items.map((item) => ({
+      id: item.id,
+      filename: item.originalName,
+      mediaType: 'video',
+      file: item.file,
+      nativePath: item.nativePath || (item.file as any)?.path,
+    }));
+  }, [items]);
 
   return (
-    <div className="max-w-6xl mx-auto space-y-4">
+    <div className="w-full max-w-6xl mx-auto flex-1 min-h-0 h-full flex flex-col gap-3 overflow-hidden">
       <input
         ref={fileInputRef}
         type="file"
@@ -84,8 +91,8 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
         className="hidden"
       />
 
-      {/* Header Bar (No Filename Renaming Checkbox) */}
-      <div className="p-4 rounded-xl border border-border bg-card flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      {/* Header Bar */}
+      <div className="p-3.5 rounded-xl border border-border bg-card flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-lg bg-secondary text-primary border border-border">
             <VolumeX className="w-4 h-4" />
@@ -109,25 +116,9 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
 
       {/* Success Banner */}
       {exportSuccessMessage && (
-        <div className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 shrink-0" />
-            <span>{exportSuccessMessage}</span>
-          </div>
-          {onSendToStudio && items.length > 0 && (
-            <Button
-              size="sm"
-              onClick={handleSendToStudio}
-              className="gap-1.5 text-xs font-semibold shrink-0 cursor-pointer"
-            >
-              <Wand2 className="w-3.5 h-3.5" />
-              <span>
-                {language === 'ar'
-                  ? `إرسال إلى استوديو Metadata (${readyForStudioCount || items.length})`
-                  : `Send to Metadata Studio (${readyForStudioCount || items.length})`}
-              </span>
-            </Button>
-          )}
+        <div className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-2 shrink-0">
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          <span>{exportSuccessMessage}</span>
         </div>
       )}
 
@@ -168,9 +159,9 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
           </div>
         </div>
       ) : (
-        <div className="space-y-3">
-          {/* Action Toolbar with Both "Add Files" and "Add Folder" */}
-          <div className="p-3 bg-card rounded-xl border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex-1 min-h-0 h-full flex flex-col gap-2.5 overflow-hidden">
+          {/* Sticky Action Toolbar with Both "Add Files" and "Add Folder" + Standalone "Save to Folder" */}
+          <div className="p-3 bg-card rounded-xl border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 sticky top-0 z-10">
             <div className="flex items-center gap-2 text-xs font-mono tabular-nums">
               <span className="font-semibold text-foreground">
                 {items.length} {language === 'ar' ? 'فيديو' : 'videos'}
@@ -219,8 +210,8 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
               )}
 
               <Button
-                variant="secondary"
                 size="sm"
+                variant={completedCount === items.length ? 'default' : 'secondary'}
                 onClick={handleExportToFolder}
                 disabled={isExporting}
                 className="gap-1.5 text-xs font-semibold cursor-pointer"
@@ -228,33 +219,6 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
                 {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FolderUp className="w-3.5 h-3.5" />}
                 <span>{language === 'ar' ? 'حفظ في مجلد' : 'Save to Folder'}</span>
               </Button>
-
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleDownloadAllZip}
-                disabled={isExporting}
-                className="gap-1.5 text-xs cursor-pointer"
-              >
-                <Archive className="w-3.5 h-3.5" />
-                <span>{language === 'ar' ? 'تصدير ZIP' : 'Export ZIP'}</span>
-              </Button>
-
-              {onSendToStudio && readyForStudioCount > 0 && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleSendToStudio}
-                  className="gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 cursor-pointer"
-                >
-                  <Wand2 className="w-3.5 h-3.5" />
-                  <span>
-                    {language === 'ar'
-                      ? `إرسال إلى استوديو Metadata (${readyForStudioCount})`
-                      : `Send to Metadata Studio (${readyForStudioCount})`}
-                  </span>
-                </Button>
-              )}
 
               <Tooltip content={language === 'ar' ? 'مسح القائمة' : 'Clear All'}>
                 <Button
@@ -269,16 +233,28 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
             </div>
           </div>
 
-          {/* TanStack Virtualized Videos Table */}
+          {/* TanStack Virtualized Videos Table (Full Window Height) */}
           <VideoMuterTable
             items={items}
             language={language}
             onMuteSingle={handleMuteSingle}
             onDownloadSingle={handleDownloadSingle}
             onRemoveItem={handleRemoveItem}
+            onPreviewItem={(item) => setPreviewItemId(item.id)}
           />
         </div>
       )}
+
+      {/* Full-Screen Video Lightbox Preview */}
+      <MediaLightboxModal
+        open={Boolean(previewItemId)}
+        onOpenChange={(open) => {
+          if (!open) setPreviewItemId(null);
+        }}
+        assets={lightboxAssets}
+        initialAssetId={previewItemId}
+        onNavigate={(id) => setPreviewItemId(id)}
+      />
     </div>
   );
 };

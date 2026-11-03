@@ -1,6 +1,7 @@
 import { BatchRecord, MasterMetadataRecord, MediaType, ProviderType } from '../../types';
 import { db } from '../../db';
 import { extractMediaInfo } from '../../utils/mediaExtractor';
+import { terminateEpsWorker } from '../eps/epsEngine';
 import { keyRingScheduler } from '../scheduler/KeyRingScheduler';
 import { getProviderAdapter } from '../providers';
 import { SYSTEM_VISION_PROMPT, buildVisionPrompt } from '../ai/masterPrompt';
@@ -132,6 +133,7 @@ export class BatchQueueService {
   private maxRetries = 3;
   private completedSinceLastRetry = 0; // Track successes for opportunistic retry
   private readonly OPPORTUNISTIC_RETRY_THRESHOLD = 5; // Give failed items another chance every 5 successes
+  private activeAbortControllers: Set<AbortController> = new Set();
 
   private constructor() {}
 
@@ -290,13 +292,49 @@ export class BatchQueueService {
     }
     this.notify();
 
-    // Process thumbnail downsampling and media extraction with bounded concurrency (6 workers)
-    // and batched SQLite transactions (24 items per chunk) to prevent N+1 writes and UI freezes
+    // Process thumbnail downsampling and media extraction with bounded concurrency
+    // (2 workers when batch includes heavy EPS/AI vector files, 8 for standard media)
+    // and batched SQLite transactions to prevent memory spikes and UI freezes
     const resizingItems = Array.from(this.items.values()).filter(
       (item) => item.status === 'resizing' && item.file
     );
-    const INGEST_CHUNK_SIZE = 24;
-    const INGEST_CONCURRENCY = 6;
+    const hasHeavyVectors = resizingItems.some((item) => {
+      const ext = item.filename.split('.').pop()?.toLowerCase() || '';
+      return ext === 'eps' || ext === 'ai' || item.mediaType === 'vector';
+    });
+    const INGEST_CHUNK_SIZE = 32;
+    const INGEST_CONCURRENCY = hasHeavyVectors ? 2 : 8;
+
+    const releaseRawFileBuffer = (item: QueueItem) => {
+      if (!item.file || item.file.size === 0) return;
+      try {
+        let nativePath = (item.file as any).__nativePath || (item.file as any).path || '';
+        if (!nativePath && typeof window !== 'undefined' && window.electronAPI?.getPathForFile) {
+          try {
+            nativePath = window.electronAPI.getPathForFile(item.file) || '';
+          } catch {}
+        }
+        const sourceMediaType = (item.file as any).__sourceMediaType;
+        const companionEpsName = (item.file as any).__companionEpsName;
+        // Replace multi-MB File Blob in heap with a 0-byte shell preserving metadata & native OS path
+        const shellFile = new File([], item.file.name, {
+          type: item.file.type || 'application/octet-stream',
+          lastModified: item.file.lastModified || Date.now(),
+        });
+        if (nativePath) {
+          Object.defineProperty(shellFile, '__nativePath', { value: nativePath, configurable: true });
+        }
+        if (sourceMediaType) {
+          Object.defineProperty(shellFile, '__sourceMediaType', { value: sourceMediaType, configurable: true });
+        }
+        if (companionEpsName) {
+          Object.defineProperty(shellFile, '__companionEpsName', { value: companionEpsName, configurable: true });
+        }
+        item.file = shellFile;
+      } catch {
+        // ignore in restricted environments
+      }
+    };
 
     for (let i = 0; i < resizingItems.length; i += INGEST_CHUNK_SIZE) {
       const chunk = resizingItems.slice(i, i + INGEST_CHUNK_SIZE);
@@ -307,14 +345,41 @@ export class BatchQueueService {
         await Promise.all(
           subBatch.map(async (item) => {
             if (!item.file) return;
+
+            // Strictly corrupt 0-byte files are flagged immediately
+            if (item.file.size === 0 && !item.originalSizeBytes) {
+              const errMsg = `Media file "${item.filename}" is corrupted or empty (0 bytes)`;
+              item.status = 'error';
+              item.error = `Failed to process asset: ${errMsg}`;
+              const errRec: MasterMetadataRecord = {
+                id: item.id,
+                batchId: this.currentBatchId,
+                filename: item.filename,
+                fileSize: 0,
+                thumbnailBase64: '',
+                mediaType: item.mediaType || 'image',
+                isAiGenerated: true,
+                baseTitle: '',
+                detailedDescription: '',
+                rankedKeywords: [],
+                categories: undefined,
+                status: 'error',
+                errorMessage: errMsg,
+                createdAt: item.createdAt || Date.now(),
+              };
+              item.metadataRecord = errRec;
+              draftsToPersist.push(errRec);
+              return;
+            }
+
             let extractTimer: any;
             try {
               const extractTimeoutPromise = new Promise<never>((_, reject) => {
-                extractTimer = setTimeout(() => reject(new Error('Media extraction timed out after 20s')), 20000);
+                extractTimer = setTimeout(() => reject(new Error('Media extraction timed out after 15s')), 15000);
               });
 
               const media = await Promise.race([
-                extractMediaInfo(item.file, undefined, 512, 0.75),
+                extractMediaInfo(item.file, undefined, 384, 0.72),
                 extractTimeoutPromise,
               ]);
 
@@ -329,6 +394,7 @@ export class BatchQueueService {
               item.hasAudio = media.hasAudio;
               item.hasRealPreview = media.hasRealPreview;
               item.status = 'ready';
+              item.error = undefined;
 
               const draftRec: MasterMetadataRecord = {
                 id: item.id,
@@ -355,34 +421,49 @@ export class BatchQueueService {
                 rankedKeywords: item.metadataRecord?.rankedKeywords || [],
                 categories: item.metadataRecord?.categories,
                 status: 'pending',
+                errorMessage: undefined,
                 createdAt: item.createdAt || Date.now(),
               };
               item.metadataRecord = draftRec;
               draftsToPersist.push(draftRec);
-            } catch (err: any) {
-              item.status = 'error';
-              item.error = `Failed to process asset: ${err.message}`;
+            } catch {
+              // Never mark a non-empty newly dropped asset as 'error' before AI generation!
+              // Fall back cleanly to 'ready' / 'pending' so the asset stays Queued in the Studio UI.
+              const ext = item.filename.split('.').pop()?.toLowerCase() || '';
+              const inferredType: MediaType =
+                item.mediaType ||
+                (['mp4', 'mov', 'webm', 'avi', 'mkv', 'm4v'].includes(ext)
+                  ? 'video'
+                  : ['eps', 'ai', 'svg'].includes(ext)
+                  ? 'vector'
+                  : 'image');
 
-              const errRec: MasterMetadataRecord = {
+              item.mediaType = inferredType;
+              item.hasRealPreview = false;
+              item.status = 'ready';
+              item.error = undefined;
+
+              const fallbackRec: MasterMetadataRecord = {
                 id: item.id,
                 batchId: this.currentBatchId,
                 filename: item.filename,
                 fileSize: item.originalSizeBytes,
                 thumbnailBase64: '',
-                mediaType: item.mediaType || 'image',
+                mediaType: inferredType,
                 isAiGenerated: true,
-                baseTitle: '',
-                detailedDescription: '',
-                rankedKeywords: [],
-                categories: undefined,
-                status: 'error',
-                errorMessage: err.message,
+                baseTitle: item.metadataRecord?.baseTitle || '',
+                detailedDescription: item.metadataRecord?.detailedDescription || '',
+                rankedKeywords: item.metadataRecord?.rankedKeywords || [],
+                categories: item.metadataRecord?.categories,
+                status: 'pending',
+                errorMessage: undefined,
                 createdAt: item.createdAt || Date.now(),
               };
-              item.metadataRecord = errRec;
-              draftsToPersist.push(errRec);
+              item.metadataRecord = fallbackRec;
+              draftsToPersist.push(fallbackRec);
             } finally {
               if (extractTimer) clearTimeout(extractTimer);
+              releaseRawFileBuffer(item);
             }
           })
         );
@@ -392,6 +473,12 @@ export class BatchQueueService {
         await db.masterRecords.bulkPut(draftsToPersist);
       }
       this.notify();
+    }
+
+    if (hasHeavyVectors) {
+      try {
+        terminateEpsWorker();
+      } catch {}
     }
 
     this.status = 'idle';
@@ -504,11 +591,19 @@ export class BatchQueueService {
     let lastError: any = null;
 
     while (attempt < maxAttempts) {
+      if (this.status !== 'running') {
+        item.status = 'ready';
+        this.notify();
+        return;
+      }
+
       attempt++;
       let lease: any = null;
       const startTime = performance.now();
-      const WATCHDOG_MS = 20000;
+      const WATCHDOG_MS = 22000;
       let watchdogTimer: any;
+      const abortController = new AbortController();
+      this.activeAbortControllers.add(abortController);
 
       try {
         await db.masterRecords.update(item.id, { status: 'processing' });
@@ -528,7 +623,7 @@ export class BatchQueueService {
           item.assignedModel = keyRecord.modelId;
           this.notify();
 
-          // 2. Build prompt & invoke vision API with strict 20s timeout
+          // 2. Build prompt & invoke vision API with strict 20s AbortController timeout
           const adapter = getProviderAdapter(keyRecord.providerId);
           const prompt = buildVisionPrompt(
             item.filename,
@@ -544,7 +639,13 @@ export class BatchQueueService {
 
           let apiTimer: any;
           const apiTimeoutPromise = new Promise<never>((_, reject) => {
-            apiTimer = setTimeout(() => reject(new Error('AI Provider API call timed out after 20s')), 20000);
+            apiTimer = setTimeout(() => {
+              const timeoutErr: any = new Error('AI Provider API call timed out after 20s — signal timed out');
+              timeoutErr.status = 408;
+              timeoutErr.isTimeout = true;
+              abortController.abort(timeoutErr);
+              reject(timeoutErr);
+            }, 20000);
           });
 
           let rawAiText: string;
@@ -555,7 +656,8 @@ export class BatchQueueService {
                 keyRecord.modelId,
                 item.thumbnailBase64!,
                 prompt,
-                SYSTEM_VISION_PROMPT
+                SYSTEM_VISION_PROMPT,
+                abortController.signal
               ),
               apiTimeoutPromise,
             ]);
@@ -645,7 +747,11 @@ export class BatchQueueService {
 
         const watchdogPromise = new Promise((_, reject) => {
           watchdogTimer = setTimeout(() => {
-            reject(new Error(`Processing watchdog timeout (${WATCHDOG_MS / 1000}s)`));
+            const wdErr: any = new Error(`Processing watchdog timeout (${WATCHDOG_MS / 1000}s) — signal timed out`);
+            wdErr.status = 408;
+            wdErr.isTimeout = true;
+            abortController.abort(wdErr);
+            reject(wdErr);
           }, WATCHDOG_MS);
         });
 
@@ -653,6 +759,7 @@ export class BatchQueueService {
         // Successfully processed!
         return;
       } catch (err: any) {
+        abortController.abort();
         lastError = err;
         item.retryCount++;
 
@@ -668,19 +775,26 @@ export class BatchQueueService {
         }
 
         if (lease) {
-          // Release key lease with error (scheduler handles 429 cooldowns and invalid status)
+          // Release key lease with error (scheduler handles 429/503/timeout cooldowns and invalid status)
           await lease.release(false, err);
         }
 
+        // If all keys are currently cooling down / timed out in acquireKey, don't spin 3 times on the same item
+        const errMsgLower = String(err?.message || err || '').toLowerCase();
+        if (errMsgLower.includes('key acquisition timed out') || errMsgLower.includes('no active api keys')) {
+          break;
+        }
+
         // Silent backoff before background retry if we have attempts remaining
-        if (attempt < maxAttempts) {
+        if (attempt < maxAttempts && this.status === 'running') {
           item.error = `Retrying (${attempt}/${maxAttempts}): ${err.message || String(err)}`;
           this.notify();
-          // Wait 2-3s with backoff before next attempt
-          await new Promise((r) => setTimeout(r, 2000 * attempt));
+          // Yield to UI and wait 1.5s before next attempt
+          await new Promise((r) => setTimeout(r, 1500 * attempt));
         }
       } finally {
         if (watchdogTimer) clearTimeout(watchdogTimer);
+        this.activeAbortControllers.delete(abortController);
       }
     }
 
@@ -696,9 +810,19 @@ export class BatchQueueService {
     });
   }
 
+  private abortAllInFlight(): void {
+    for (const ctrl of this.activeAbortControllers) {
+      try {
+        ctrl.abort(new Error('Queue paused or stopped'));
+      } catch {}
+    }
+    this.activeAbortControllers.clear();
+  }
+
   public pause(): void {
     if (this.status === 'running') {
       this.status = 'paused';
+      this.abortAllInFlight();
       this.stopTimer();
       this.notify();
     }
@@ -712,6 +836,7 @@ export class BatchQueueService {
 
   public stop(): void {
     this.status = 'idle';
+    this.abortAllInFlight();
     this.stopTimer();
     this.notify();
   }

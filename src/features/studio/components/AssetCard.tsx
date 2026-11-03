@@ -10,6 +10,8 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Eye,
+  FolderOpen,
   Image as ImageIcon,
   Loader2,
   RefreshCw,
@@ -127,6 +129,17 @@ export const AssetCard: React.FC<AssetCardProps> = React.memo(({
   };
 
   const kwsCount = rec?.rankedKeywords?.length || 0;
+  const nativePath: string | undefined =
+    (asset as any).nativePath ||
+    (asset.queueItem?.file as any)?.__nativePath ||
+    (asset.queueItem?.file as any)?.path ||
+    (rec as any)?.nativePath;
+
+  const handleRevealInExplorer = useCallback(() => {
+    if (nativePath && typeof window !== 'undefined' && window.electronAPI?.showItemInFolder) {
+      window.electronAPI.showItemInFolder(nativePath);
+    }
+  }, [nativePath]);
 
   return (
     <div className="rounded-lg border border-border bg-card hover:border-primary/40 transition-colors w-full min-w-0 overflow-hidden">
@@ -299,6 +312,36 @@ export const AssetCard: React.FC<AssetCardProps> = React.memo(({
                 }`}
               >
                 <RefreshCw className="w-3.5 h-3.5" />
+              </Button>
+            </Tooltip>
+          )}
+
+          {onOpenLightbox && (
+            <Tooltip content={language === 'ar' ? 'معاينة بالحجم الكامل' : 'Open preview'}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Open preview"
+                onClick={() => onOpenLightbox(asset.id)}
+                className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <Eye className="w-3.5 h-3.5" />
+              </Button>
+            </Tooltip>
+          )}
+
+          {nativePath && (
+            <Tooltip content={language === 'ar' ? 'إظهار في مستكشف الملفات' : 'Reveal in OS Explorer'}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Reveal in OS Explorer"
+                onClick={handleRevealInExplorer}
+                className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
               </Button>
             </Tooltip>
           )}

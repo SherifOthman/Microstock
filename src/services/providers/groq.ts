@@ -1,5 +1,5 @@
 import { ModelInfo, ProviderType } from '../../types';
-import { IVisionProvider, ProviderTestResult } from './types';
+import { IVisionProvider, ProviderTestResult, combineAbortSignals } from './types';
 import { PROVIDERS_META, TEST_PIXEL_BASE64 } from '../../constants/providers';
 
 export class GroqAdapter implements IVisionProvider {
@@ -128,7 +128,8 @@ export class GroqAdapter implements IVisionProvider {
     modelId: string,
     imageBase64: string,
     prompt: string,
-    systemPrompt?: string
+    systemPrompt?: string,
+    signal?: AbortSignal
   ): Promise<string> {
     const cleanKey = apiKey.trim();
     const targetModel = modelId || PROVIDERS_META.groq.defaultModelId;
@@ -159,6 +160,7 @@ export class GroqAdapter implements IVisionProvider {
       response_format: { type: 'json_object' },
     };
 
+    const { signal: combinedSignal, cleanup } = combineAbortSignals(signal, 15000);
     let res: Response;
     try {
       res = await fetch(url, {
@@ -168,13 +170,19 @@ export class GroqAdapter implements IVisionProvider {
           Authorization: `Bearer ${cleanKey}`,
         },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(10000),
+        signal: combinedSignal,
       });
     } catch (err: any) {
-      if (err.name === 'TimeoutError' || String(err.message).includes('timed out')) {
-        throw new Error(`Groq inference timed out after 10s (${targetModel}). Failover will switch to backup.`);
+      const msg = String(err?.message || err || '');
+      if (err?.name === 'TimeoutError' || err?.name === 'AbortError' || msg.toLowerCase().includes('timed out')) {
+        const timeoutErr: any = new Error(`Groq inference timed out after 15s (${targetModel}). Failover will switch to backup.`);
+        timeoutErr.status = 408;
+        timeoutErr.isTimeout = true;
+        throw timeoutErr;
       }
       throw err;
+    } finally {
+      cleanup();
     }
 
     if (!res.ok) {

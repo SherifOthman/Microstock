@@ -67,7 +67,7 @@ export const AssetCardList: React.FC<AssetCardListProps> = React.memo(({
       const item = assets[index];
       return item && expandedIds.has(item.id) ? 340 : 62;
     },
-    overscan: 8,
+    overscan: 25,
   });
 
   if (assets.length === 0) {
@@ -116,7 +116,7 @@ export const AssetCardList: React.FC<AssetCardListProps> = React.memo(({
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
-      className="space-y-2.5 flex flex-col min-h-0"
+      className="space-y-2.5 flex-1 min-h-0 h-full flex flex-col"
     >
       {/* Consistent Dropbar Header with Both "Add Files" and "Add Folder" Buttons */}
       <div
@@ -143,7 +143,7 @@ export const AssetCardList: React.FC<AssetCardListProps> = React.memo(({
       {/* TanStack Virtualized High-Density Asset List (60fps at 2,000+ items) */}
       <div
         ref={parentRef}
-        className="overflow-y-auto max-h-[calc(100vh-220px)] pr-0.5"
+        className="flex-1 min-h-0 overflow-y-auto pr-0.5"
       >
         {hasMeasuredViewport ? (
           <div

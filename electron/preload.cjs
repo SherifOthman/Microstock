@@ -8,8 +8,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   maximizeWindow: () => ipcRenderer.send('window-maximize'),
   closeWindow: () => ipcRenderer.send('window-close'),
   isMaximized: () => ipcRenderer.invoke('window-is-maximized'),
-  rasterizeEpsNative: (fileBuffer, fileName) =>
-    ipcRenderer.invoke('eps:rasterizeNative', { fileBuffer, fileName }),
+  rasterizeEpsNative: (fileBufferOrOptions, fileName) => {
+    if (
+      fileBufferOrOptions &&
+      typeof fileBufferOrOptions === 'object' &&
+      !(fileBufferOrOptions instanceof ArrayBuffer) &&
+      !ArrayBuffer.isView(fileBufferOrOptions)
+    ) {
+      return ipcRenderer.invoke('eps:rasterizeNative', fileBufferOrOptions);
+    }
+    return ipcRenderer.invoke('eps:rasterizeNative', { fileBuffer: fileBufferOrOptions, fileName });
+  },
   scanMasterDirectory: (masterPath) =>
     ipcRenderer.invoke('fs:scanMasterDirectory', masterPath),
   saveBatchFiles: (masterDir, files) =>

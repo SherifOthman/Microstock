@@ -3,28 +3,33 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { EpsConvertItem } from '../hooks/useEpsConverter';
 import { Button } from '../../../components/ui/button';
 import { Card } from '../../../components/ui/card';
-import { FolderDown, Layers, Loader2, RefreshCw } from 'lucide-react';
+import { Tooltip } from '../../../components/ui/tooltip';
+import { Eye, FolderDown, FolderOpen, Layers, Loader2, RefreshCw } from 'lucide-react';
 
 interface EpsItemCardProps {
   item: EpsConvertItem;
   language: string;
   onRenderSingle: (item: EpsConvertItem) => void;
   onSaveSingleJpg: (item: EpsConvertItem) => void;
+  onPreviewItem?: (item: EpsConvertItem) => void;
 }
 
 export const EpsItemCard: React.FC<EpsItemCardProps> = React.memo(
-  ({ item, language, onRenderSingle, onSaveSingleJpg }) => {
+  ({ item, language, onRenderSingle, onSaveSingleJpg, onPreviewItem }) => {
     const previewSrc = item.result?.objectUrl || item.result?.dataUrl;
+    const nativePath = item.nativePath || (item.file as any)?.path;
 
     return (
       <Card className="overflow-hidden flex flex-col justify-between border-border bg-card hover:border-primary/40 transition-colors">
         <div className="p-3 space-y-2.5">
-          <div className="aspect-square rounded-lg bg-secondary/70 border border-border flex items-center justify-center overflow-hidden relative">
+          <div
+            onClick={() => onPreviewItem && onPreviewItem(item)}
+            className="aspect-square rounded-lg bg-secondary/70 border border-border flex items-center justify-center overflow-hidden relative cursor-pointer group"
+          >
             {previewSrc ? (
               <img
                 src={previewSrc}
                 alt={item.outputJpgName}
-                loading="lazy"
                 decoding="async"
                 className="w-full h-full object-contain bg-white"
               />
@@ -67,6 +72,32 @@ export const EpsItemCard: React.FC<EpsItemCardProps> = React.memo(
           </span>
 
           <div className="flex items-center gap-1">
+            {onPreviewItem && (
+              <Tooltip content={language === 'ar' ? 'معاينة' : 'Preview'}>
+                <button
+                  type="button"
+                  aria-label="Preview"
+                  onClick={() => onPreviewItem(item)}
+                  className="text-muted-foreground hover:text-primary p-1 rounded transition cursor-pointer"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                </button>
+              </Tooltip>
+            )}
+
+            {nativePath && (
+              <Tooltip content={language === 'ar' ? 'إظهار في مستكشف الملفات' : 'Reveal in OS Explorer'}>
+                <button
+                  type="button"
+                  aria-label="Reveal in OS Explorer"
+                  onClick={() => window.electronAPI?.showItemInFolder?.(nativePath)}
+                  className="text-muted-foreground hover:text-foreground p-1 rounded transition cursor-pointer"
+                >
+                  <FolderOpen className="w-3.5 h-3.5" />
+                </button>
+              </Tooltip>
+            )}
+
             {item.status === 'completed' ? (
               <Button
                 variant="outline"
@@ -106,6 +137,7 @@ export interface EpsVirtualGridProps {
   language: string;
   onRenderSingle: (item: EpsConvertItem) => void;
   onSaveSingleJpg: (item: EpsConvertItem) => void;
+  onPreviewItem?: (item: EpsConvertItem) => void;
 }
 
 const COLUMNS = 4;
@@ -115,6 +147,7 @@ export const EpsVirtualGrid: React.FC<EpsVirtualGridProps> = React.memo(({
   language,
   onRenderSingle,
   onSaveSingleJpg,
+  onPreviewItem,
 }) => {
   const parentRef = useRef<HTMLDivElement>(null);
   const rowCount = Math.ceil(items.length / COLUMNS);
@@ -123,7 +156,7 @@ export const EpsVirtualGrid: React.FC<EpsVirtualGridProps> = React.memo(({
     count: rowCount,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 310,
-    overscan: 3,
+    overscan: 10,
   });
 
   const virtualRows = rowVirtualizer.getVirtualItems();
@@ -132,7 +165,7 @@ export const EpsVirtualGrid: React.FC<EpsVirtualGridProps> = React.memo(({
   return (
     <div
       ref={parentRef}
-      className="overflow-y-auto max-h-[calc(100vh-240px)] pr-0.5"
+      className="flex-1 min-h-0 overflow-y-auto pr-0.5"
     >
       {hasMeasuredViewport ? (
         <div
@@ -166,6 +199,7 @@ export const EpsVirtualGrid: React.FC<EpsVirtualGridProps> = React.memo(({
                     language={language}
                     onRenderSingle={onRenderSingle}
                     onSaveSingleJpg={onSaveSingleJpg}
+                    onPreviewItem={onPreviewItem}
                   />
                 ))}
               </div>
@@ -182,6 +216,7 @@ export const EpsVirtualGrid: React.FC<EpsVirtualGridProps> = React.memo(({
               language={language}
               onRenderSingle={onRenderSingle}
               onSaveSingleJpg={onSaveSingleJpg}
+              onPreviewItem={onPreviewItem}
             />
           ))}
         </div>

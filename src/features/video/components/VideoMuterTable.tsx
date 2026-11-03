@@ -6,7 +6,9 @@ import { Tooltip } from '../../../components/ui/tooltip';
 import {
   AlertCircle,
   Download,
+  Eye,
   Film,
+  FolderOpen,
   Loader2,
   Trash2,
   Volume2,
@@ -19,6 +21,7 @@ export interface VideoMuterTableProps {
   onMuteSingle: (id: string) => void;
   onDownloadSingle: (item: VideoMuteItem) => void;
   onRemoveItem: (id: string) => void;
+  onPreviewItem?: (item: VideoMuteItem) => void;
 }
 
 function formatBytes(bytes: number): string {
@@ -33,6 +36,7 @@ export const VideoMuterTable: React.FC<VideoMuterTableProps> = React.memo(({
   onMuteSingle,
   onDownloadSingle,
   onRemoveItem,
+  onPreviewItem,
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -40,7 +44,7 @@ export const VideoMuterTable: React.FC<VideoMuterTableProps> = React.memo(({
     count: items.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 44,
-    overscan: 12,
+    overscan: 25,
   });
 
   const virtualRows = rowVirtualizer.getVirtualItems();
@@ -56,8 +60,8 @@ export const VideoMuterTable: React.FC<VideoMuterTableProps> = React.memo(({
     : items.slice(0, 60).map((item, idx) => ({ item, idx }));
 
   return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden">
-      <div ref={scrollRef} className="overflow-x-auto overflow-y-auto max-h-[480px]">
+    <div className="flex-1 min-h-0 rounded-xl border border-border bg-card overflow-hidden flex flex-col">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-x-auto overflow-y-auto">
         <table className="w-full text-xs text-start border-collapse">
           <thead className="sticky top-0 z-20 bg-secondary text-muted-foreground text-[11px] font-mono border-b border-border">
             <tr>
@@ -71,7 +75,7 @@ export const VideoMuterTable: React.FC<VideoMuterTableProps> = React.memo(({
               <th className="py-2.5 px-3 w-28 text-end bg-secondary sticky top-0">
                 {language === 'ar' ? 'الحجم' : 'Size'}
               </th>
-              <th className="py-2.5 px-3 w-40 text-end bg-secondary sticky top-0">
+              <th className="py-2.5 px-3 w-48 text-end bg-secondary sticky top-0">
                 {language === 'ar' ? 'إجراءات' : 'Actions'}
               </th>
             </tr>
@@ -84,6 +88,8 @@ export const VideoMuterTable: React.FC<VideoMuterTableProps> = React.memo(({
             )}
             {rowsToRender.map(({ item, idx }) => {
               if (!item) return null;
+              const nativePath = item.nativePath || (item.file as any)?.path;
+
               return (
                 <tr key={item.id} className="hover:bg-secondary/40 transition-colors">
                   <td className="py-2.5 px-3 text-center text-muted-foreground font-mono tabular-nums text-[10px]">
@@ -139,6 +145,32 @@ export const VideoMuterTable: React.FC<VideoMuterTableProps> = React.memo(({
                   </td>
                   <td className="py-2.5 px-3 text-end">
                     <div className="flex items-center justify-end gap-1">
+                      {onPreviewItem && (
+                        <Tooltip content={language === 'ar' ? 'معاينة الفيديو' : 'Preview video'}>
+                          <button
+                            type="button"
+                            aria-label="Preview video"
+                            onClick={() => onPreviewItem(item)}
+                            className="text-muted-foreground hover:text-primary p-1.5 rounded transition cursor-pointer"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                        </Tooltip>
+                      )}
+
+                      {nativePath && (
+                        <Tooltip content={language === 'ar' ? 'إظهار في مستكشف الملفات' : 'Reveal in OS Explorer'}>
+                          <button
+                            type="button"
+                            aria-label="Reveal in OS Explorer"
+                            onClick={() => window.electronAPI?.showItemInFolder?.(nativePath)}
+                            className="text-muted-foreground hover:text-foreground p-1.5 rounded transition cursor-pointer"
+                          >
+                            <FolderOpen className="w-3.5 h-3.5" />
+                          </button>
+                        </Tooltip>
+                      )}
+
                       {item.status !== 'completed' ? (
                         <Button
                           variant="outline"

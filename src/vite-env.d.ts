@@ -13,8 +13,10 @@ interface Window {
     closeWindow: () => void;
     isMaximized: () => Promise<boolean>;
     rasterizeEpsNative: (
-      fileBuffer: ArrayBuffer,
-      fileName: string
+      fileBufferOrOptions:
+        | ArrayBuffer
+        | { fileBuffer?: ArrayBuffer | null; filePath?: string; fileName?: string; maxDim?: number; quality?: number },
+      fileName?: string
     ) => Promise<{ success: boolean; buffer?: ArrayBuffer; width?: number; height?: number; error?: string }>;
     scanMasterDirectory: (masterPath: string) => Promise<{
       success: boolean;

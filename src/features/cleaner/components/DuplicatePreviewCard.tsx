@@ -21,17 +21,27 @@ export const DuplicatePreviewCard: React.FC<DuplicatePreviewCardProps> = React.m
   useEffect(() => {
     let url = '';
     try {
-      url = URL.createObjectURL(item.file);
-      setObjectUrl(url);
+      if (item.file && item.file.size > 0 && typeof URL.createObjectURL === 'function') {
+        url = URL.createObjectURL(item.file);
+        setObjectUrl(url);
+      } else if (item.nativePath) {
+        setObjectUrl(`stockflow://local?path=${encodeURIComponent(item.nativePath)}`);
+      }
     } catch {
-      // ignore
+      if (item.nativePath) {
+        setObjectUrl(`stockflow://local?path=${encodeURIComponent(item.nativePath)}`);
+      }
     }
     return () => {
       if (url) {
-        URL.revokeObjectURL(url);
+        try {
+          URL.revokeObjectURL(url);
+        } catch {
+          // ignore
+        }
       }
     };
-  }, [item.file]);
+  }, [item.file, item.nativePath]);
 
   const isVideo = item.subFolder === 'Videos';
   const isImage = item.subFolder === 'Photos';
@@ -40,9 +50,27 @@ export const DuplicatePreviewCard: React.FC<DuplicatePreviewCardProps> = React.m
     <div className="flex flex-col border border-border bg-card rounded-xl p-3 space-y-2.5">
       <div className="w-full h-36 bg-secondary rounded-lg overflow-hidden flex items-center justify-center relative border border-border">
         {isVideo && objectUrl ? (
-          <video src={objectUrl} controls className="w-full h-full object-contain" />
+          <video
+            src={objectUrl}
+            controls
+            className="w-full h-full object-contain"
+            onError={() => {
+              if (item.nativePath && !objectUrl.startsWith('stockflow://')) {
+                setObjectUrl(`stockflow://local?path=${encodeURIComponent(item.nativePath)}`);
+              }
+            }}
+          />
         ) : isImage && objectUrl ? (
-          <img src={objectUrl} alt={item.originalName} className="w-full h-full object-contain" />
+          <img
+            src={objectUrl}
+            alt={item.originalName}
+            className="w-full h-full object-contain"
+            onError={() => {
+              if (item.nativePath && !objectUrl.startsWith('stockflow://')) {
+                setObjectUrl(`stockflow://local?path=${encodeURIComponent(item.nativePath)}`);
+              }
+            }}
+          />
         ) : (
           <div className="flex flex-col items-center gap-1.5 text-muted-foreground">
             <PenTool className="w-7 h-7 text-primary" />

@@ -45,7 +45,7 @@ export const GlobalProgressBanner: React.FC<GlobalProgressBannerProps> = ({
   const progressPercent = Math.min(
     100,
     Math.round(
-      ((isResizing ? preparedCount : queueState.processedCount + queueState.failedCount) /
+      ((isResizing ? preparedCount : queueState.processedCount) /
         queueState.totalCount) *
         100
     )

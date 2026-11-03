@@ -11,6 +11,7 @@ import {
   ArrowRight,
   CheckCircle2,
   Copy,
+  Eye,
   Film,
   FolderOpen,
   FolderUp,
@@ -36,6 +37,7 @@ export interface CleanerFileTableProps {
   searchFilter: string;
   setSearchFilter: (q: string) => void;
   isProcessing: boolean;
+  isBatchSaved?: boolean;
   masterDirectory: string;
   blockingErrorCount: number;
   totalDuplicateCount: number;
@@ -48,6 +50,7 @@ export interface CleanerFileTableProps {
   onSendToStudio?: () => void;
   onOpenDuplicateModal: (key: string) => void;
   onRemoveItem: (id: string, file: File, item: CleanedFileItem) => void;
+  onPreviewItem?: (item: CleanedFileItem) => void;
 }
 
 export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
@@ -59,6 +62,7 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
   searchFilter,
   setSearchFilter,
   isProcessing,
+  isBatchSaved = false,
   masterDirectory,
   blockingErrorCount,
   totalDuplicateCount,
@@ -71,6 +75,7 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
   onSendToStudio,
   onOpenDuplicateModal,
   onRemoveItem,
+  onPreviewItem,
 }) => {
   const { t } = useLanguage();
   const tableContainerRef = useRef<HTMLDivElement>(null);
@@ -79,7 +84,7 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
     count: filteredItems.length,
     getScrollElement: () => tableContainerRef.current,
     estimateSize: () => 40,
-    overscan: 14,
+    overscan: 25,
   });
 
   if (rawFilesCount === 0) {
@@ -134,9 +139,9 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
     : filteredItems.slice(0, 60).map((item, idx) => ({ item, idx }));
 
   return (
-    <div className="space-y-3">
-      {/* Batch Allocation Bar */}
-      <div className="p-3 bg-card rounded-xl border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className="flex-1 min-h-0 h-full flex flex-col gap-2.5 overflow-hidden">
+      {/* Batch Allocation Bar (Sticky / Pinned Top Toolbar) */}
+      <div className="p-3 bg-card rounded-xl border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 sticky top-0 z-10">
         <div className="flex items-center gap-2 flex-wrap text-xs">
           <span className="font-semibold text-foreground flex items-center gap-1.5">
             <Layers className="w-3.5 h-3.5 text-primary" />
@@ -182,26 +187,40 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
           </Button>
 
           {onSendToStudio && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={onSendToStudio}
-              disabled={isProcessing || cleanedItems.length === 0 || blockingErrorCount > 0}
-              className="gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 cursor-pointer"
+            <Tooltip
+              content={
+                !isBatchSaved
+                  ? language === 'ar'
+                    ? 'احفظ الملفات المنظمة على القرص أولاً قبل إرسالها إلى استوديو Metadata'
+                    : 'Process & Save renamed files to disk first before sending to Metadata Studio'
+                  : language === 'ar'
+                  ? 'إرسال الملفات المحفوظة إلى استوديو Metadata'
+                  : 'Send saved files to Metadata Studio'
+              }
             >
-              <Wand2 className="w-3.5 h-3.5" />
               <span>
-                {language === 'ar'
-                  ? `إرسال إلى استوديو Metadata (${cleanedItems.length})`
-                  : `Send to Metadata Studio (${cleanedItems.length})`}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={onSendToStudio}
+                  disabled={!isBatchSaved || isProcessing || cleanedItems.length === 0 || blockingErrorCount > 0}
+                  className="gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 cursor-pointer"
+                >
+                  <Wand2 className="w-3.5 h-3.5" />
+                  <span>
+                    {language === 'ar'
+                      ? `إرسال إلى استوديو Metadata (${cleanedItems.length})`
+                      : `Send to Metadata Studio (${cleanedItems.length})`}
+                  </span>
+                </Button>
               </span>
-            </Button>
+            </Tooltip>
           )}
 
           <Button
             size="sm"
             onClick={onInitiateProcess}
-            disabled={isProcessing || cleanedItems.length === 0 || !masterDirectory || blockingErrorCount > 0}
+            disabled={isProcessing || cleanedItems.length === 0 || blockingErrorCount > 0}
             className="gap-1.5 text-xs font-semibold cursor-pointer"
           >
             {isProcessing ? (
@@ -211,8 +230,8 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
             )}
             <span>
               {language === 'ar'
-                ? `حفظ وتنظيم (${cleanedItems.length})`
-                : `Process & Save (${cleanedItems.length})`}
+                ? `حفظ في مجلد (${cleanedItems.length})`
+                : `Process & Save to Folder (${cleanedItems.length})`}
             </span>
           </Button>
         </div>
@@ -251,7 +270,7 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
       )}
 
       {/* Search Filter */}
-      <div className="flex items-center justify-between gap-2 text-xs">
+      <div className="flex items-center justify-between gap-2 text-xs shrink-0">
         <div className="relative w-full max-w-xs">
           <Search className="w-3.5 h-3.5 absolute start-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
           <Input
@@ -266,9 +285,9 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
         </span>
       </div>
 
-      {/* TanStack Virtualized Table (60fps for 2,000+ files) */}
-      <div className="rounded-xl border border-border bg-card overflow-hidden">
-        <div ref={tableContainerRef} className="overflow-x-auto overflow-y-auto max-h-[500px]">
+      {/* TanStack Virtualized Table (Full Window Height, 60fps for 2,000+ files) */}
+      <div className="flex-1 min-h-0 rounded-xl border border-border bg-card overflow-hidden flex flex-col">
+        <div ref={tableContainerRef} className="flex-1 min-h-0 overflow-x-auto overflow-y-auto">
           <table className="w-full text-xs text-start border-collapse">
             <thead className="sticky top-0 z-20 bg-secondary text-muted-foreground text-[11px] font-mono border-b border-border">
               <tr>
@@ -402,11 +421,28 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
 
                     <td className="py-2 px-2 text-center">
                       <div className="flex items-center justify-center gap-1">
-                        {item.nativePath && (
-                          <Tooltip content={language === 'ar' ? 'إظهار في المجلد' : 'Show in folder'}>
+                        {onPreviewItem && (
+                          <Tooltip content={language === 'ar' ? 'معاينة الملف' : 'Quick preview'}>
                             <button
                               type="button"
-                              onClick={() => window.electronAPI?.showItemInFolder?.(item.nativePath!)}
+                              aria-label="Quick preview"
+                              onClick={() => onPreviewItem(item)}
+                              className="text-muted-foreground hover:text-primary p-1 rounded transition cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                          </Tooltip>
+                        )}
+                        {(item.nativePath || (item.file as any)?.path) && (
+                          <Tooltip content={language === 'ar' ? 'إظهار في مستكشف الملفات' : 'Reveal in OS Explorer'}>
+                            <button
+                              type="button"
+                              aria-label="Reveal in OS Explorer"
+                              onClick={() =>
+                                window.electronAPI?.showItemInFolder?.(
+                                  item.nativePath || (item.file as any)?.path
+                                )
+                              }
                               className="text-muted-foreground hover:text-foreground p-1 rounded transition cursor-pointer"
                             >
                               <FolderOpen className="w-3.5 h-3.5" />

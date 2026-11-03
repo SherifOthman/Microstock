@@ -209,7 +209,7 @@ describe('Dreamstime Split Export (Images 15-Col vs Videos 13-Col)', () => {
       expect(result.filename).toBe('stock_metadata_dreamstime_images.csv');
       expect(result.rowCount).toBe(2); // 1 photo + 1 vector
       expect(result.csvString).toContain('sunset_beach.jpg');
-      expect(result.csvString).toContain('business_infographic.eps');
+      expect(result.csvString).toContain('business_infographic.jpg');
       expect(result.csvString).not.toContain('drone_traffic_highway.mp4');
 
       // Additional result is videos CSV

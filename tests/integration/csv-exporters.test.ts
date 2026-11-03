@@ -177,4 +177,47 @@ describe('Tier 2 Integration: Multi-Platform CSV Generation & Compliance', () =>
       expect(lines[0].toLowerCase()).toContain('country');
     });
   });
+
+  describe('Vector Asset Filename Extension Rules per Agency', () => {
+    const vectorRecords: MasterMetadataRecord[] = [
+      {
+        id: 'vec-1',
+        filename: 'B01_001__isometric_cloud_network.eps',
+        batchId: 'batch-v',
+        mediaType: 'vector',
+        thumbnailBase64: '',
+        isAiGenerated: false,
+        baseTitle: 'Isometric Cloud Network Server Vector Illustration',
+        detailedDescription: 'Modern isometric vector graphic of cloud data center infrastructure.',
+        rankedKeywords: [
+          'cloud', 'network', 'server', 'isometric', 'vector', 'illustration',
+          'data', 'technology', 'hosting', 'digital', 'database', 'connection'
+        ],
+        status: 'completed',
+        createdAt: 3000,
+      },
+    ];
+
+    it('exports .eps for Adobe Stock and Shutterstock, .jpg for Freepik/Dreamstime/123RF, and NO extension for Vecteezy', () => {
+      const adobeCsv = generatePlatformCsv('adobe', vectorRecords, 'vec_batch').csvString;
+      const shutterCsv = generatePlatformCsv('shutterstock', vectorRecords, 'vec_batch').csvString;
+      const freepikCsv = generatePlatformCsv('freepik', vectorRecords, 'vec_batch').csvString;
+      const dreamstimeCsv = generatePlatformCsv('dreamstime', vectorRecords, 'vec_batch').csvString;
+      const rf123Csv = generatePlatformCsv('123rf', vectorRecords, 'vec_batch').csvString;
+      const vecteezyCsv = generatePlatformCsv('vecteezy', vectorRecords, 'vec_batch').csvString;
+
+      expect(adobeCsv).toContain('B01_001__isometric_cloud_network.eps');
+      expect(shutterCsv).toContain('B01_001__isometric_cloud_network.eps');
+      expect(freepikCsv).toContain('B01_001__isometric_cloud_network.jpg');
+      expect(dreamstimeCsv).toContain('B01_001__isometric_cloud_network.jpg');
+      expect(rf123Csv).toContain('B01_001__isometric_cloud_network.jpg');
+
+      // Vecteezy strips underscores/spaces AND strips the file extension for vectors
+      const vecteezyRow = vecteezyCsv.split(/\r?\n/).filter(Boolean)[1];
+      const vecteezyFilenameCol = vecteezyRow.split(',')[0].replace(/^"|"$/g, '');
+      expect(vecteezyFilenameCol).toBe('B01001isometriccloudnetwork');
+      expect(vecteezyFilenameCol).not.toContain('.eps');
+      expect(vecteezyFilenameCol).not.toContain('.jpg');
+    });
+  });
 });

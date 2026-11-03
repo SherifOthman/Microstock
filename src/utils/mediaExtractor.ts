@@ -50,8 +50,10 @@ export async function processImageFile(
   }
 
   if (typeof createImageBitmap === 'function') {
+    let bitmap: ImageBitmap | null = null;
+    const canvas = document.createElement('canvas');
     try {
-      const bitmap = await createImageBitmap(file);
+      bitmap = await createImageBitmap(file);
       const origWidth = bitmap.width;
       const origHeight = bitmap.height;
       let width = origWidth;
@@ -67,17 +69,16 @@ export async function processImageFile(
         }
       }
 
-      const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, width);
       canvas.height = Math.max(1, height);
       const ctx = canvas.getContext('2d');
       if (!ctx) {
-        bitmap.close();
         throw new Error('Failed to create canvas context');
       }
 
       ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
       bitmap.close();
+      bitmap = null;
 
       const dataUrl = canvas.toDataURL('image/jpeg', quality);
       const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
@@ -94,6 +95,14 @@ export async function processImageFile(
       };
     } catch {
       // Fall back to FileReader + Image below (e.g. in JSDOM test environments)
+    } finally {
+      if (bitmap) {
+        try {
+          bitmap.close();
+        } catch {}
+      }
+      canvas.width = 0;
+      canvas.height = 0;
     }
   }
 
@@ -127,6 +136,8 @@ export async function processImageFile(
 
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        canvas.width = 0;
+        canvas.height = 0;
         const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
         const compressedSizeBytes = Math.round((base64.length * 3) / 4);
 
@@ -316,13 +327,63 @@ export async function processVideoFile(
 }
 
 /**
- * Helper to convert a Blob into a Base64 Data URL
+ * Helper to downscale a Blob into a compact Base64 Data URL (<= maxDim) so
+ * multi-megabyte Ghostscript or vector renders are never stored raw in memory/SQLite
  */
-function blobToBase64DataUrl(blob: Blob): Promise<string> {
+async function downscaleBlobToBase64DataUrl(
+  blob: Blob,
+  maxDim = 512,
+  quality = 0.75
+): Promise<{ dataUrl: string; origWidth?: number; origHeight?: number }> {
+  if (typeof createImageBitmap === 'function') {
+    let bitmap: ImageBitmap | null = null;
+    const canvas = document.createElement('canvas');
+    try {
+      bitmap = await createImageBitmap(blob);
+      const origWidth = bitmap.width;
+      const origHeight = bitmap.height;
+      let width = origWidth;
+      let height = origHeight;
+
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+
+      canvas.width = Math.max(1, width);
+      canvas.height = Math.max(1, height);
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        bitmap.close();
+        bitmap = null;
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        return { dataUrl, origWidth, origHeight };
+      }
+    } catch {
+      // Fallback to FileReader below
+    } finally {
+      if (bitmap) {
+        try {
+          bitmap.close();
+        } catch {}
+      }
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Failed to encode vector preview blob to Base64'));
-    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onload = () => resolve({ dataUrl: String(reader.result || '') });
     reader.readAsDataURL(blob);
   });
 }
@@ -353,18 +414,31 @@ export async function processVectorFile(
   try {
     const epsResult = await rasterizeEpsFile(file, maxDim, quality);
 
-    // Ensure we always store a true Base64 data URL for AI Vision APIs & IndexedDB,
-    // and immediately revoke any temporary blob: objectUrl created for previewing.
-    let base64DataUrl = epsResult.dataUrl || '';
-    if (!base64DataUrl.startsWith('data:image/') && epsResult.blob) {
-      base64DataUrl = await blobToBase64DataUrl(epsResult.blob);
-    }
+    // Immediately revoke any temporary blob: objectUrl created during rasterization
     if (epsResult.objectUrl && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
       try {
         URL.revokeObjectURL(epsResult.objectUrl);
       } catch {
         // ignore
       }
+    }
+
+    let base64DataUrl = '';
+    // Always downscale epsResult.blob if dimensions exceed maxDim or if dataUrl is missing/huge
+    const needsDownscale =
+      (epsResult.width && epsResult.width > maxDim) ||
+      (epsResult.height && epsResult.height > maxDim) ||
+      !epsResult.dataUrl?.startsWith('data:image/') ||
+      epsResult.dataUrl.length > 120_000;
+
+    if (needsDownscale && epsResult.blob && epsResult.blob.size > 0) {
+      const scaled = await downscaleBlobToBase64DataUrl(epsResult.blob, maxDim, quality);
+      base64DataUrl = scaled.dataUrl;
+    } else if (epsResult.dataUrl?.startsWith('data:image/')) {
+      base64DataUrl = epsResult.dataUrl;
+    } else if (epsResult.blob) {
+      const scaled = await downscaleBlobToBase64DataUrl(epsResult.blob, maxDim, quality);
+      base64DataUrl = scaled.dataUrl;
     }
 
     if (base64DataUrl.startsWith('data:image/')) {
@@ -424,6 +498,8 @@ export async function processVectorFile(
   ctx.fillText('Adobe Illustrator EPS 10', maxDim / 2, maxDim / 2 + 55);
 
   const dataUrl = canvas.toDataURL('image/jpeg', quality);
+  canvas.width = 0;
+  canvas.height = 0;
   const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
 
   return {
@@ -455,12 +531,38 @@ export async function extractMediaInfo(
     return await processVideoFile(file, maxDim, quality);
   }
   if (type === 'vector') {
+    const preRenderedDataUrl = (file as any).__preRenderedDataUrl as string | undefined;
+    if (preRenderedDataUrl && preRenderedDataUrl.startsWith('data:image/')) {
+      try {
+        delete (file as any).__preRenderedDataUrl;
+      } catch {}
+      // If preRenderedDataUrl is small enough (< 120KB), use directly; otherwise downscale the file blob
+      if (preRenderedDataUrl.length <= 120_000) {
+        const pureBase64 = preRenderedDataUrl.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
+        return {
+          mediaType: 'vector',
+          thumbnailBase64: pureBase64,
+          thumbnailDataUrl: preRenderedDataUrl,
+          originalSizeBytes: file.size,
+          compressedSizeBytes: Math.round((pureBase64.length * 3) / 4),
+          width: (file as any).__preRenderedWidth || maxDim,
+          height: (file as any).__preRenderedHeight || maxDim,
+          hasRealPreview: true,
+        };
+      }
+    }
+
     const ext = file.name.split('.').pop()?.toLowerCase() || '';
-    if ((file as any).__sourceMediaType === 'vector' && (ext === 'jpg' || ext === 'jpeg' || ext === 'png')) {
+    if (
+      (file as any).__sourceMediaType === 'vector' &&
+      (ext === 'jpg' || ext === 'jpeg' || ext === 'png' || file.type === 'image/jpeg')
+    ) {
       const res = await processImageFile(file, maxDim, quality);
       return {
         ...res,
         mediaType: 'vector',
+        width: (file as any).__preRenderedWidth || res.width,
+        height: (file as any).__preRenderedHeight || res.height,
         hasRealPreview: true,
       };
     }
