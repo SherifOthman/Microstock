@@ -302,12 +302,18 @@ export function decodeTiffToCanvas(buffer: ArrayBuffer): HTMLCanvasElement | Off
     } else if (photometric === 3 && colorMap.length > 0) {
       // Palette Color
       const colorMapCount = colorMap.length / 3;
-      for (let i = 0; i < stripData.length && pixelIndex < rgba.length; i++) {
+      const step = samplesPerPixel >= 2 ? samplesPerPixel : 1;
+      for (let i = 0; i < stripData.length && pixelIndex < rgba.length; i += step) {
         const paletteIdx = stripData[i];
         if (paletteIdx < colorMapCount) {
           rgba[pixelIndex++] = Math.round((colorMap[paletteIdx] / 65535) * 255);
           rgba[pixelIndex++] = Math.round((colorMap[paletteIdx + colorMapCount] / 65535) * 255);
           rgba[pixelIndex++] = Math.round((colorMap[paletteIdx + colorMapCount * 2] / 65535) * 255);
+          rgba[pixelIndex++] = samplesPerPixel >= 2 ? stripData[i + 1] : 255;
+        } else {
+          rgba[pixelIndex++] = 255;
+          rgba[pixelIndex++] = 255;
+          rgba[pixelIndex++] = 255;
           rgba[pixelIndex++] = 255;
         }
       }
@@ -835,33 +841,16 @@ export async function rasterizeEpsBufferDirect(
   ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-  // ==========================================
-  // TIER 1: PostScript Level 2/3 Vector Engine (High-Resolution Scalable Vector Render)
-  // ==========================================
   const fullText = psStartOffset > 0 
     ? decoder.decode(buffer.slice(psStartOffset, psStartOffset + psLength))
     : decoder.decode(buffer);
 
-  const scale = canvasWidth / bb.width;
-  const pathOpCount = renderPostScriptVectorPaths(fullText, ctx, bb, scale, canvasWidth, canvasHeight);
-
-  if (pathOpCount >= 10) {
-    const { blob, dataUrl } = await canvasToBlobAndDataUrl(canvas, jpegQuality);
-    return {
-      width: canvasWidth,
-      height: canvasHeight,
-      dataUrl,
-      blob,
-      sourceTier: 'vector',
-      boundingBox: bb,
-      pathOpCount,
-    };
-  }
-
   // ==========================================
-  // TIER 2: Fallback to Embedded Previews (if vector path extraction yielded < 10 ops)
+  // TIER 1: Authentic Embedded Previews (DOS EPS Binary Header TIFF/JPEG, XMP Thumbnail)
+  // When vector files are saved by Adobe Illustrator or CorelDraw, the authentic embedded
+  // preview preserves 100% of the true vector art, meshes, and CMYK color accuracy.
   // ==========================================
-  // 2A. DOS EPS Binary Header (TIFF or JPEG preview)
+  // 1A. DOS EPS Binary Header (TIFF or JPEG preview)
   const dosPreview = extractBinaryDosEpsPreview(buffer);
   if (dosPreview) {
     if (dosPreview.canvas) {
@@ -912,7 +901,7 @@ export async function rasterizeEpsBufferDirect(
     }
   }
 
-  // 2B. Embedded XMP Base64 Thumbnail
+  // 1B. Embedded XMP Base64 Thumbnail
   const xmpB64 = extractXmpThumbnail(fullText) || extractXmpThumbnail(decoder.decode(buffer.slice(0, Math.min(buffer.byteLength, 2 * 1024 * 1024))));
   if (xmpB64) {
     let drawable: CanvasImageSource | null = null;
@@ -942,7 +931,7 @@ export async function rasterizeEpsBufferDirect(
     }
   }
 
-  // 2C. Embedded JPEG Stream anywhere in buffer
+  // 1C. Embedded JPEG Stream anywhere in buffer
   const jpegStream = extractEmbeddedJpegStream(buffer);
   if (jpegStream) {
     let drawable: CanvasImageSource | null = null;
@@ -970,6 +959,25 @@ export async function rasterizeEpsBufferDirect(
         } catch {}
       }
     }
+  }
+
+  // ==========================================
+  // TIER 2: PostScript Level 2/3 Vector Engine (For ASCII EPS without embedded preview)
+  // ==========================================
+  const scale = canvasWidth / bb.width;
+  const pathOpCount = renderPostScriptVectorPaths(fullText, ctx, bb, scale, canvasWidth, canvasHeight);
+
+  if (pathOpCount >= 10) {
+    const { blob, dataUrl } = await canvasToBlobAndDataUrl(canvas, jpegQuality);
+    return {
+      width: canvasWidth,
+      height: canvasHeight,
+      dataUrl,
+      blob,
+      sourceTier: 'vector',
+      boundingBox: bb,
+      pathOpCount,
+    };
   }
 
   // ==========================================

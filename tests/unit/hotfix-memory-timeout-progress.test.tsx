@@ -205,20 +205,25 @@ describe('Emergency Hotfix & Final UX Cleanup Suite', () => {
       </LanguageProvider>
     );
 
-    // Initially on Google Gemini tab: shows My Gemini Key & plaintext key, does NOT show My Groq Key
+    // Initially on Google Gemini tab: shows My Gemini Key, masked by default, and reveals on click
     await waitFor(() => {
       expect(screen.getByText('My Gemini Key')).toBeTruthy();
-      expect(screen.getByText('AIzaSyNormalReadableGeminiKey999')).toBeTruthy();
+      expect(screen.getByText(/AIzaSy••••••••••••y999/)).toBeTruthy();
     });
     expect(screen.queryByText('My Groq Key')).toBeNull();
 
-    // Click Groq tab: shows My Groq Key & plaintext key, hides My Gemini Key
+    // Toggle eye to reveal
+    const showBtn = screen.getByTitle(/Show full key/i);
+    fireEvent.click(showBtn);
+    expect(screen.getByText('AIzaSyNormalReadableGeminiKey999')).toBeTruthy();
+
+    // Click Groq tab: shows My Groq Key, hides My Gemini Key
     const groqTab = screen.getByRole('tab', { name: /Groq/i });
     fireEvent.click(groqTab);
 
     await waitFor(() => {
       expect(screen.getByText('My Groq Key')).toBeTruthy();
-      expect(screen.getByText('gsk_NormalReadableGroqKey888')).toBeTruthy();
+      expect(screen.getByText(/gsk_No••••••••••••y888/)).toBeTruthy();
     });
     expect(screen.queryByText('My Gemini Key')).toBeNull();
   });

@@ -33,6 +33,8 @@ import {
   Copy,
   Check,
   Shuffle,
+  Info,
+  GripVertical,
 } from 'lucide-react';
 import { ConfirmDialog } from '../../../components/ui/alert-dialog';
 import { useLanguage } from '../../../context/LanguageContext';
@@ -44,7 +46,8 @@ export const KeyRingView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ProviderType>('gemini');
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingKey, setEditingKey] = useState<ApiKeyRecord | null>(null);
-  const [maskedKeys, setMaskedKeys] = useState<Record<string, boolean>>({});
+  const [revealedKeys, setRevealedKeys] = useState<Record<string, boolean>>({});
+  const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [keyToDelete, setKeyToDelete] = useState<ApiKeyRecord | null>(null);
   const [routingMode, setRoutingMode] = useState<RoutingStrategy>(
@@ -79,7 +82,7 @@ export const KeyRingView: React.FC = () => {
   }, [keys]);
 
   const handleToggleMask = (id: string) => {
-    setMaskedKeys((prev) => ({ ...prev, [id]: !prev[id] }));
+    setRevealedKeys((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
   const handleCopyKey = async (id: string, rawKey: string) => {
@@ -94,16 +97,33 @@ export const KeyRingView: React.FC = () => {
 
   const providerKeys = keys.filter((k) => k.providerId === activeTab);
 
-  const handleMovePriority = async (indexInTab: number, direction: 'up' | 'down') => {
-    const targetIdx = direction === 'up' ? indexInTab - 1 : indexInTab + 1;
-    if (targetIdx < 0 || targetIdx >= providerKeys.length) return;
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedIdx(index);
+    e.dataTransfer.effectAllowed = 'move';
+  };
 
-    const currentKey = providerKeys[indexInTab];
-    const swapKey = providerKeys[targetIdx];
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
 
-    await updateApiKey(currentKey.id, { createdAt: swapKey.createdAt });
-    await updateApiKey(swapKey.id, { createdAt: currentKey.createdAt });
+  const handleDrop = async (e: React.DragEvent, targetIndex: number) => {
+    e.preventDefault();
+    if (draggedIdx === null || draggedIdx === targetIndex) {
+      setDraggedIdx(null);
+      return;
+    }
+
+    const reordered = [...providerKeys];
+    const [moved] = reordered.splice(draggedIdx, 1);
+    reordered.splice(targetIndex, 0, moved);
+
+    const baseTime = Date.now() - reordered.length * 1000;
+    for (let i = 0; i < reordered.length; i++) {
+      await updateApiKey(reordered[i].id, { createdAt: baseTime + i * 1000 });
+    }
     await keyRingScheduler.refreshKeys();
+    setDraggedIdx(null);
   };
 
   const handleToggleDisable = async (key: ApiKeyRecord) => {
@@ -186,9 +206,9 @@ export const KeyRingView: React.FC = () => {
   const formatNormalKey = (key: ApiKeyRecord) => {
     const plain = decryptedMap[key.id] ?? key.key ?? '';
     if (!plain) return '••••••••';
-    // By default show the normal decrypted key as requested by the user; allow optional masking via EyeOff toggle
-    const isMasked = !!maskedKeys[key.id];
-    if (!isMasked) return plain;
+    // Default masked for privacy as requested by the user; allow revealing via Eye toggle
+    const isRevealed = !!revealedKeys[key.id];
+    if (isRevealed) return plain;
     if (plain.length <= 8) return '••••••••';
     return `${plain.slice(0, 6)}••••••••••••${plain.slice(-4)}`;
   };
@@ -205,13 +225,20 @@ export const KeyRingView: React.FC = () => {
   return (
     <div className="space-y-4">
       {/* Top Summary & Global Controls Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-border">
-        <div className="space-y-0.5">
-          <p className="text-xs text-muted-foreground">
-            {language === 'ar'
-              ? 'التبديل التلقائي بين المفاتيح والمزودين (Gemini → OpenRouter → Groq → Mistral → Cloudflare) عند ضغط الخدمة أو انتهاء الحد.'
-              : 'Automatic multi-provider rotation (Gemini → OpenRouter → Groq → Mistral → Cloudflare) on 429/503 or timeouts.'}
-          </p>
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-border">
+        <div className="flex items-center gap-2">
+          <Tooltip
+            content={
+              language === 'ar'
+                ? 'التبديل التلقائي بين المفاتيح والمزودين (Gemini → OpenRouter → Groq → Mistral → Cloudflare) عند ضغط الخدمة أو انتهاء الحد.'
+                : 'Automatic multi-provider rotation (Gemini → OpenRouter → Groq → Mistral → Cloudflare) on 429/503 or timeouts.'
+            }
+          >
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-secondary/60 border border-border text-xs text-muted-foreground hover:text-foreground cursor-help transition">
+              <Info className="w-3.5 h-3.5 text-primary shrink-0" />
+              <span>{language === 'ar' ? 'تدوير تلقائي متعدد المزودين' : 'Multi-Provider Failover Active'}</span>
+            </div>
+          </Tooltip>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -422,40 +449,34 @@ export const KeyRingView: React.FC = () => {
         <div className="space-y-2">
           {providerKeys.map((key, idx) => {
             const plainKey = decryptedMap[key.id] ?? key.key ?? '';
-            const isMasked = !!maskedKeys[key.id];
+            const isRevealed = !!revealedKeys[key.id];
             return (
               <div
                 key={key.id}
+                draggable
+                onDragStart={(e) => handleDragStart(e, idx)}
+                onDragOver={handleDragOver}
+                onDrop={(e) => handleDrop(e, idx)}
                 className={`p-3 rounded-xl border transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                  draggedIdx === idx ? 'opacity-40 border-primary border-dashed' : ''
+                } ${
                   key.status === 'disabled'
                     ? 'border-border/60 bg-secondary/20 opacity-60'
                     : 'border-border bg-secondary/40 hover:border-primary/40'
                 }`}
               >
                 <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
-                  <div className="flex flex-col items-center gap-0.5 bg-background border border-border rounded-lg p-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => handleMovePriority(idx, 'up')}
-                      disabled={idx === 0}
-                      className="text-muted-foreground hover:text-foreground disabled:opacity-20 p-0.5 cursor-pointer"
-                    >
-                      <ArrowUp className="w-3 h-3" />
-                    </button>
+                  <div
+                    className="flex items-center gap-1 bg-background border border-border rounded-md px-1.5 py-1 shrink-0 cursor-grab active:cursor-grabbing hover:border-primary/60 transition"
+                    title={language === 'ar' ? 'اسحب لإعادة الترتيب' : 'Drag to reorder priority'}
+                  >
+                    <GripVertical className="w-3.5 h-3.5 text-muted-foreground" />
                     <span
                       dir="ltr"
-                      className="text-[10px] font-mono font-bold text-primary px-1 tabular-nums"
+                      className="text-[10px] font-mono font-bold text-primary tabular-nums"
                     >
                       #{idx + 1}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => handleMovePriority(idx, 'down')}
-                      disabled={idx === providerKeys.length - 1}
-                      className="text-muted-foreground hover:text-foreground disabled:opacity-20 p-0.5 cursor-pointer"
-                    >
-                      <ArrowDown className="w-3 h-3" />
-                    </button>
                   </div>
 
                   <div className="space-y-1.5 min-w-0 flex-1">
@@ -478,7 +499,7 @@ export const KeyRingView: React.FC = () => {
                       {getStatusBadge(key)}
                     </div>
 
-                    {/* Plaintext readable API Key Box */}
+                    {/* Masked / Readable API Key Box */}
                     <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground font-mono tabular-nums">
                       <div
                         dir="ltr"
@@ -489,14 +510,14 @@ export const KeyRingView: React.FC = () => {
                         </span>
                         <button
                           type="button"
-                          title={isMasked ? 'Show full key' : 'Mask key'}
+                          title={isRevealed ? (language === 'ar' ? 'إخفاء المفتاح' : 'Mask key') : (language === 'ar' ? 'إظهار المفتاح' : 'Show full key')}
                           onClick={() => handleToggleMask(key.id)}
                           className="text-muted-foreground hover:text-foreground cursor-pointer shrink-0"
                         >
-                          {isMasked ? (
-                            <Eye className="w-3 h-3" />
-                          ) : (
+                          {isRevealed ? (
                             <EyeOff className="w-3 h-3" />
+                          ) : (
+                            <Eye className="w-3 h-3" />
                           )}
                         </button>
                         <button

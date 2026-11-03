@@ -338,27 +338,35 @@ export function parseAndNormalizeAiMetadata(
     finalKeywords = finalKeywords.filter((kw) => !allResRegex.test(kw));
   }
 
+  // If AI generation failed to produce meaningful metadata, throw to trigger failover retry
+  if (!parsed.base_title && rawList.length < 5) {
+    throw new Error(`AI vision model returned incomplete output for "${filename}" (missing title & keywords). Triggering failover retry.`);
+  }
+
   // Programmatic Guardrail for Vector/EPS Assets: Strictly purge photo/camera/photography terms
   if (isVectorMedia) {
     const forbiddenVectorPhotoRegex =
       /\b(?:photo|photos|photograph|photography|camera|dslr|lens|bokeh|shutter|depth\s*of\s*field|macro\s*photo|stock\s*photo)\b/i;
     finalKeywords = finalKeywords.filter((kw) => !forbiddenVectorPhotoRegex.test(kw));
-    const vectorFallbackTags = [
-      'vector',
-      'illustration',
-      'graphic',
-      'design',
-      'clipart',
-      'artwork',
-      'scalable',
-      'editable',
-      'flat design',
-      'vector graphic',
-    ];
-    for (const vTag of vectorFallbackTags) {
-      if (finalKeywords.length >= 15) break;
-      if (!finalKeywords.includes(vTag)) {
-        finalKeywords.push(vTag);
+    // Only augment with vector fallback tags if AI already gave real keywords (finalKeywords >= 10)
+    if (finalKeywords.length >= 10) {
+      const vectorFallbackTags = [
+        'vector',
+        'illustration',
+        'graphic',
+        'design',
+        'clipart',
+        'artwork',
+        'scalable',
+        'editable',
+        'flat design',
+        'vector graphic',
+      ];
+      for (const vTag of vectorFallbackTags) {
+        if (finalKeywords.length >= 45) break;
+        if (!finalKeywords.includes(vTag)) {
+          finalKeywords.push(vTag);
+        }
       }
     }
   }
@@ -370,13 +378,8 @@ export function parseAndNormalizeAiMetadata(
 
   const uniqueKeywords = rebalancedKeywords.slice(0, 50);
 
-  // If AI generation failed to produce meaningful metadata, throw to trigger failover retry
-  if (!parsed.base_title && uniqueKeywords.length < 5) {
-    throw new Error(`AI vision model returned incomplete output for "${filename}" (missing title & keywords). Triggering failover retry.`);
-  }
-
   if (uniqueKeywords.length < 10) {
-    throw new Error(`AI generated only ${uniqueKeywords.length} keywords for "${filename}" (minimum 15 required). Triggering failover retry.`);
+    throw new Error(`AI generated only ${uniqueKeywords.length} keywords for "${filename}" (minimum 10 required). Triggering failover retry.`);
   }
 
   // 5. Normalize Adobe Category (1 to 21)
@@ -515,6 +518,26 @@ export function rebalanceTopKeywords(keywords: string[]): string[] {
     return firstWord;
   };
 
+  const GENERIC_MEDIUM_WORDS = new Set([
+    'vector',
+    'illustration',
+    'illustrations',
+    'graphic',
+    'graphics',
+    'clipart',
+    'artwork',
+    'scalable',
+    'editable',
+    'flat design',
+    'vector graphic',
+    'vector art',
+    'vector illustration',
+    'eps',
+    'svg',
+    'isolated',
+    'white background',
+  ]);
+
   const topRootCounts = new Map<string, number>();
   const selectedSingle: string[] = [];
   const deferredSingle: string[] = [];
@@ -522,7 +545,8 @@ export function rebalanceTopKeywords(keywords: string[]): string[] {
   for (const sw of singleWords) {
     const root = getRoot(sw);
     const count = topRootCounts.get(root) || 0;
-    if (selectedSingle.length < 8 && count < 2) {
+    const isGenericMedium = GENERIC_MEDIUM_WORDS.has(sw.toLowerCase());
+    if (selectedSingle.length < 8 && count < 2 && !isGenericMedium) {
       selectedSingle.push(sw);
       topRootCounts.set(root, count + 1);
     } else {
@@ -542,8 +566,9 @@ export function rebalanceTopKeywords(keywords: string[]): string[] {
     const root2 = wordsInMw[1] ? getRoot(wordsInMw[1]) : '';
     const count1 = topRootCounts.get(root1) || 0;
     const count2 = root2 ? (topRootCounts.get(root2) || 0) : 0;
+    const isGenericMedium = GENERIC_MEDIUM_WORDS.has(mw.toLowerCase());
 
-    if (selectedMulti.length < maxMultiInTop10 && count1 < 2 && count2 < 2) {
+    if (selectedMulti.length < maxMultiInTop10 && count1 < 2 && count2 < 2 && !isGenericMedium) {
       selectedMulti.push(mw);
       topRootCounts.set(root1, count1 + 1);
       if (root2) topRootCounts.set(root2, count2 + 1);

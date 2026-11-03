@@ -387,37 +387,37 @@ export const StudioView: React.FC<StudioViewProps> = ({ onOpenVideoMuter }) => {
               </Button>
             </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <div className="flex flex-col gap-2.5">
             {Object.values(PLATFORMS_CONFIG)
               .filter((p: any) => settings.selectedPlatforms.includes(p.id))
               .map((p: any) => (
                 <div
                   key={p.id}
-                  className="p-3 rounded-lg border border-border bg-secondary/40 flex items-center justify-between"
+                  className="p-3 rounded-lg border border-border bg-secondary/40 flex items-center justify-between gap-3"
                 >
-                  <div className="flex items-center gap-2">
-                    {getPlatformLogo(p.id, 18)}
-                    <div>
-                      <div className="font-semibold text-foreground">{p.name}</div>
-                      <div dir="ltr" className="text-[10px] text-muted-foreground font-mono text-start">{p.filenameSuffix}</div>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    {getPlatformLogo(p.id, 20)}
+                    <div className="min-w-0">
+                      <div className="font-semibold text-xs text-foreground truncate">{p.name}</div>
+                      <div dir="ltr" className="text-[10px] text-muted-foreground font-mono text-start truncate">{p.filenameSuffix}</div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1.5 shrink-0">
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => handlePreviewCsv(p.id)}
-                      className="h-6 px-1.5 text-[10px] gap-1 cursor-pointer"
+                      className="h-7 px-2 text-xs gap-1 cursor-pointer"
                     >
-                      <Eye className="w-3 h-3" /> {language === 'ar' ? 'معاينة' : 'Preview'}
+                      <Eye className="w-3.5 h-3.5" /> {language === 'ar' ? 'معاينة' : 'Preview'}
                     </Button>
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={() => handleSingleExportWithCheck(p.id, unifiedAssets.length, completedCount)}
-                      className="h-6 px-2 text-[10px] gap-1 cursor-pointer"
+                      className="h-7 px-2.5 text-xs gap-1 cursor-pointer font-medium"
                     >
-                      <Download className="w-3 h-3" /> CSV
+                      <Download className="w-3.5 h-3.5" /> CSV
                     </Button>
                   </div>
                 </div>
