@@ -390,7 +390,7 @@ export function useStudioMarketplaceSettings() {
         getDesktopSetting<boolean>('stock_dt_locked', true),
         getDesktopSetting<boolean>('stock_shutter_editorial', false),
         getDesktopSetting<boolean>('stock_shutter_mature', false),
-        getDesktopSetting<boolean>('stock_shutter_illustration', false),
+        getDesktopSetting<boolean>('stock_shutter_illustration', true),
         getDesktopSetting<boolean>('stock_shutter_locked', true),
         getDesktopSetting<'pro' | 'free'>('stock_vec_license', 'pro'),
         getDesktopSetting<string>('stock_rf_country', 'EG'),
@@ -443,7 +443,7 @@ export function useStudioMarketplaceSettings() {
   const resetShutterOptions = useCallback(() => {
     setShutterEditorial(false);
     setShutterMature(false);
-    setShutterIllustration(false);
+    setShutterIllustration(true);
     setIsShutterLocked(true);
   }, [setShutterEditorial, setShutterMature, setShutterIllustration, setIsShutterLocked]);
 
