@@ -140,6 +140,7 @@ export interface ConfirmDialogProps {
   cancelText?: string;
   onConfirm: () => void;
   onCancel?: () => void;
+  onDismiss?: () => void;
   variant?: 'default' | 'destructive';
   hideCancel?: boolean; // Useful for alert-only mode (replacing window.alert)
 }
@@ -153,6 +154,7 @@ export function ConfirmDialog({
   cancelText,
   onConfirm,
   onCancel,
+  onDismiss,
   variant = 'default',
   hideCancel = false,
 }: ConfirmDialogProps) {
@@ -160,10 +162,20 @@ export function ConfirmDialog({
   const resolvedConfirmText = confirmText || (isAr ? 'تأكيد' : 'Confirm');
   const resolvedCancelText = cancelText || (isAr ? 'إلغاء' : 'Cancel');
 
+  const actionTriggeredRef = React.useRef<boolean>(false);
+
   const handleOpenChange = (isOpen: boolean) => {
     onOpenChange?.(isOpen);
-    if (!isOpen && !hideCancel) {
-      onCancel?.();
+    if (!isOpen) {
+      if (actionTriggeredRef.current) {
+        actionTriggeredRef.current = false;
+        return;
+      }
+      if (onDismiss) {
+        onDismiss();
+      } else if (!hideCancel) {
+        onCancel?.();
+      }
     }
   };
 
@@ -180,6 +192,7 @@ export function ConfirmDialog({
           {!hideCancel && (
             <AlertDialogCancel
               onClick={() => {
+                actionTriggeredRef.current = true;
                 onCancel?.();
                 onOpenChange?.(false);
               }}
@@ -190,6 +203,7 @@ export function ConfirmDialog({
           <AlertDialogAction
             className={variant === 'destructive' ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90' : ''}
             onClick={() => {
+              actionTriggeredRef.current = true;
               onConfirm();
               onOpenChange?.(false);
             }}

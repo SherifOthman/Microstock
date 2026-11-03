@@ -17,12 +17,15 @@ import {
   HardDrive,
   Layers,
   Loader2,
+  Lock,
   RefreshCw,
   Shuffle,
   SlidersHorizontal,
   Sparkles,
+  Unlock,
   X,
 } from 'lucide-react';
+import { ConfirmDialog } from '../../../components/ui/alert-dialog';
 
 export interface CleanerToolbarProps {
   language: string;
@@ -73,6 +76,16 @@ export const CleanerToolbar: React.FC<CleanerToolbarProps> = React.memo(({
   const activePhotosSlot = (isAiOrigin ? mediaSlots?.AI_Photos : mediaSlots?.Photos) || mediaSlots?.Photos;
   const activeVideosSlot = (isAiOrigin ? mediaSlots?.AI_Videos : mediaSlots?.Videos) || mediaSlots?.Videos;
   const activeVectorsSlot = (isAiOrigin ? mediaSlots?.AI_Vectors : mediaSlots?.Vectors) || mediaSlots?.Vectors;
+
+  const [isBatchSizeUnlocked, setIsBatchSizeUnlocked] = React.useState(false);
+  const [showBatchLockDialog, setShowBatchLockDialog] = React.useState(false);
+
+  // If masterDirectory changes, re-lock batch size to safeguard against accidental inconsistency
+  React.useEffect(() => {
+    setIsBatchSizeUnlocked(false);
+  }, [masterDirectory]);
+
+  const isBatchLocked = existingBatchesCount > 0 && !isBatchSizeUnlocked;
 
   return (
     <div className="space-y-3">
@@ -306,24 +319,55 @@ export const CleanerToolbar: React.FC<CleanerToolbarProps> = React.memo(({
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">
-              <Layers className="w-3 h-3 text-primary" />
-              <span>{language === 'ar' ? 'الحد الأقصى لكل Batch:' : 'Max Files Per Batch:'}</span>
-            </label>
-            <Input
-              type="number"
-              min={10}
-              max={1000}
-              step={10}
-              value={options.maxItemsPerBatch}
-              onChange={(e) =>
-                setOptions((prev) => ({
-                  ...prev,
-                  maxItemsPerBatch: Math.max(10, Math.min(1000, parseInt(e.target.value, 10) || 100)),
-                }))
-              }
-              className="h-8 text-xs font-mono tabular-nums bg-background"
-            />
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">
+                <Layers className="w-3 h-3 text-primary" />
+                <span>{language === 'ar' ? 'الحد الأقصى لكل Batch:' : 'Max Files Per Batch:'}</span>
+              </label>
+
+              {isBatchLocked ? (
+                <button
+                  type="button"
+                  onClick={() => setShowBatchLockDialog(true)}
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
+                  title={language === 'ar' ? 'انقر لتعديل حجم الدفعة' : 'Click to unlock and modify batch size'}
+                >
+                  <Lock className="w-3 h-3" />
+                  <span>{language === 'ar' ? 'مقفل (تعديل)' : 'Locked (Edit)'}</span>
+                </button>
+              ) : existingBatchesCount > 0 && isBatchSizeUnlocked ? (
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                  <Unlock className="w-3 h-3" />
+                  <span>{language === 'ar' ? 'مفتوح للتعديل' : 'Unlocked'}</span>
+                </span>
+              ) : null}
+            </div>
+
+            <div className="relative">
+              <Input
+                type="number"
+                min={10}
+                max={1000}
+                step={10}
+                readOnly={isBatchLocked}
+                disabled={isProcessing}
+                value={options.maxItemsPerBatch}
+                onChange={(e) =>
+                  setOptions((prev) => ({
+                    ...prev,
+                    maxItemsPerBatch: Math.max(10, Math.min(1000, parseInt(e.target.value, 10) || 100)),
+                  }))
+                }
+                onClick={() => {
+                  if (isBatchLocked) {
+                    setShowBatchLockDialog(true);
+                  }
+                }}
+                className={`h-8 text-xs font-mono tabular-nums bg-background ${
+                  isBatchLocked ? 'cursor-pointer select-none opacity-85 hover:border-amber-500/50' : ''
+                }`}
+              />
+            </div>
           </div>
         </div>
 
@@ -420,6 +464,26 @@ export const CleanerToolbar: React.FC<CleanerToolbarProps> = React.memo(({
           </button>
         </div>
       )}
+      {/* BATCH SIZE CONSISTENCY WARNING DIALOG */}
+      <ConfirmDialog
+        open={showBatchLockDialog}
+        onOpenChange={setShowBatchLockDialog}
+        title={language === 'ar' ? 'تعديل سعة الدفعة (Batch Size)' : 'Modify Batch Size'}
+        description={
+          language === 'ar'
+            ? `يحتوي المجلد على ${existingBatchesCount} دفعة/دفعات سابقة تم إنشاؤها بحجم (${options.maxItemsPerBatch} ملف). تغيير حجم الدفعة الآن قد يؤدي لعدم تناسق تقسيم الملفات بين الدفعات السابقة والجديدة. هل أنت متأكد من رغبتك في التعديل؟`
+            : `This workspace already contains ${existingBatchesCount} batch(es) configured for ${options.maxItemsPerBatch} files each. Changing the batch size now may cause inconsistent file counts between existing and new batches. Are you sure you want to unlock and edit it?`
+        }
+        confirmText={language === 'ar' ? 'تأكيد وإلغاء القفل' : 'Unlock & Edit'}
+        cancelText={language === 'ar' ? 'إلغاء' : 'Cancel'}
+        onConfirm={() => {
+          setIsBatchSizeUnlocked(true);
+          setShowBatchLockDialog(false);
+        }}
+        onCancel={() => {
+          setShowBatchLockDialog(false);
+        }}
+      />
     </div>
   );
 });

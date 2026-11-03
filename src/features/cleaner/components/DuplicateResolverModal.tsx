@@ -103,7 +103,7 @@ export const DuplicateResolverModal: React.FC<DuplicateResolverModalProps> = Rea
             ? 'فتح المجلد'
             : 'Open Folder'
         }
-        cancelText={language === 'ar' ? 'فتح المجلد وإغلاق' : 'Open Folder'}
+        cancelText={language === 'ar' ? 'فتح المجلد' : 'Open Folder'}
         hideCancel={!onSendToStudio}
         onConfirm={() => {
           onOpenChangeSuccessDialog(false);
@@ -114,9 +114,12 @@ export const DuplicateResolverModal: React.FC<DuplicateResolverModalProps> = Rea
           }
         }}
         onCancel={() => {
+          onOpenChangeSuccessDialog(false);
           if (successDialogInfo?.masterDir) {
             window.electronAPI?.openPath?.(successDialogInfo.masterDir);
           }
+        }}
+        onDismiss={() => {
           onOpenChangeSuccessDialog(false);
         }}
       />

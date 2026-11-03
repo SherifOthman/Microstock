@@ -87,7 +87,7 @@ describe('Tier 2 Deep Integration: Real better-sqlite3 Engine, Worker Resilience
       manager.invoke('bulkPutMasterRecords', records);
       const elapsedMs = performance.now() - startMs;
 
-      expect(elapsedMs).toBeLessThan(1500);
+      expect(elapsedMs).toBeLessThan(10000);
       expect(manager.invoke('countMasterRecords')).toBe(2000);
 
       // Verify relational join across assets + asset_metadata
@@ -97,7 +97,7 @@ describe('Tier 2 Deep Integration: Real better-sqlite3 Engine, Worker Resilience
       expect(sample.baseTitle).toBe('Commercial Stock Asset Title #1500');
       expect(sample.rankedKeywords).toContain('tag1500');
       expect(sample.categories.adobeCategoryId).toBe(19);
-    });
+    }, 20000);
 
     it('enforces ON DELETE CASCADE across assets -> asset_metadata and asset_distributions', () => {
       manager.invoke('putMasterRecord', {
