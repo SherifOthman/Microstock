@@ -84,9 +84,12 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
   const [options, setOptionsState] = useState<CleanerOptions>(() => {
     const savedOrigin = localStorage.getItem('stock_cleaner_asset_origin');
     const assetOrigin: AssetOrigin = savedOrigin === 'ai' ? 'ai' : 'real';
+    const savedBatchSize = localStorage.getItem('stock_cleaner_batch_size');
+    const maxItemsPerBatch = savedBatchSize ? parseInt(savedBatchSize, 10) || 100 : 100;
     return {
       ...DEFAULT_CLEANER_OPTIONS,
       assetOrigin,
+      maxItemsPerBatch,
     };
   });
 
@@ -97,6 +100,9 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
         localStorage.setItem('stock_cleaner_asset_origin', next.assetOrigin);
         setIsBatchSaved(false);
       }
+      if (next.maxItemsPerBatch && next.maxItemsPerBatch !== prev.maxItemsPerBatch) {
+        localStorage.setItem('stock_cleaner_batch_size', String(next.maxItemsPerBatch));
+      }
       return next;
     });
   }, []);
@@ -106,6 +112,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
   const [isProcessing, setIsProcessing] = useState(false);
   const [isBulkMoving, setIsBulkMoving] = useState(false);
   const [progressMsg, setProgressMsg] = useState<string | null>(null);
+  const [processProgress, setProcessProgress] = useState<{ processed: number; total: number } | null>(null);
   const [statusNotification, setStatusNotification] = useState<{
     type: 'success' | 'error';
     message: string;
@@ -368,7 +375,22 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
       counts.set(key, existing);
     }
 
-    return Array.from(counts.values());
+    const TRACK_ORDER: Record<string, number> = {
+      Photos: 1,
+      AI_Photos: 1,
+      Videos: 2,
+      AI_Videos: 2,
+      Vectors: 3,
+      AI_Vectors: 3,
+    };
+
+    return Array.from(counts.values()).sort((a, b) => {
+      const trackDiff = (TRACK_ORDER[a.subFolder] || 99) - (TRACK_ORDER[b.subFolder] || 99);
+      if (trackDiff !== 0) return trackDiff;
+      const aNum = parseInt((a.folder.match(/\d+/) || ['0'])[0], 10);
+      const bNum = parseInt((b.folder.match(/\d+/) || ['0'])[0], 10);
+      return aNum - bNum;
+    });
   }, [cleanedItems, mediaBatches]);
 
   // Filtered items for search
@@ -538,6 +560,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
     if (cleanedItems.length === 0) return;
 
     setIsProcessing(true);
+    setProcessProgress({ processed: 0, total: cleanedItems.length });
     setProgressMsg(language === 'ar' ? 'جارٍ حفظ وتقسيم الملفات إلى المجلدات...' : 'Saving and routing files into sub-folders...');
     setStatusNotification(null);
 
@@ -546,6 +569,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
         targetMasterDir,
         cleanedItems,
         (done, total, cur) => {
+          setProcessProgress({ processed: done, total });
           setProgressMsg(
             language === 'ar'
               ? `تم حفظ ${done} من أصل ${total} ملف... (${cur})`
@@ -583,6 +607,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
       });
     } finally {
       setIsProcessing(false);
+      setProcessProgress(null);
       setProgressMsg(null);
     }
   }, [masterDirectory, blockingErrorCount, cleanedItems, language, scanMasterDirectory]);
@@ -625,6 +650,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
     isProcessing,
     isBulkMoving,
     progressMsg,
+    processProgress,
     statusNotification,
     setStatusNotification,
     showDuplicateInterceptDialog,

@@ -7,7 +7,6 @@ import { Tooltip } from '../../../components/ui/tooltip';
 import {
   AlertCircle,
   AlertTriangle,
-  ArrowDownAZ,
   Camera,
   CheckCircle2,
   Dice5,
@@ -19,8 +18,6 @@ import {
   Loader2,
   Lock,
   RefreshCw,
-  Shuffle,
-  SlidersHorizontal,
   Sparkles,
   Unlock,
   X,
@@ -88,27 +85,89 @@ export const CleanerToolbar: React.FC<CleanerToolbarProps> = React.memo(({
   const isBatchLocked = existingBatchesCount > 0 && !isBatchSizeUnlocked;
 
   return (
-    <div className="space-y-3">
-      {/* 1. MASTER DESTINATION DIRECTORY & ASSET ORIGIN ISOLATION */}
-      <div className="p-4 rounded-xl border border-border bg-card space-y-3">
+    <div className="space-y-2.5">
+      {/* STREAMLINED UNIFIED COMMAND BAR (Directory, Origin, Sort & Batch Rules) */}
+      <div className="p-3.5 rounded-xl border border-border bg-card space-y-2.5 shadow-2xs">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-          <div className="space-y-0.5">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-              <HardDrive className="w-4 h-4 text-primary" />
-              <span>{language === 'ar' ? 'مجلد الوجهة الرئيسي' : 'Master Destination Directory'}</span>
+          {/* Left: Master Destination Directory Display & Selector */}
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <div className="p-1.5 rounded-lg bg-secondary text-primary shrink-0 border border-border">
+              <HardDrive className="w-4 h-4" />
             </div>
-            <p className="text-[11px] text-muted-foreground">
-              {language === 'ar'
-                ? 'المجلد الجذري الذي تُحفظ داخله دفعات الـ Batch (مثل B01, B02).'
-                : 'Root folder where sequential batch folders (B01, B02...) are stored.'}
-            </p>
+
+            {masterDirectory ? (
+              <div className="flex items-center gap-2 min-w-0 flex-1 flex-wrap">
+                <div
+                  dir="ltr"
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-secondary/80 border border-border font-mono text-xs text-foreground truncate max-w-sm sm:max-w-md"
+                  title={masterDirectory}
+                >
+                  <FolderCheck className="w-3.5 h-3.5 text-primary shrink-0" />
+                  <span className="truncate">{masterDirectory}</span>
+                </div>
+
+                <span className="px-2 py-0.5 rounded text-[11px] font-mono font-semibold bg-secondary border border-border text-muted-foreground whitespace-nowrap">
+                  {isScanningDisk ? (
+                    <span className="inline-flex items-center gap-1">
+                      <Loader2 className="w-3 h-3 animate-spin" />{' '}
+                      {language === 'ar' ? 'جاري الفحص...' : 'Scanning...'}
+                    </span>
+                  ) : existingBatchesCount > 0 ? (
+                    language === 'ar' ? `${existingBatchesCount} دفعات` : `${existingBatchesCount} Batches`
+                  ) : (
+                    language === 'ar' ? 'مساحة عمل جديدة' : 'New Workspace'
+                  )}
+                </span>
+
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onSelectMasterDirectory}
+                  disabled={isProcessing}
+                  className="h-7 text-xs gap-1 cursor-pointer font-medium"
+                >
+                  <FolderOpen className="w-3.5 h-3.5" />
+                  <span>{language === 'ar' ? 'تغيير المجلد' : 'Change Folder'}</span>
+                </Button>
+
+                <Tooltip content={language === 'ar' ? 'إعادة فحص المجلد' : 'Rescan Disk'}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onScanMasterDirectory(masterDirectory)}
+                    disabled={isScanningDisk || isProcessing}
+                    className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isScanningDisk ? 'animate-spin' : ''}`} />
+                  </Button>
+                </Tooltip>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-muted-foreground">
+                  {language === 'ar'
+                    ? 'حدد مجلد الوجهة الرئيسي للأصول المنظمة'
+                    : 'Select Master Stock Destination Directory'}
+                </span>
+                <Button
+                  size="sm"
+                  onClick={onSelectMasterDirectory}
+                  disabled={isProcessing}
+                  className="h-7 text-xs gap-1.5 cursor-pointer font-semibold"
+                >
+                  <FolderOpen className="w-3.5 h-3.5" />
+                  <span>{language === 'ar' ? 'اختيار المجلد الرئيسي' : 'Select Master Folder'}</span>
+                </Button>
+              </div>
+            )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
-            {/* Prominent Asset Origin Toggle: Real (أصلي) vs AI (ذكاء اصطناعي) */}
-            <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-secondary/70 border border-border">
+          {/* Right: Controls Strip (Asset Origin, Sort Order, Max Batch Size) */}
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {/* Prominent Asset Origin Toggle: Real vs AI */}
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-secondary/70 border border-border">
               <span className="text-[11px] font-semibold text-muted-foreground whitespace-nowrap">
-                {language === 'ar' ? 'مصدر الملفات:' : 'Asset Origin:'}
+                {language === 'ar' ? 'المصدر:' : 'Origin:'}
               </span>
               <div
                 role="radiogroup"
@@ -121,13 +180,13 @@ export const CleanerToolbar: React.FC<CleanerToolbarProps> = React.memo(({
                   aria-checked={!isAiOrigin}
                   disabled={isProcessing}
                   onClick={() => setOptions((prev) => ({ ...prev, assetOrigin: 'real' }))}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold transition cursor-pointer ${
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold transition cursor-pointer ${
                     !isAiOrigin
                       ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/40 shadow-2xs'
                       : 'text-muted-foreground hover:text-foreground border border-transparent'
                   }`}
                 >
-                  <Camera className="w-3.5 h-3.5 shrink-0" />
+                  <Camera className="w-3 h-3 shrink-0" />
                   <span>{language === 'ar' ? 'أصلي' : 'Real'}</span>
                 </button>
                 <button
@@ -136,214 +195,61 @@ export const CleanerToolbar: React.FC<CleanerToolbarProps> = React.memo(({
                   aria-checked={isAiOrigin}
                   disabled={isProcessing}
                   onClick={() => setOptions((prev) => ({ ...prev, assetOrigin: 'ai' }))}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold transition cursor-pointer ${
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold transition cursor-pointer ${
                     isAiOrigin
                       ? 'bg-violet-500/15 text-violet-600 dark:text-violet-400 border border-violet-500/40 shadow-2xs'
                       : 'text-muted-foreground hover:text-foreground border border-transparent'
                   }`}
                 >
-                  <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                  <Sparkles className="w-3 h-3 shrink-0" />
                   <span>{language === 'ar' ? 'ذكاء اصطناعي' : 'AI'}</span>
                 </button>
               </div>
             </div>
 
-            <Button
-              size="sm"
-              onClick={onSelectMasterDirectory}
-              disabled={isProcessing}
-              className="gap-1.5 text-xs font-semibold cursor-pointer"
-            >
-              <FolderOpen className="w-3.5 h-3.5" />
-              <span>
-                {masterDirectory
-                  ? language === 'ar'
-                    ? 'تغيير المجلد'
-                    : 'Change Folder'
-                  : language === 'ar'
-                  ? 'اختيار المجلد الرئيسي'
-                  : 'Select Master Folder'}
-              </span>
-            </Button>
-
-            {masterDirectory && (
-              <Tooltip content={language === 'ar' ? 'إعادة فحص المجلد' : 'Rescan Disk'}>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onScanMasterDirectory(masterDirectory)}
-                  disabled={isScanningDisk || isProcessing}
-                  className="h-8 px-2.5 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isScanningDisk ? 'animate-spin' : ''}`} />
-                </Button>
-              </Tooltip>
-            )}
-          </div>
-        </div>
-
-        {masterDirectory ? (
-          <div className="p-3 rounded-lg bg-secondary/60 border border-border text-xs space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div dir="ltr" className="flex items-center gap-2 font-mono text-[11px] text-foreground truncate text-start">
-                <FolderCheck className="w-3.5 h-3.5 text-primary shrink-0" />
-                <span className="truncate">{masterDirectory}</span>
-              </div>
-
-              <span
-                dir="ltr"
-                className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold border ${
-                  isAiOrigin
-                    ? 'bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/30'
-                    : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
-                }`}
+            {/* Sort Order Selector with Re-shuffle */}
+            <div className="flex items-center gap-1">
+              <Select
+                value={options.sortOrder}
+                onValueChange={(val) => {
+                  setOptions((prev) => ({ ...prev, sortOrder: val as any }));
+                  if (val === 'alphabetical') setIsSeqWarningDismissed(false);
+                }}
               >
-                {isAiOrigin
-                  ? 'AI_Photos · AI_Videos · AI_Vectors'
-                  : 'Photos · Videos · Vectors'}
-              </span>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3 pt-1.5 border-t border-border text-[11px] font-mono tabular-nums text-muted-foreground">
-              <span className="text-foreground font-semibold">
-                {isScanningDisk ? (
-                  <span className="inline-flex items-center gap-1">
-                    <Loader2 className="w-3 h-3 animate-spin" />{' '}
-                    {language === 'ar' ? 'جاري الفحص...' : 'Scanning...'}
-                  </span>
-                ) : existingBatchesCount > 0 ? (
-                  language === 'ar' ? `${existingBatchesCount} دفعات` : `${existingBatchesCount} Batches`
-                ) : language === 'ar' ? (
-                  'مساحة عمل جديدة'
-                ) : (
-                  'New Workspace'
-                )}
-              </span>
-              <span>·</span>
-              <Tooltip content={activePhotosSlot?.statusDescription}>
-                <span>
-                  <span dir="ltr">{isAiOrigin ? 'AI_Photos:' : 'Photos:'}</span>{' '}
-                  <strong dir="ltr" className="text-foreground">{activePhotosSlot?.slotLabel || 'B01_001'}</strong>
-                </span>
-              </Tooltip>
-              <span>·</span>
-              <Tooltip content={activeVideosSlot?.statusDescription}>
-                <span>
-                  <span dir="ltr">{isAiOrigin ? 'AI_Videos:' : 'Videos:'}</span>{' '}
-                  <strong dir="ltr" className="text-foreground">{activeVideosSlot?.slotLabel || 'B01_001'}</strong>
-                </span>
-              </Tooltip>
-              <span>·</span>
-              <Tooltip content={activeVectorsSlot?.statusDescription}>
-                <span>
-                  <span dir="ltr">{isAiOrigin ? 'AI_Vectors:' : 'Vectors:'}</span>{' '}
-                  <strong dir="ltr" className="text-foreground">{activeVectorsSlot?.slotLabel || 'B01_001'}</strong>
-                </span>
-              </Tooltip>
-            </div>
-          </div>
-        ) : (
-          <div className="p-3 rounded-lg bg-secondary/50 border border-border text-muted-foreground text-xs flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <FolderSync className="w-4 h-4 text-primary shrink-0" />
-              <span>
-                {language === 'ar'
-                  ? 'حدد مجلد الوجهة الرئيسي أولاً لتفعيل الترقيم التلقائي واستكمال الـ Batch.'
-                  : 'Select a Master Destination Directory to enable automatic batch numbering and resume detection.'}
-              </span>
-            </div>
-            <span
-              dir="ltr"
-              className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold border ${
-                isAiOrigin
-                  ? 'bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/30'
-                  : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
-              }`}
-            >
-              {isAiOrigin
-                ? 'AI_Photos · AI_Videos · AI_Vectors'
-                : 'Photos · Videos · Vectors'}
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* 2. INGESTION & SORTING CONTROLS */}
-      <div className="p-4 rounded-xl border border-border bg-card space-y-3">
-        <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-          <SlidersHorizontal className="w-3.5 h-3.5 text-primary" />
-          <span>{language === 'ar' ? 'إعدادات الترتيب والتقسيم' : 'Sorting & Batch Split Rules'}</span>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">
-                {options.sortOrder === 'shuffle' ? (
-                  <Shuffle className="w-3 h-3 text-primary" />
-                ) : (
-                  <ArrowDownAZ className="w-3 h-3 text-primary" />
-                )}
-                <span>{language === 'ar' ? 'ترتيب الملفات:' : 'Sort Order:'}</span>
-              </label>
+                <SelectTrigger className="h-7 text-xs bg-background min-w-[130px] font-medium">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60">
+                  <SelectItem value="shuffle" className="text-xs">
+                    {language === 'ar' ? 'خلط عشوائي (موصى به)' : 'Shuffle Mix (Recommended)'}
+                  </SelectItem>
+                  <SelectItem value="alphabetical" className="text-xs">
+                    {language === 'ar' ? 'أبجدي حسب الاسم (A-Z)' : 'Alphabetical (A-Z)'}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
               {options.sortOrder === 'shuffle' && rawFilesCount > 0 && (
-                <button
-                  type="button"
-                  onClick={onReShuffle}
-                  className="text-[10px] text-primary hover:underline flex items-center gap-1 cursor-pointer font-mono"
-                >
-                  <Dice5 className="w-3 h-3" />
-                  <span>{language === 'ar' ? 'إعادة خلط' : 'Re-shuffle'}</span>
-                </button>
+                <Tooltip content={language === 'ar' ? 'إعادة خلط الترتيب' : 'Re-shuffle files'}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={onReShuffle}
+                    className="h-7 px-2 text-xs text-primary hover:text-primary cursor-pointer"
+                  >
+                    <Dice5 className="w-3.5 h-3.5" />
+                  </Button>
+                </Tooltip>
               )}
             </div>
-            <Select
-              value={options.sortOrder}
-              onValueChange={(val) => {
-                setOptions((prev) => ({ ...prev, sortOrder: val as any }));
-                if (val === 'alphabetical') setIsSeqWarningDismissed(false);
-              }}
-            >
-              <SelectTrigger className="h-8 text-xs bg-background">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60">
-                <SelectItem value="shuffle" className="text-xs">
-                  {language === 'ar' ? 'خلط عشوائي (يمنع رفض التشابه)' : 'Shuffle Mix (Recommended)'}
-                </SelectItem>
-                <SelectItem value="alphabetical" className="text-xs">
-                  {language === 'ar' ? 'أبجدي حسب الاسم الأصلي (A-Z)' : 'Alphabetical (A-Z)'}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
 
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">
+            {/* Max Files Per Batch with Smart Consistency Guardrail */}
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-secondary/70 border border-border">
+              <label className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1 whitespace-nowrap">
                 <Layers className="w-3 h-3 text-primary" />
-                <span>{language === 'ar' ? 'الحد الأقصى لكل Batch:' : 'Max Files Per Batch:'}</span>
+                <span>{language === 'ar' ? 'سعة الدفعة:' : 'Batch Size:'}</span>
               </label>
 
-              {isBatchLocked ? (
-                <button
-                  type="button"
-                  onClick={() => setShowBatchLockDialog(true)}
-                  className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
-                  title={language === 'ar' ? 'انقر لتعديل حجم الدفعة' : 'Click to unlock and modify batch size'}
-                >
-                  <Lock className="w-3 h-3" />
-                  <span>{language === 'ar' ? 'مقفل (تعديل)' : 'Locked (Edit)'}</span>
-                </button>
-              ) : existingBatchesCount > 0 && isBatchSizeUnlocked ? (
-                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                  <Unlock className="w-3 h-3" />
-                  <span>{language === 'ar' ? 'مفتوح للتعديل' : 'Unlocked'}</span>
-                </span>
-              ) : null}
-            </div>
-
-            <div className="relative">
               <Input
                 type="number"
                 min={10}
@@ -363,18 +269,89 @@ export const CleanerToolbar: React.FC<CleanerToolbarProps> = React.memo(({
                     setShowBatchLockDialog(true);
                   }
                 }}
-                className={`h-8 text-xs font-mono tabular-nums bg-background ${
+                className={`h-6 w-14 text-xs font-mono tabular-nums text-center bg-background px-1 py-0 ${
                   isBatchLocked ? 'cursor-pointer select-none opacity-85 hover:border-amber-500/50' : ''
                 }`}
               />
+
+              {isBatchLocked ? (
+                <button
+                  type="button"
+                  onClick={() => setShowBatchLockDialog(true)}
+                  className="inline-flex items-center gap-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
+                  title={language === 'ar' ? 'انقر لتعديل حجم الدفعة' : 'Click to unlock and modify batch size'}
+                >
+                  <Lock className="w-3 h-3" />
+                  <span>{language === 'ar' ? 'مقفل (تعديل)' : 'Locked (Edit)'}</span>
+                </button>
+              ) : existingBatchesCount > 0 && isBatchSizeUnlocked ? (
+                <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                  <Unlock className="w-3 h-3" />
+                  <span>{language === 'ar' ? 'مفتوح للتعديل' : 'Unlocked'}</span>
+                </span>
+              ) : null}
             </div>
           </div>
         </div>
 
+        {/* BOTTOM ROW: Next Available Slot Indicators & Origin Track Badge */}
+        {masterDirectory && (
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border text-[11px] font-mono tabular-nums text-muted-foreground">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span className="text-foreground font-semibold flex items-center gap-1">
+                <FolderSync className="w-3.5 h-3.5 text-primary shrink-0" />
+                <span>{language === 'ar' ? 'حالة الترقيم التالية:' : 'Next Slots:'}</span>
+              </span>
+              <Tooltip content={activePhotosSlot?.statusDescription}>
+                <span className="px-2 py-0.5 rounded bg-secondary/80 border border-border">
+                  <span dir="ltr" className="text-muted-foreground">
+                    {isAiOrigin ? 'AI_Photos: ' : 'Photos: '}
+                  </span>
+                  <strong dir="ltr" className="text-foreground">
+                    {activePhotosSlot?.slotLabel || 'B01_001'}
+                  </strong>
+                </span>
+              </Tooltip>
+              <Tooltip content={activeVideosSlot?.statusDescription}>
+                <span className="px-2 py-0.5 rounded bg-secondary/80 border border-border">
+                  <span dir="ltr" className="text-muted-foreground">
+                    {isAiOrigin ? 'AI_Videos: ' : 'Videos: '}
+                  </span>
+                  <strong dir="ltr" className="text-foreground">
+                    {activeVideosSlot?.slotLabel || 'B01_001'}
+                  </strong>
+                </span>
+              </Tooltip>
+              <Tooltip content={activeVectorsSlot?.statusDescription}>
+                <span className="px-2 py-0.5 rounded bg-secondary/80 border border-border">
+                  <span dir="ltr" className="text-muted-foreground">
+                    {isAiOrigin ? 'AI_Vectors: ' : 'Vectors: '}
+                  </span>
+                  <strong dir="ltr" className="text-foreground">
+                    {activeVectorsSlot?.slotLabel || 'B01_001'}
+                  </strong>
+                </span>
+              </Tooltip>
+            </div>
+
+            <span
+              dir="ltr"
+              className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold border ${
+                isAiOrigin
+                  ? 'bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/30'
+                  : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+              }`}
+            >
+              {isAiOrigin ? 'AI Track (Isolated)' : 'Real Stock Track'}
+            </span>
+          </div>
+        )}
+
+        {/* Sequential Sorting Warning */}
         {options.sortOrder === 'alphabetical' && !isSeqWarningDismissed && (
-          <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs flex items-center justify-between gap-2">
+          <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
               <span>
                 {language === 'ar'
                   ? 'تنبيه: الترتيب المتسلسل قد يؤدي لرفض اللقطات المتتالية المتشابهة على Adobe Stock.'
@@ -392,11 +369,11 @@ export const CleanerToolbar: React.FC<CleanerToolbarProps> = React.memo(({
         )}
       </div>
 
-      {/* MEDIA PRE-CHECK ALERTS */}
+      {/* COMPACT MEDIA PRE-CHECK ALERTS */}
       {(blockingErrorCount > 0 || softWarningCount > 0) && (
         <div className="space-y-2">
           {blockingErrorCount > 0 && (
-            <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-xs flex items-center justify-between gap-2">
+            <div className="p-2.5 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-xs flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 <span>
@@ -409,7 +386,7 @@ export const CleanerToolbar: React.FC<CleanerToolbarProps> = React.memo(({
           )}
 
           {softWarningCount > 0 && (
-            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
               <div className="flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 shrink-0" />
                 <span>
@@ -424,9 +401,13 @@ export const CleanerToolbar: React.FC<CleanerToolbarProps> = React.memo(({
                 size="sm"
                 onClick={onBulkMoveLowResPhotos}
                 disabled={isBulkMoving || isProcessing}
-                className="h-7.5 px-3 text-xs gap-1.5 shrink-0 cursor-pointer font-semibold"
+                className="h-7 px-3 text-xs gap-1.5 shrink-0 cursor-pointer font-semibold"
               >
-                {isBulkMoving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FolderSync className="w-3.5 h-3.5" />}
+                {isBulkMoving ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <FolderSync className="w-3.5 h-3.5" />
+                )}
                 <span>
                   {language === 'ar'
                     ? `نقل (${softWarningCount}) إلى _Needs_Fixing`
@@ -441,7 +422,7 @@ export const CleanerToolbar: React.FC<CleanerToolbarProps> = React.memo(({
       {/* NOTIFICATIONS BANNER */}
       {statusNotification && (
         <div
-          className={`p-3 rounded-xl border text-xs flex items-center justify-between gap-2 ${
+          className={`p-2.5 rounded-xl border text-xs flex items-center justify-between gap-2 ${
             statusNotification.type === 'success'
               ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
               : 'border-destructive/30 bg-destructive/10 text-destructive'
@@ -464,6 +445,7 @@ export const CleanerToolbar: React.FC<CleanerToolbarProps> = React.memo(({
           </button>
         </div>
       )}
+
       {/* BATCH SIZE CONSISTENCY WARNING DIALOG */}
       <ConfirmDialog
         open={showBatchLockDialog}

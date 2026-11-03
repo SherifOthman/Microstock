@@ -13,6 +13,7 @@ import {
 import { useLanguage } from '../../context/LanguageContext';
 import { useVideoMuter, VideoMuteItem } from './hooks/useVideoMuter';
 import { VideoMuterTable } from './components/VideoMuterTable';
+import { TaskProgressBar } from '../../components/ui/TaskProgressBar';
 import { MediaLightboxModal, LightboxAsset } from '../../components/MediaLightboxModal';
 
 export type { VideoMuteItem };
@@ -232,6 +233,42 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
               </Tooltip>
             </div>
           </div>
+
+          {/* Consistent Global Task Progress Bar */}
+          <TaskProgressBar
+            status={
+              isMutingBatch
+                ? 'running'
+                : completedCount === items.length && items.length > 0
+                ? 'completed'
+                : 'idle'
+            }
+            currentCount={completedCount}
+            totalCount={items.length}
+            statusLabel={
+              isMutingBatch
+                ? language === 'ar'
+                  ? 'جاري كتم مسارات الصوت من الفيديوهات...'
+                  : 'Stripping audio tracks from videos...'
+                : completedCount === items.length
+                ? language === 'ar'
+                  ? 'تم كتم جميع مسارات الصوت'
+                  : 'All videos audio stripped'
+                : language === 'ar'
+                ? 'جاهز للكتم'
+                : 'Ready to Strip'
+            }
+            failedCount={items.filter((i) => i.status === 'error').length}
+            onRetryFailed={
+              items.some((i) => i.status === 'error')
+                ? () => {
+                    const failed = items.filter((i) => i.status === 'error');
+                    failed.forEach((f) => handleMuteSingle(f.id));
+                  }
+                : undefined
+            }
+            language={language}
+          />
 
           {/* TanStack Virtualized Videos Table (Full Window Height) */}
           <VideoMuterTable

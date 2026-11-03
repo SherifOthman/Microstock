@@ -16,6 +16,7 @@ import {
 import { useLanguage } from '../../context/LanguageContext';
 import { useEpsConverter, EpsConvertItem } from './hooks/useEpsConverter';
 import { EpsVirtualGrid } from './components/EpsVirtualGrid';
+import { TaskProgressBar } from '../../components/ui/TaskProgressBar';
 import { MediaLightboxModal, LightboxAsset } from '../../components/MediaLightboxModal';
 
 export type { EpsConvertItem };
@@ -43,6 +44,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
     handleSaveToDirectory,
     handleSendToStudio,
     handleClearAll,
+    isBatchSaved,
   } = useEpsConverter(language, onSendToStudio);
 
   const onFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -225,6 +227,10 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
                       ? language === 'ar'
                         ? 'أكمل تحويل جميع ملفات EPS إلى JPG أولاً قبل الإرسال إلى استوديو Metadata'
                         : 'Render all EPS files to JPG first before sending to Metadata Studio'
+                      : !isBatchSaved
+                      ? language === 'ar'
+                        ? 'احفظ صور JPG الناتجة في مجلد أولاً لحماية الملفات قبل الإرسال إلى استوديو Metadata'
+                        : 'Save rendered JPGs to folder first before sending to Metadata Studio'
                       : language === 'ar'
                       ? 'إرسال المتجهات المحولة إلى استوديو Metadata'
                       : 'Send converted vectors to Metadata Studio'
@@ -235,7 +241,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
                       variant="secondary"
                       size="sm"
                       onClick={handleSendToStudio}
-                      disabled={!allCompleted}
+                      disabled={!allCompleted || isConvertingBatch || !isBatchSaved}
                       className="gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 cursor-pointer"
                     >
                       <Wand2 className="w-3.5 h-3.5" />

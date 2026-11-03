@@ -149,6 +149,7 @@ export const FileCleanerView: React.FC<FileCleanerViewProps> = ({ onSendToStudio
         totalDuplicateCount={c.totalDuplicateCount}
         duplicateGroupKeys={c.duplicateGroupKeys}
         progressMsg={c.progressMsg}
+        processProgress={c.processProgress}
         onDrop={c.handleDrop}
         onSelectFilesClick={() => fileInputRef.current?.click()}
         onSelectFolderClick={() => folderInputRef.current?.click()}

@@ -61,6 +61,7 @@ export function useEpsConverter(
   const [items, setItems] = useState<EpsConvertItem[]>([]);
   const [isConvertingBatch, setIsConvertingBatch] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isBatchSaved, setIsBatchSaved] = useState(false);
 
   const revokeAllObjectUrls = useCallback(() => {
     objectUrlsRef.current.forEach((url) => {
@@ -134,6 +135,7 @@ export function useEpsConverter(
     });
 
     setStatusMessage(null);
+    setIsBatchSaved(false);
   }, [language]);
 
   const handleRenderSingle = useCallback(async (item: EpsConvertItem) => {
@@ -181,6 +183,8 @@ export function useEpsConverter(
   const handleConvertAll = useCallback(async () => {
     setIsConvertingBatch(true);
     setStatusMessage(null);
+    setIsBatchSaved(false);
+    setIsBatchSaved(false);
 
     const pending = sortedItems.filter((i) => i.status !== 'completed');
     const CONCURRENCY = 2;
@@ -203,6 +207,7 @@ export function useEpsConverter(
         { name: item.outputJpgName, data: item.result.blob },
       ]);
       if (res.success) {
+        setIsBatchSaved(true);
         setStatusMessage({
           type: 'success',
           text: language === 'ar' ? `تم حفظ ${item.outputJpgName}` : `Saved ${item.outputJpgName}`,
@@ -231,6 +236,7 @@ export function useEpsConverter(
       });
 
       if (res.success) {
+        setIsBatchSaved(true);
         setStatusMessage({
           type: 'success',
           text: language === 'ar' ? `تم حفظ ${res.savedCount} ملف JPG بنجاح.` : `Saved ${res.savedCount} JPG files to directory.`,
@@ -311,6 +317,8 @@ export function useEpsConverter(
     revokeAllObjectUrls();
     setItems([]);
     setStatusMessage(null);
+    setIsBatchSaved(false);
+    setIsBatchSaved(false);
   }, [revokeAllObjectUrls]);
 
   const completedCount = useMemo(() => items.filter((i) => i.status === 'completed').length, [items]);
@@ -328,5 +336,6 @@ export function useEpsConverter(
     handleSaveToDirectory,
     handleSendToStudio,
     handleClearAll,
+    isBatchSaved,
   };
 }

@@ -1,3 +1,4 @@
+import { TaskProgressBar } from '../../../components/ui/TaskProgressBar';
 import React, { useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { CleanedFileItem, SubFolderTrack } from '../../../services/cleaner/fileCleanerEngine';
@@ -43,6 +44,7 @@ export interface CleanerFileTableProps {
   totalDuplicateCount: number;
   duplicateGroupKeys: string[];
   progressMsg: string | null;
+  processProgress?: { processed: number; total: number } | null;
   onDrop: (e: React.DragEvent) => void;
   onSelectFilesClick: () => void;
   onSelectFolderClick: () => void;
@@ -68,6 +70,7 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
   totalDuplicateCount,
   duplicateGroupKeys,
   progressMsg,
+  processProgress,
   onDrop,
   onSelectFilesClick,
   onSelectFolderClick,
@@ -79,6 +82,24 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
 }) => {
   const { t } = useLanguage();
   const tableContainerRef = useRef<HTMLDivElement>(null);
+
+  // Group batch distribution deterministically into Photos, Videos, Vectors
+  const groupedBatches = React.useMemo(() => {
+    const photos: typeof batchDistribution = [];
+    const videos: typeof batchDistribution = [];
+    const vectors: typeof batchDistribution = [];
+
+    for (const b of batchDistribution) {
+      if (b.subFolder.toLowerCase().includes('video')) {
+        videos.push(b);
+      } else if (b.subFolder.toLowerCase().includes('vector')) {
+        vectors.push(b);
+      } else {
+        photos.push(b);
+      }
+    }
+    return { photos, videos, vectors };
+  }, [batchDistribution]);
 
   const rowVirtualizer = useVirtualizer({
     count: filteredItems.length,
@@ -149,43 +170,103 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
 
   return (
     <div className="flex-1 min-h-0 h-full flex flex-col gap-2.5 overflow-hidden">
-      {/* Batch Allocation Bar (Sticky / Pinned Top Toolbar) */}
-      <div className="p-3 bg-card rounded-xl border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 sticky top-0 z-10">
-        <div className="flex items-center gap-2 flex-wrap text-xs">
-          <span className="font-semibold text-foreground flex items-center gap-1.5">
-            <Layers className="w-3.5 h-3.5 text-primary" />
+      {/* Task Progress Bar (when processing/saving) */}
+      {isProcessing && (
+        <TaskProgressBar
+          status="running"
+          currentCount={processProgress?.processed || 0}
+          totalCount={processProgress?.total || cleanedItems.length}
+          title={language === 'ar' ? 'جارٍ حفظ وتقسيم الملفات المنظمة...' : 'Saving and routing organized files...'}
+          language={language}
+        />
+      )}
+
+      {/* Batch Allocation & Action Toolbar (Sticky / Pinned Top Toolbar) */}
+      <div className="p-3 bg-card rounded-xl border border-border flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0 sticky top-0 z-10 shadow-2xs">
+        {/* Categorized Batch Distribution Groups */}
+        <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+            <Layers className="w-3.5 h-3.5 text-primary shrink-0" />
             <span>{language === 'ar' ? 'توزيع الـ Batch:' : 'Batch Allocation:'}</span>
-          </span>
+            <span className="text-muted-foreground font-mono tabular-nums text-[11px] font-normal">
+              ({cleanedItems.length} {language === 'ar' ? 'إجمالي' : 'total'})
+            </span>
+          </div>
 
-          {batchDistribution.map((b) => {
-            const isAiTrack = b.subFolder.startsWith('AI_');
-            return (
-              <span
-                key={`${b.subFolder}-${b.folder}`}
-                dir="ltr"
-                className={`px-2 py-0.5 rounded border text-[11px] font-mono tabular-nums ${
-                  isAiTrack
-                    ? 'bg-violet-500/10 border-violet-500/30 text-violet-600 dark:text-violet-400'
-                    : 'bg-secondary border-border text-foreground'
-                }`}
-              >
-                <strong>{b.subFolder}/{b.folder}:</strong> {b.total}
-              </span>
-            );
-          })}
+          <div className="flex flex-wrap items-center gap-2.5 text-xs">
+            {/* PHOTOS */}
+            {groupedBatches.photos.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted-foreground bg-secondary/80 px-2 py-0.5 rounded border border-border">
+                  <ImageIcon className="w-3 h-3 text-emerald-500" />
+                  <span>{groupedBatches.photos[0]?.subFolder.startsWith('AI_') ? 'AI Photos' : 'Photos'}</span>
+                </span>
+                <div className="flex items-center gap-1 flex-wrap">
+                  {groupedBatches.photos.map((b) => (
+                    <span
+                      key={`${b.subFolder}-${b.folder}`}
+                      dir="ltr"
+                      className="px-2 py-0.5 rounded border text-[11px] font-mono tabular-nums bg-secondary/60 border-border text-foreground"
+                    >
+                      <strong>{b.folder}:</strong> {b.total}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
 
-          <span className="text-muted-foreground font-mono tabular-nums text-[11px]">
-            ({cleanedItems.length} {language === 'ar' ? 'إجمالي' : 'total'})
-          </span>
+            {/* VIDEOS */}
+            {groupedBatches.videos.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted-foreground bg-secondary/80 px-2 py-0.5 rounded border border-border">
+                  <Film className="w-3 h-3 text-blue-500" />
+                  <span>{groupedBatches.videos[0]?.subFolder.startsWith('AI_') ? 'AI Videos' : 'Videos'}</span>
+                </span>
+                <div className="flex items-center gap-1 flex-wrap">
+                  {groupedBatches.videos.map((b) => (
+                    <span
+                      key={`${b.subFolder}-${b.folder}`}
+                      dir="ltr"
+                      className="px-2 py-0.5 rounded border text-[11px] font-mono tabular-nums bg-secondary/60 border-border text-foreground"
+                    >
+                      <strong>{b.folder}:</strong> {b.total}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* VECTORS */}
+            {groupedBatches.vectors.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted-foreground bg-secondary/80 px-2 py-0.5 rounded border border-border">
+                  <PenTool className="w-3 h-3 text-violet-500" />
+                  <span>{groupedBatches.vectors[0]?.subFolder.startsWith('AI_') ? 'AI Vectors' : 'Vectors'}</span>
+                </span>
+                <div className="flex items-center gap-1 flex-wrap">
+                  {groupedBatches.vectors.map((b) => (
+                    <span
+                      key={`${b.subFolder}-${b.folder}`}
+                      dir="ltr"
+                      className="px-2 py-0.5 rounded border text-[11px] font-mono tabular-nums bg-secondary/60 border-border text-foreground"
+                    >
+                      <strong>{b.folder}:</strong> {b.total}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap justify-between sm:justify-end">
+        {/* Action Buttons Toolbar */}
+        <div className="flex items-center gap-2 flex-wrap justify-between md:justify-end shrink-0">
           <Button
             variant="outline"
             size="sm"
             onClick={onSelectFilesClick}
             disabled={isProcessing}
-            className="gap-1.5 text-xs cursor-pointer"
+            className="gap-1.5 text-xs cursor-pointer font-medium"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>{t.selectFiles}</span>
@@ -196,7 +277,7 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
             size="sm"
             onClick={onSelectFolderClick}
             disabled={isProcessing}
-            className="gap-1.5 text-xs cursor-pointer"
+            className="gap-1.5 text-xs cursor-pointer font-medium"
           >
             <FolderUp className="w-3.5 h-3.5" />
             <span>{t.selectFolder}</span>
