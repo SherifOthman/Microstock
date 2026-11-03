@@ -174,6 +174,8 @@ export function parseAndNormalizeAiMetadata(
   }
 
   // 2. Normalize Title
+  const isVectorMedia =
+    mediaType === 'vector' || /\.(eps|ai|svg)$/i.test(filename ?? '');
   let baseTitle = (parsed.base_title || '').trim();
   if (!baseTitle) {
     const hint = cleanFilenameHint(filename ?? '');
@@ -191,16 +193,35 @@ export function parseAndNormalizeAiMetadata(
     .replace(/\s+/g, ' ')
     .trim();
 
+  if (isVectorMedia) {
+    baseTitle = baseTitle
+      .replace(/\b(?:photograph|photography|photos|photo)\b/gi, 'Vector Illustration')
+      .replace(/\b(?:camera\s+shot|camera)\b/gi, 'Graphic')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
   if (baseTitle.length > 200) baseTitle = baseTitle.substring(0, 197) + '...';
 
   // 3. Normalize Description (Dreamstime Rule: Must be strictly longer than Title & complete sentence)
   let detailedDescription = (parsed.detailed_description || '').trim();
   if (!detailedDescription) {
-    detailedDescription = `High quality commercial stock photograph of ${baseTitle.toLowerCase()}.`;
+    detailedDescription = isVectorMedia
+      ? `High quality commercial stock vector illustration of ${baseTitle.toLowerCase()}.`
+      : `High quality commercial stock photograph of ${baseTitle.toLowerCase()}.`;
+  }
+  if (isVectorMedia) {
+    detailedDescription = detailedDescription
+      .replace(/\b(?:stock\s+photograph|stock\s+photo|photograph|photography|photos|photo)\b/gi, 'vector illustration')
+      .replace(/\b(?:camera\s+shot|camera|dslr|bokeh|depth\s+of\s+field)\b/gi, 'graphic design')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
   // Ensure description is strictly longer than baseTitle
   if (detailedDescription.length <= baseTitle.length) {
-    detailedDescription = `${detailedDescription} Detailed commercial stock asset with natural lighting and professional composition.`;
+    detailedDescription = isVectorMedia
+      ? `${detailedDescription} Scalable commercial vector graphic artwork with clean lines and professional composition.`
+      : `${detailedDescription} Detailed commercial stock asset with natural lighting and professional composition.`;
   }
   if (!detailedDescription.endsWith('.')) {
     detailedDescription += '.';
@@ -315,6 +336,31 @@ export function parseAndNormalizeAiMetadata(
     // Photos & vectors should not contain video resolution tags
     const allResRegex = /\b(?:4k|8k|1080p?|720p?|2160p?|uhd|fhd|hd|ultra\s*hd|full\s*hd)\b/i;
     finalKeywords = finalKeywords.filter((kw) => !allResRegex.test(kw));
+  }
+
+  // Programmatic Guardrail for Vector/EPS Assets: Strictly purge photo/camera/photography terms
+  if (isVectorMedia) {
+    const forbiddenVectorPhotoRegex =
+      /\b(?:photo|photos|photograph|photography|camera|dslr|lens|bokeh|shutter|depth\s*of\s*field|macro\s*photo|stock\s*photo)\b/i;
+    finalKeywords = finalKeywords.filter((kw) => !forbiddenVectorPhotoRegex.test(kw));
+    const vectorFallbackTags = [
+      'vector',
+      'illustration',
+      'graphic',
+      'design',
+      'clipart',
+      'artwork',
+      'scalable',
+      'editable',
+      'flat design',
+      'vector graphic',
+    ];
+    for (const vTag of vectorFallbackTags) {
+      if (finalKeywords.length >= 15) break;
+      if (!finalKeywords.includes(vTag)) {
+        finalKeywords.push(vTag);
+      }
+    }
   }
 
   // Apply Top 10 Keyword Priority rebalancing (ensuring at least 7 single words, max 2-3 compound phrases in top 10)

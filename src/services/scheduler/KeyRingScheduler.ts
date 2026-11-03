@@ -3,6 +3,8 @@ import { db, getAllApiKeys, getAppSettings, updateApiKey, migratePlaintextApiKey
 import { getProviderAdapter } from '../providers';
 import { decryptSecret } from '../desktop/secureStorage';
 
+export type RoutingStrategy = 'priority' | 'round_robin';
+
 export interface KeyRingStateListener {
   (keys: ApiKeyRecord[]): void;
 }
@@ -19,6 +21,7 @@ export class KeyRingScheduler {
   private isInitialized = false;
   private autoMaintenanceTimer?: any;
   private providerFailureCount: Map<ProviderType, number> = new Map();
+  private routingMode: RoutingStrategy = 'priority';
 
   private constructor() {
     this.startMaintenanceLoop();
@@ -29,6 +32,27 @@ export class KeyRingScheduler {
       KeyRingScheduler.instance = new KeyRingScheduler();
     }
     return KeyRingScheduler.instance;
+  }
+
+  public getRoutingMode(): RoutingStrategy {
+    return this.routingMode;
+  }
+
+  public setRoutingMode(mode: RoutingStrategy): void {
+    this.routingMode = mode;
+    this.notifyListeners();
+  }
+
+  public async updateProviderModel(providerId: ProviderType, modelId: string): Promise<void> {
+    const updates: Promise<void>[] = [];
+    for (const [id, key] of this.keysCache.entries()) {
+      if (key.providerId === providerId) {
+        key.modelId = modelId;
+        updates.push(this.persistKeyUpdate(id, { modelId }));
+      }
+    }
+    await Promise.all(updates);
+    this.notifyListeners();
   }
 
   /**
@@ -214,42 +238,59 @@ export class KeyRingScheduler {
         );
       }
 
-      // 2. Strict Provider Priority Cascade: #1 -> #2 -> #3 -> #4 -> #5
-      // CRITICAL FIX: Use ONLY user-configured priority order, no fallback hardcoded list
-      const priorityOrder: ProviderType[] = settings.providerPriority && settings.providerPriority.length > 0
-        ? settings.providerPriority
-        : ['gemini', 'openrouter', 'groq', 'mistral', 'cloudflare'];
+      // 2. Determine Provider Evaluation Order
+      // When routingStrategy === 'interleaved', sort providers by lowest active/recent usage so all providers share load.
+      // When routingStrategy === 'priority_tiered', follow user-configured priorityOrder and cascade immediately when a tier is cooling down or excluded.
+      const basePriorityOrder: ProviderType[] =
+        settings.providerPriority && settings.providerPriority.length > 0
+          ? settings.providerPriority
+          : ['gemini', 'openrouter', 'groq', 'mistral', 'cloudflare'];
 
-      // Iterate through providers in strict priority order
+      // Ensure all 5 providers are represented in basePriorityOrder
+      const allProviders: ProviderType[] = ['gemini', 'openrouter', 'groq', 'mistral', 'cloudflare'];
+      for (const p of allProviders) {
+        if (!basePriorityOrder.includes(p)) basePriorityOrder.push(p);
+      }
+
+      let priorityOrder = [...basePriorityOrder];
+      if (settings.routingStrategy === 'interleaved' || this.routingMode === 'round_robin') {
+        priorityOrder.sort((a, b) => {
+          const aKeys = candidateKeys.filter((k) => k.providerId === a);
+          const bKeys = candidateKeys.filter((k) => k.providerId === b);
+          const aMinLastUsed = aKeys.length > 0 ? Math.min(...aKeys.map((k) => k.lastUsedAt || 0)) : Infinity;
+          const bMinLastUsed = bKeys.length > 0 ? Math.min(...bKeys.map((k) => k.lastUsedAt || 0)) : Infinity;
+          return aMinLastUsed - bMinLastUsed;
+        });
+      }
+
+      // If excludeProviders filtered out all candidate keys, allow falling back to remaining candidate keys not in excludeKeyIds
+      const hasKeysInNonExcludedProviders = candidateKeys.some((k) => !excludeProviders.includes(k.providerId));
+      const effectiveExcludeProviders = hasKeysInNonExcludedProviders ? excludeProviders : [];
+
+      // Iterate through providers in order
       for (const pid of priorityOrder) {
         if (requestedProvider && requestedProvider !== pid) continue;
-        if (excludeProviders.includes(pid)) continue;
+        if (effectiveExcludeProviders.includes(pid)) continue;
 
         // Keys of this provider that haven't been excluded for this item
         const tierKeys = candidateKeys.filter((k) => k.providerId === pid);
         if (tierKeys.length === 0) continue;
 
-        // Check if any key in this tier is viable (healthy or cooling_down expired)
+        // Check if any key in this tier is viable (healthy or expired cooldown)
         const viableKeys = tierKeys.filter((k) => {
           if (k.status === 'cooling_down' && k.cooldownUntil && k.cooldownUntil > now) return false;
           if (k.status === 'exhausted_daily' && k.exhaustedUntil && k.exhaustedUntil > now) return false;
-          // FIX: Don't skip 'invalid' keys completely - let them be tried once to generate proper failover log
           return true;
         });
 
         if (viableKeys.length === 0) {
-          // All keys of this provider are in active cooldown or daily exhausted
-          // ALGORITHMIC FIX #4: Exponential backoff when cascading providers
-          const failCount = this.providerFailureCount.get(pid) || 0;
-          this.providerFailureCount.set(pid, failCount + 1);
-          
-          // Exponential backoff: 0ms, 100ms, 200ms, 400ms, max 800ms
-          const backoffMs = Math.min(800, failCount * 100);
-          if (backoffMs > 0) {
-            await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          // All keys of this provider are in active cooldown or daily exhausted -> cascade immediately to next provider!
+          for (const k of tierKeys) {
+            if (k.status === 'cooling_down' && k.cooldownUntil && k.cooldownUntil > now) {
+              const wait = k.cooldownUntil - now;
+              if (wait > 0 && wait < minWaitMs) minWaitMs = wait;
+            }
           }
-          
-          // cascade to next provider immediately (0s delay)
           continue;
         }
 
@@ -257,29 +298,28 @@ export class KeyRingScheduler {
         const readyKeys: { key: ApiKeyRecord; score: number }[] = [];
 
         for (const key of viableKeys) {
-          // CRITICAL FIX #1: Allow multiple concurrent requests per key based on RPM capacity
-          // Calculate safe concurrency (80% of theoretical max to leave buffer)
+          // Allow multiple concurrent requests per key based on RPM capacity
           const maxConcurrentPerKey = Math.max(1, Math.floor((key.rpmLimit * 0.8) / 60));
-          
+
           if (key.activeRequests >= maxConcurrentPerKey) continue;
 
           // Recover cooldown if expired
           if (key.status === 'cooling_down' && key.cooldownUntil && key.cooldownUntil <= now) {
             key.status = 'healthy';
             key.cooldownUntil = undefined;
+            key.lastError = undefined;
           }
 
           // Clean sliding window
           const windowThreshold = now - 60000;
           key.requestsInWindow = (key.requestsInWindow || []).filter((t) => t > windowThreshold);
 
-          // CRITICAL FIX #2: Daily quota pre-check with warning
+          // Daily quota pre-check
           const dailyLimit = key.rpdLimit || 10000;
           const dailyUsed = key.dailyRequestCount || 0;
           const dailyRemaining = dailyLimit - dailyUsed;
-          
+
           if (dailyRemaining <= 0) {
-            // Immediately mark as exhausted
             key.status = 'exhausted_daily';
             const midnight = new Date();
             midnight.setUTCHours(24, 0, 0, 0);
@@ -292,11 +332,6 @@ export class KeyRingScheduler {
             });
             continue;
           }
-          
-          // Warn if < 20% daily quota remaining
-          if (dailyRemaining < dailyLimit * 0.2) {
-            console.warn(`⚠️ Key "${key.label}" has only ${dailyRemaining} of ${dailyLimit} requests left today (${Math.round((dailyRemaining / dailyLimit) * 100)}%)`);
-          }
 
           // RPM ceiling check
           if (key.requestsInWindow.length >= key.rpmLimit) {
@@ -306,7 +341,7 @@ export class KeyRingScheduler {
             continue;
           }
 
-          // Pacing check (inter-request interval) - reduced spacing for faster rotation
+          // Pacing check (inter-request interval)
           const minSpacingMs = Math.ceil(60000 / Math.max(1, key.rpmLimit));
           const timeSinceLastUsed = now - (key.lastUsedAt || 0);
 
@@ -316,19 +351,21 @@ export class KeyRingScheduler {
             continue;
           }
 
-          // ALGORITHMIC FIX #3: Predictive scoring
+          // Predictive scoring: prefer least-recently used and lowest window utilization
           const utilizationScore = key.requestsInWindow.length / Math.max(1, key.rpmLimit);
           const nextAvailableIn = Math.max(0, minSpacingMs - timeSinceLastUsed);
-          const combinedScore = utilizationScore + (nextAvailableIn / 10000);
-          
+          const combinedScore = utilizationScore + nextAvailableIn / 10000;
+
           readyKeys.push({ key, score: combinedScore });
         }
 
         if (readyKeys.length > 0) {
-          // Sort by score ascending; break ties with oldest lastUsedAt
+          // Sort by oldest lastUsedAt first so all keys within a provider rotate evenly (1 -> 2 -> 3 -> 4 -> 5)
           readyKeys.sort((a, b) => {
-            if (Math.abs(a.score - b.score) > 0.001) return a.score - b.score;
-            return (a.key.lastUsedAt || 0) - (b.key.lastUsedAt || 0);
+            const lastA = a.key.lastUsedAt || 0;
+            const lastB = b.key.lastUsedAt || 0;
+            if (lastA !== lastB) return lastA - lastB;
+            return a.score - b.score;
           });
 
           const selected = readyKeys[0].key;
@@ -337,9 +374,7 @@ export class KeyRingScheduler {
           selected.requestsInWindow.push(now);
           selected.dailyRequestCount = (selected.dailyRequestCount || 0) + 1;
 
-          // Reset failure count on successful acquisition
           this.providerFailureCount.set(pid, 0);
-
           this.notifyListeners();
 
           const plainKey = await decryptSecret(selected.key);
@@ -357,8 +392,8 @@ export class KeyRingScheduler {
         }
       }
 
-      // No key is ready right now; pause VERY briefly (reduced from 250ms to 50ms for instant failover)
-      const sleepTime = Math.min(Math.max(minWaitMs === Infinity ? 20 : minWaitMs, 10), 50);
+      // Pause briefly before re-checking
+      const sleepTime = Math.min(Math.max(minWaitMs === Infinity ? 25 : minWaitMs, 15), 50);
       await new Promise((resolve) => setTimeout(resolve, sleepTime));
     }
   }
@@ -369,7 +404,10 @@ export class KeyRingScheduler {
   }
 
   /**
-   * Releases an acquired key lease, updating latency, cooldowns, and error states
+   * Releases an acquired key lease, updating latency, cooldowns, and error states.
+   * When a model/provider returns 503 High Demand or Overloaded, all sibling keys using that
+   * overloaded provider+model are placed into cooldown so the scheduler immediately cascades
+   * to the next provider (e.g. OpenRouter, Groq, Mistral, Cloudflare).
    */
   private async releaseKey(
     keyId: string,
@@ -386,8 +424,12 @@ export class KeyRingScheduler {
     const now = Date.now();
 
     if (success) {
+      key.status = 'healthy';
+      key.cooldownUntil = undefined;
       key.lastError = undefined;
       await this.persistKeyUpdate(keyId, {
+        status: 'healthy',
+        cooldownUntil: undefined,
         activeRequests: key.activeRequests,
         lastLatencyMs: key.lastLatencyMs,
         lastUsedAt: key.lastUsedAt,
@@ -408,15 +450,19 @@ export class KeyRingScheduler {
           errorMsgLower.includes('daily') ||
           errorMsg.includes('RESOURCE_EXHAUSTED'));
 
-      const isRateLimit = status === 429 && !isDailyQuota;
       const isServerOverload =
         status === 503 ||
         status === 502 ||
         status === 504 ||
         errorMsgLower.includes('high demand') ||
+        errorMsgLower.includes('spikes in demand') ||
         errorMsgLower.includes('overloaded') ||
         errorMsgLower.includes('service unavailable') ||
-        errorMsgLower.includes('UNAVAILABLE'.toLowerCase());
+        errorMsgLower.includes('unavailable') ||
+        errorMsgLower.includes('currently busy');
+
+      const isRateLimit = status === 429 && !isDailyQuota && !isServerOverload;
+
       const isTimeout =
         status === 408 ||
         Boolean(error.isTimeout) ||
@@ -424,10 +470,13 @@ export class KeyRingScheduler {
         error.name === 'AbortError' ||
         errorMsgLower.includes('timed out') ||
         errorMsgLower.includes('signal timed out');
-      const isAuthOrModel = status === 401 || status === 403 || status === 404;
+
+      const isAuthOrModel =
+        (status === 401 || status === 403 || status === 404) &&
+        !errorMsgLower.includes('high demand') &&
+        !errorMsgLower.includes('rate limit');
 
       if (isDailyQuota) {
-        // Next midnight UTC
         const midnight = new Date();
         midnight.setUTCHours(24, 0, 0, 0);
 
@@ -440,8 +489,35 @@ export class KeyRingScheduler {
           exhaustedUntil: key.exhaustedUntil,
           lastError: key.lastError,
         });
+      } else if (isServerOverload) {
+        // Model/Provider-wide high demand (e.g. Gemini 503 "This model is currently experiencing high demand").
+        // Cool down this key AND all sibling keys of the same provider+model so we immediately fail over to the next provider!
+        const retrySeconds = error.retryAfterSeconds || 30;
+        const cooldownUntil = now + retrySeconds * 1000;
+        const formattedErr = `Model experiencing high demand (${status || 503}). Cooldown: ${retrySeconds}s — cascading to backup provider.`;
+
+        const siblingUpdates: Promise<void>[] = [];
+        for (const [sibId, sibKey] of this.keysCache.entries()) {
+          if (
+            sibKey.providerId === key.providerId &&
+            sibKey.modelId === key.modelId &&
+            sibKey.status !== 'disabled' &&
+            sibKey.status !== 'invalid'
+          ) {
+            sibKey.status = 'cooling_down';
+            sibKey.cooldownUntil = cooldownUntil;
+            sibKey.lastError = sibId === keyId ? formattedErr : `Provider model high demand (${retrySeconds}s cooldown)`;
+            siblingUpdates.push(
+              this.persistKeyUpdate(sibId, {
+                status: 'cooling_down',
+                cooldownUntil,
+                lastError: sibKey.lastError,
+              })
+            );
+          }
+        }
+        await Promise.all(siblingUpdates);
       } else if (isRateLimit) {
-        // Specific cooldown timer
         const retrySeconds = error.retryAfterSeconds || 30;
         key.status = 'cooling_down';
         key.cooldownUntil = now + retrySeconds * 1000;
@@ -452,19 +528,8 @@ export class KeyRingScheduler {
           cooldownUntil: key.cooldownUntil,
           lastError: key.lastError,
         });
-      } else if (isServerOverload) {
-        const retrySeconds = error.retryAfterSeconds || 20;
-        key.status = 'cooling_down';
-        key.cooldownUntil = now + retrySeconds * 1000;
-        key.lastError = `Model experiencing high demand (${status || 503}). Cooldown: ${retrySeconds}s`;
-
-        await this.persistKeyUpdate(keyId, {
-          status: 'cooling_down',
-          cooldownUntil: key.cooldownUntil,
-          lastError: key.lastError,
-        });
       } else if (isTimeout) {
-        const retrySeconds = 15;
+        const retrySeconds = 20;
         key.status = 'cooling_down';
         key.cooldownUntil = now + retrySeconds * 1000;
         key.lastError = `Request timed out. Cooldown: ${retrySeconds}s`;

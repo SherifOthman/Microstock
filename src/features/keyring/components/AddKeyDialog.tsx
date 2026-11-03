@@ -3,6 +3,7 @@ import { ProviderType, ApiKeyRecord } from '../../../types';
 import { PROVIDERS_META, PROVIDER_ORDER, MODEL_DISPLAY_NAMES } from '../../../constants/providers';
 import { createApiKeyRecord, saveApiKey, updateApiKey } from '../../../db';
 import { decryptSecret } from '../../../services/desktop/secureStorage';
+import { getProviderAdapter } from '../../../services/providers';
 import { Dialog } from '../../../components/ui/dialog';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
@@ -13,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../../../components/ui/select';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, Eye, EyeOff, RefreshCw } from 'lucide-react';
 import { useLanguage } from '../../../context/LanguageContext';
 
 interface AddKeyDialogProps {
@@ -21,6 +22,7 @@ interface AddKeyDialogProps {
   onClose: () => void;
   onKeyAdded: () => void;
   editKey?: ApiKeyRecord | null;
+  defaultProvider?: ProviderType;
 }
 
 export const AddKeyDialog: React.FC<AddKeyDialogProps> = ({
@@ -28,14 +30,18 @@ export const AddKeyDialog: React.FC<AddKeyDialogProps> = ({
   onClose,
   onKeyAdded,
   editKey,
+  defaultProvider = 'gemini',
 }) => {
   const { language } = useLanguage();
-  const [providerId, setProviderId] = useState<ProviderType>('gemini');
+  const [providerId, setProviderId] = useState<ProviderType>(defaultProvider);
   const [label, setLabel] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [cfAccountId, setCfAccountId] = useState('');
-  const [modelId, setModelId] = useState(PROVIDERS_META.gemini.defaultModelId);
-  const [rpmLimit, setRpmLimit] = useState<number>(PROVIDERS_META.gemini.defaultRpm);
+  const [modelId, setModelId] = useState(PROVIDERS_META[defaultProvider].defaultModelId);
+  const [rpmLimit, setRpmLimit] = useState<number>(PROVIDERS_META[defaultProvider].defaultRpm);
+  const [showKey, setShowKey] = useState(true);
+  const [liveModels, setLiveModels] = useState<string[]>([]);
+  const [fetchingModels, setFetchingModels] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -45,6 +51,7 @@ export const AddKeyDialog: React.FC<AddKeyDialogProps> = ({
         setLabel(editKey.label);
         setModelId(editKey.modelId);
         setRpmLimit(editKey.rpmLimit);
+        setLiveModels([]);
 
         const decrypted = await decryptSecret(editKey.key);
         if (!active) return;
@@ -58,25 +65,29 @@ export const AddKeyDialog: React.FC<AddKeyDialogProps> = ({
           setCfAccountId('');
         }
       } else if (!editKey && open) {
-        setProviderId('gemini');
+        const targetProvider = defaultProvider || 'gemini';
+        const cfg = PROVIDERS_META[targetProvider];
+        setProviderId(targetProvider);
         setLabel('');
         setApiKey('');
         setCfAccountId('');
-        setModelId(PROVIDERS_META.gemini.defaultModelId);
-        setRpmLimit(PROVIDERS_META.gemini.defaultRpm);
+        setModelId(cfg.defaultModelId);
+        setRpmLimit(cfg.defaultRpm);
+        setLiveModels([]);
       }
     };
     loadEditKey();
     return () => {
       active = false;
     };
-  }, [editKey, open]);
+  }, [editKey, open, defaultProvider]);
 
   const handleProviderChange = (newProvider: ProviderType) => {
     setProviderId(newProvider);
     const cfg = PROVIDERS_META[newProvider];
     setModelId(cfg.defaultModelId);
     setRpmLimit(cfg.defaultRpm);
+    setLiveModels([]);
   };
 
   const getCombinedKey = () => {
@@ -84,6 +95,27 @@ export const AddKeyDialog: React.FC<AddKeyDialogProps> = ({
       return `${cfAccountId.trim()}:${apiKey.trim()}`;
     }
     return apiKey.trim();
+  };
+
+  const handleFetchLiveModels = async () => {
+    const keyToUse = getCombinedKey();
+    if (!keyToUse) return;
+    setFetchingModels(true);
+    try {
+      const adapter = getProviderAdapter(providerId);
+      const models = await adapter.fetchModels(keyToUse);
+      if (models && models.length > 0) {
+        const ids = models.map((m) => m.id);
+        setLiveModels(ids);
+        if (!ids.includes(modelId)) {
+          setModelId(ids[0]);
+        }
+      }
+    } catch {
+      // Fallback to recommended models
+    } finally {
+      setFetchingModels(false);
+    }
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -99,6 +131,7 @@ export const AddKeyDialog: React.FC<AddKeyDialogProps> = ({
         modelId,
         rpmLimit: Number(rpmLimit) || PROVIDERS_META[providerId].defaultRpm,
         status: 'healthy',
+        cooldownUntil: undefined,
         lastError: undefined,
       });
     } else {
@@ -118,6 +151,9 @@ export const AddKeyDialog: React.FC<AddKeyDialogProps> = ({
   };
 
   const currentProvider = PROVIDERS_META[providerId];
+  const availableModels = Array.from(
+    new Set([...currentProvider.recommendedVisionModels, ...liveModels, modelId].filter(Boolean))
+  );
   const isFormValid =
     apiKey.trim().length > 0 && (providerId !== 'cloudflare' || cfAccountId.trim().length > 0);
 
@@ -137,7 +173,7 @@ export const AddKeyDialog: React.FC<AddKeyDialogProps> = ({
       size="sm"
     >
       <form onSubmit={handleSave} className="space-y-3.5 text-xs">
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           <div className="flex items-center justify-between">
             <label className="font-medium text-foreground">
               {language === 'ar' ? 'مزود الخدمة (Provider)' : 'AI Provider'}
@@ -152,6 +188,40 @@ export const AddKeyDialog: React.FC<AddKeyDialogProps> = ({
               <ExternalLink className="w-3 h-3" />
             </a>
           </div>
+
+          {/* 1-Click Provider Selection Grid */}
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5" role="group" aria-label="AI Provider Tabs">
+            {PROVIDER_ORDER.map((id) => {
+              const p = PROVIDERS_META[id];
+              const isSelected = providerId === id;
+              const shortName =
+                id === 'gemini'
+                  ? 'Google'
+                  : id === 'openrouter'
+                  ? 'OpenRouter'
+                  : id === 'groq'
+                  ? 'Groq'
+                  : id === 'mistral'
+                  ? 'Mistral'
+                  : 'Cloudflare';
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => handleProviderChange(id)}
+                  className={`px-2 py-1.5 rounded-md border text-[11px] font-medium transition cursor-pointer truncate ${
+                    isSelected
+                      ? 'bg-primary text-primary-foreground border-primary shadow-xs'
+                      : 'bg-secondary/50 text-muted-foreground border-border hover:text-foreground hover:bg-secondary'
+                  }`}
+                >
+                  {shortName}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Standard Select Dropdown synced with Provider */}
           <Select value={providerId} onValueChange={(v) => handleProviderChange(v as ProviderType)}>
             <SelectTrigger className="w-full h-8 text-xs">
               <SelectValue />
@@ -202,19 +272,39 @@ export const AddKeyDialog: React.FC<AddKeyDialogProps> = ({
         )}
 
         <div className="space-y-1.5">
-          <label className="font-medium text-foreground block">
-            {providerId === 'cloudflare'
-              ? language === 'ar'
-                ? 'رمز Cloudflare API'
-                : 'Cloudflare API Token'
-              : language === 'ar'
-              ? 'مفتاح API'
-              : 'API Key'}
-          </label>
+          <div className="flex items-center justify-between">
+            <label className="font-medium text-foreground block">
+              {providerId === 'cloudflare'
+                ? language === 'ar'
+                  ? 'رمز Cloudflare API'
+                  : 'Cloudflare API Token'
+                : language === 'ar'
+                ? 'مفتاح API'
+                : 'API Key'}
+            </label>
+            <button
+              type="button"
+              onClick={() => setShowKey((prev) => !prev)}
+              className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground cursor-pointer"
+            >
+              {showKey ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+              <span>{showKey ? (language === 'ar' ? 'إخفاء' : 'Hide') : (language === 'ar' ? 'إظهار' : 'Show')}</span>
+            </button>
+          </div>
           <Input
             dir="ltr"
-            type="password"
-            placeholder={providerId === 'cloudflare' ? 'API Token...' : 'AIzaSy... / gsk_...'}
+            type={showKey ? 'text' : 'password'}
+            placeholder={
+              providerId === 'cloudflare'
+                ? 'API Token...'
+                : providerId === 'gemini'
+                ? 'AIzaSy...'
+                : providerId === 'groq'
+                ? 'gsk_...'
+                : providerId === 'openrouter'
+                ? 'sk-or-v1-...'
+                : 'API Key...'
+            }
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             required
@@ -224,15 +314,28 @@ export const AddKeyDialog: React.FC<AddKeyDialogProps> = ({
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
           <div className="sm:col-span-2 space-y-1.5">
-            <label className="font-medium text-foreground block">
-              {language === 'ar' ? 'نموذج الرؤية (Vision Model)' : 'Vision Model'}
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="font-medium text-foreground block">
+                {language === 'ar' ? 'نموذج الرؤية (Vision Model)' : 'Vision Model'}
+              </label>
+              {apiKey.trim().length > 5 && (
+                <button
+                  type="button"
+                  onClick={handleFetchLiveModels}
+                  disabled={fetchingModels}
+                  className="inline-flex items-center gap-1 text-[10px] text-primary hover:underline cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-2.5 h-2.5 ${fetchingModels ? 'animate-spin' : ''}`} />
+                  <span>{language === 'ar' ? 'تحديث النماذج' : 'Fetch Models'}</span>
+                </button>
+              )}
+            </div>
             <Select value={modelId} onValueChange={(v) => setModelId(v)}>
               <SelectTrigger className="w-full font-mono text-xs h-8">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent position="popper" className="max-w-[calc(100vw-2rem)] max-h-60">
-                {currentProvider.recommendedVisionModels.map((m) => (
+                {availableModels.map((m) => (
                   <SelectItem key={m} value={m} className="font-mono text-xs">
                     {MODEL_DISPLAY_NAMES[m] || m}
                   </SelectItem>
@@ -269,3 +372,4 @@ export const AddKeyDialog: React.FC<AddKeyDialogProps> = ({
     </Dialog>
   );
 };
+

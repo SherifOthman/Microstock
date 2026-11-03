@@ -610,12 +610,38 @@ export class BatchQueueService {
 
         const processingTask = (async () => {
           // 1. Acquire key lease from KeyRingScheduler
-          // Exclude failed KEY IDs to allow rotation through ALL keys of same provider
-          const failedKeyIds = (item.attemptHistory || [])
-            .filter((a) => a.status === 'failed' && a.keyId)
+          // Exclude failed KEY IDs, and if a provider failed with high-demand/timeout/auth or failed >= 2 times on this item,
+          // also exclude that provider so retries immediately cascade to OpenRouter, Groq, Mistral, and Cloudflare!
+          const failedAttempts = (item.attemptHistory || []).filter((a) => a.status === 'failed');
+          const failedKeyIds = failedAttempts
+            .filter((a) => a.keyId)
             .map((a) => a.keyId as string);
 
-          lease = await keyRingScheduler.acquireKey(undefined, failedKeyIds);
+          const providerFailCounts = new Map<string, number>();
+          const excludedProviders = new Set<ProviderType>();
+          for (const fa of failedAttempts) {
+            const pid = fa.provider as ProviderType;
+            if (!pid) continue;
+            const count = (providerFailCounts.get(pid) || 0) + 1;
+            providerFailCounts.set(pid, count);
+            const errLower = (fa.error || '').toLowerCase();
+            if (
+              count >= 2 ||
+              errLower.includes('high demand') ||
+              errLower.includes('overloaded') ||
+              errLower.includes('timed out') ||
+              errLower.includes('503') ||
+              errLower.includes('free tier is not available')
+            ) {
+              excludedProviders.add(pid);
+            }
+          }
+
+          lease = await keyRingScheduler.acquireKey(
+            undefined,
+            failedKeyIds,
+            Array.from(excludedProviders)
+          );
           const { keyRecord, release } = lease;
 
           item.assignedKeyLabel = keyRecord.label;

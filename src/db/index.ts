@@ -9,7 +9,7 @@ import {
   SupportedPlatform,
 } from '../types';
 import { PROVIDERS_META } from '../constants/providers';
-import { encryptSecret } from '../services/desktop/secureStorage';
+import { encryptSecret, decryptSecret } from '../services/desktop/secureStorage';
 
 export interface SettingItem {
   key: string;
@@ -476,12 +476,24 @@ export async function saveAppSettings(settings: Partial<AppSettings>): Promise<A
 // API Keys Operations
 export async function getAllApiKeys(): Promise<ApiKeyRecord[]> {
   const records = await db.apiKeys.toArray();
-  return records.sort((a, b) => a.createdAt - b.createdAt);
+  const decrypted = await Promise.all(
+    records.map(async (r) => ({
+      ...r,
+      key: await decryptSecret(r.key),
+    }))
+  );
+  return decrypted.sort((a, b) => a.createdAt - b.createdAt);
 }
 
 export async function getApiKeysByProvider(providerId: ProviderType): Promise<ApiKeyRecord[]> {
   const records = await db.apiKeys.where('providerId').equals(providerId).toArray();
-  return records.sort((a, b) => a.createdAt - b.createdAt);
+  const decrypted = await Promise.all(
+    records.map(async (r) => ({
+      ...r,
+      key: await decryptSecret(r.key),
+    }))
+  );
+  return decrypted.sort((a, b) => a.createdAt - b.createdAt);
 }
 
 export async function saveApiKey(record: ApiKeyRecord): Promise<void> {

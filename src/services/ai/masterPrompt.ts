@@ -228,10 +228,15 @@ export function buildVisionPrompt(
   const fallbackSubject = filename ? filename.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').trim() : '';
   const identifiedSubject = hint || fallbackSubject;
 
+  const isVectorAsset =
+    mediaType === 'vector' || (filename ? /\.(eps|ai|svg)$/i.test(filename) : false);
+
   if (keywordPhrasing === 'single') {
     prompt += '\nCRITICAL KEYWORD REQUIREMENT: Output concise single words or 1-2 word tags. Maximum 2 words per tag. NEVER glue or concatenate multiple words together without a space (e.g., NEVER output "homegym", "fitnessequipment", "recoverytool"). Always put a normal space between words in compound tags.';
   } else if (keywordPhrasing === 'double') {
-    prompt += '\nCRITICAL KEYWORD REQUIREMENT: Output 2-word compound phrases where appropriate (e.g. "copper metal", "brushed texture", "macro photograph", "metallic surface"). Maximum 2 words per tag. NEVER glue words together without spaces.';
+    prompt += isVectorAsset
+      ? '\nCRITICAL KEYWORD REQUIREMENT: Output 2-word compound phrases where appropriate (e.g. "vector illustration", "graphic design", "flat icon", "scalable artwork"). Maximum 2 words per tag. NEVER glue words together without spaces.'
+      : '\nCRITICAL KEYWORD REQUIREMENT: Output 2-word compound phrases where appropriate (e.g. "copper metal", "brushed texture", "macro photograph", "metallic surface"). Maximum 2 words per tag. NEVER glue words together without spaces.';
   } else {
     prompt += '\nCRITICAL KEYWORD REQUIREMENT: Smart Microstock Mix (1 to 2 Words per Tag). Generate 45 to 49 tags in "ranked_keywords" STRICTLY ORDERED by commercial search priority.';
     prompt += '\nPOSITIONS #1 to #10 (Top SEO Priority): Positions #1 to #7 MUST be high-volume single-word primary subjects (e.g., "bench", "lake", "forest", "sunset", "water", "landscape", "winter"). Positions #8 to #10 can be strong 2-word compound phrases (e.g., "frozen lake", "wooden bench", "winter landscape").';
@@ -279,7 +284,8 @@ ABSOLUTE RULE: DO NOT output "4k", "4k footage", "4k video", "uhd", "ultra hd", 
 Stock agencies strictly reject submissions with inaccurate resolution tags.
 ${is1080p ? 'You may include "1080p", "full hd", "fhd".' : is720p ? 'You may include "720p", "hd".' : ''}`;
     }
-  } else if (mediaType === 'vector') {
+  } else if (isVectorAsset) {
+    prompt += `\nCRITICAL NOTE: The attached image is a rasterized preview of a Vector/EPS illustration. You MUST generate keywords appropriate for vector graphics and illustrations. Do NOT use words like 'photo', 'camera', or 'photography'.`;
     if (hasRealPreview === false) {
       prompt += `\n🚨 CRITICAL VECTOR SUBJECT OVERRIDE:
 The vector artwork file is named "${filename || 'vector.eps'}" depicting the subject: "${identifiedSubject}".
@@ -289,9 +295,9 @@ Generate ALL metadata, title, description, and 45-49 keywords specifically for a
 - Detailed Description: Full sentence describing a professional vector graphic of "${identifiedSubject}".
 - Ranked Keywords: 45 to 49 commercial tags focusing on "${identifiedSubject}" (synonyms, uses, category terms, equipment, design, icon, symbol, clipart, vector, graphic, flat, isolated).
 - NEVER generate generic abstract background patterns, geometric shapes, or describe the placeholder badge! Focus 100% on "${identifiedSubject}".
-- FORBIDDEN KEYWORDS (unless in filename): Do NOT output "abstract", "geometric", "shapes", "minimalist", "pattern", "modern art", "creative shape", "technology", "futuristic", or "texture". Every single keyword must relate directly to "${identifiedSubject}".`;
+- FORBIDDEN KEYWORDS (unless in filename): Do NOT output "abstract", "geometric", "shapes", "minimalist", "pattern", "modern art", "creative shape", "technology", "futuristic", "texture", "photo", "camera", or "photography". Every single keyword must relate directly to "${identifiedSubject}".`;
     } else {
-      prompt += `\nCRITICAL MEDIA TYPE: VECTOR EPS ILLUSTRATION. This is a scalable vector graphic illustration${identifiedSubject ? ` depicting: "${identifiedSubject}"` : ''}. Analyze the actual ARTWORK CONTENT and visual elements shown (characters, objects, scenes, colors, style, composition). Describe what the illustration depicts, not just that it is a vector. Include vector-specific terms (vector, illustration, graphic, design, template, editable, scalable, flat, clip art, icon) alongside the SPECIFIC SUBJECT MATTER "${identifiedSubject}". NEVER include camera/photo terms (photo, photograph, shot, depth of field, bokeh, lens, shutter).`;
+      prompt += `\nCRITICAL MEDIA TYPE: VECTOR EPS ILLUSTRATION. This is a scalable vector graphic illustration${identifiedSubject ? ` depicting: "${identifiedSubject}"` : ''}. Analyze the actual ARTWORK CONTENT and visual elements shown (characters, objects, scenes, colors, style, composition). Describe what the illustration depicts, not just that it is a vector. Include vector-specific terms (vector, illustration, graphic, design, template, editable, scalable, flat, clip art, icon) alongside the SPECIFIC SUBJECT MATTER "${identifiedSubject}". NEVER include camera/photo terms (photo, photography, photograph, camera, dslr, shot, depth of field, bokeh, lens, shutter).`;
     }
   }
 

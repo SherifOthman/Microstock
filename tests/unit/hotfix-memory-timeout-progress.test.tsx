@@ -1,14 +1,18 @@
 import 'fake-indexeddb/auto';
 import React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { GlobalProgressBanner } from '../../src/components/studio/GlobalProgressBanner';
 import { QueueState } from '../../src/services/queue/BatchQueueService';
 import { keyRingScheduler } from '../../src/services/scheduler/KeyRingScheduler';
 import { db } from '../../src/db';
 import { rasterizeEpsBufferDirect } from '../../src/services/eps/epsWorkerCore';
+import { buildVisionPrompt } from '../../src/services/ai/masterPrompt';
+import { parseAndNormalizeAiMetadata } from '../../src/services/ai/metadataParser';
+import { KeyRingView } from '../../src/features/keyring/components/KeyRingView';
+import { LanguageProvider } from '../../src/context/LanguageContext';
 
-describe('Emergency Hotfix Suite: Memory GC, 503/Timeout Cooldowns, & Strict Progress Bar', () => {
+describe('Emergency Hotfix & Final UX Cleanup Suite', () => {
   beforeEach(async () => {
     await db.apiKeys.clear();
     await keyRingScheduler.refreshKeys();
@@ -34,48 +38,183 @@ describe('Emergency Hotfix Suite: Memory GC, 503/Timeout Cooldowns, & Strict Pro
     expect(screen.getByText('· 20 failed')).toBeTruthy();
   });
 
-  it('KeyRingScheduler cools down keys on HTTP 503 High Demand and signal timed out errors', async () => {
+  it('KeyRingScheduler cools down all sibling Gemini keys on HTTP 503 High Demand and cascades to OpenRouter & Groq', async () => {
+    const now = Date.now();
+    // Add 3 Gemini keys on the same model + 1 OpenRouter key + 1 Groq key
+    for (let i = 1; i <= 3; i++) {
+      await db.apiKeys.put({
+        id: `gemini-key-${i}`,
+        providerId: 'gemini',
+        key: `AIzaSyTestKey${i}000000000000000`,
+        label: `Gemini Key ${i}`,
+        modelId: 'gemini-3.1-flash-lite',
+        rpmLimit: 15,
+        rpdLimit: 1500,
+        status: 'healthy',
+        requestsInWindow: [],
+        dailyRequestCount: 0,
+        dailyResetTimestamp: now + 86400000,
+        activeRequests: 0,
+        lastUsedAt: 0,
+        createdAt: now + i,
+      });
+    }
     await db.apiKeys.put({
-      id: 'gemini-key-1',
+      id: 'openrouter-key-1',
+      providerId: 'openrouter',
+      key: 'sk-or-v1-testopenrouterkey12345',
+      label: 'OpenRouter Key #1',
+      modelId: 'nvidia/nemotron-nano-12b-v2-vl:free',
+      rpmLimit: 20,
+      rpdLimit: 1000,
+      status: 'healthy',
+      requestsInWindow: [],
+      dailyRequestCount: 0,
+      dailyResetTimestamp: now + 86400000,
+      activeRequests: 0,
+      lastUsedAt: 0,
+      createdAt: now + 10,
+    });
+    await db.apiKeys.put({
+      id: 'groq-key-1',
+      providerId: 'groq',
+      key: 'gsk_testgroqkey1234567890',
+      label: 'Groq Key #1',
+      modelId: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      rpmLimit: 30,
+      rpdLimit: 1000,
+      status: 'healthy',
+      requestsInWindow: [],
+      dailyRequestCount: 0,
+      dailyResetTimestamp: now + 86400000,
+      activeRequests: 0,
+      lastUsedAt: 0,
+      createdAt: now + 20,
+    });
+    await keyRingScheduler.refreshKeys();
+
+    // 1. Acquire first key (should be Gemini Key 1) and simulate HTTP 503 High Demand
+    const lease1 = await keyRingScheduler.acquireKey();
+    expect(lease1.keyRecord.providerId).toBe('gemini');
+    const err503: any = new Error('This model is currently experiencing high demand. Spikes in demand are usually temporary.');
+    err503.status = 503;
+    await lease1.release(false, err503);
+
+    // 2. Next acquireKey() must immediately cascade past all 3 Gemini keys to the next healthy provider (Groq/OpenRouter)
+    const lease2 = await keyRingScheduler.acquireKey();
+    expect(lease2.keyRecord.providerId).not.toBe('gemini');
+    const secondProvider = lease2.keyRecord.providerId;
+    expect(['groq', 'openrouter']).toContain(secondProvider);
+    const errTimeout: any = new Error('Provider request timed out (20s): signal timed out');
+    errTimeout.status = 408;
+    errTimeout.isTimeout = true;
+    await lease2.release(false, errTimeout);
+
+    // 3. Next acquireKey() must cascade to the remaining healthy backup provider
+    const lease3 = await keyRingScheduler.acquireKey();
+    expect(lease3.keyRecord.providerId).not.toBe('gemini');
+    expect(lease3.keyRecord.providerId).not.toBe(secondProvider);
+    expect(['groq', 'openrouter']).toContain(lease3.keyRecord.providerId);
+    await lease3.release(true);
+  });
+
+  it('KeyRingView renders Provider Tabs and shows only the active provider keys with normal un-hashed keys', async () => {
+    const now = Date.now();
+    await db.apiKeys.put({
+      id: 'gemini-tab-key',
       providerId: 'gemini',
-      key: 'AIzaSyTestKey111111111111111111111',
-      label: 'Gemini Key 1',
+      key: 'AIzaSyNormalReadableGeminiKey999',
+      label: 'My Gemini Key',
       modelId: 'gemini-3.1-flash-lite',
       rpmLimit: 15,
       rpdLimit: 1500,
       status: 'healthy',
       requestsInWindow: [],
       dailyRequestCount: 0,
-      dailyResetTimestamp: Date.now() + 86400000,
+      dailyResetTimestamp: now + 86400000,
       activeRequests: 0,
       lastUsedAt: 0,
-      createdAt: Date.now(),
+      createdAt: now,
+    });
+    await db.apiKeys.put({
+      id: 'groq-tab-key',
+      providerId: 'groq',
+      key: 'gsk_NormalReadableGroqKey888',
+      label: 'My Groq Key',
+      modelId: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      rpmLimit: 30,
+      rpdLimit: 1000,
+      status: 'healthy',
+      requestsInWindow: [],
+      dailyRequestCount: 0,
+      dailyResetTimestamp: now + 86400000,
+      activeRequests: 0,
+      lastUsedAt: 0,
+      createdAt: now + 1,
     });
     await keyRingScheduler.refreshKeys();
 
-    // 1. Simulate HTTP 503 High Demand error
-    const lease1 = await keyRingScheduler.acquireKey('gemini');
-    const err503: any = new Error('This model is currently experiencing high demand. Spikes in demand are usually temporary.');
-    err503.status = 503;
-    await lease1.release(false, err503);
+    render(
+      <LanguageProvider>
+        <KeyRingView />
+      </LanguageProvider>
+    );
 
-    let keys = await keyRingScheduler.refreshKeys();
-    expect(keys[0].status).toBe('cooling_down');
-    expect(keys[0].cooldownUntil).toBeGreaterThan(Date.now());
-    expect(keys[0].lastError).toContain('high demand');
+    // Initially on Google Gemini tab: shows My Gemini Key & plaintext key, does NOT show My Groq Key
+    await waitFor(() => {
+      expect(screen.getByText('My Gemini Key')).toBeTruthy();
+      expect(screen.getByText('AIzaSyNormalReadableGeminiKey999')).toBeTruthy();
+    });
+    expect(screen.queryByText('My Groq Key')).toBeNull();
 
-    // Reset and test signal timed out error
-    await keyRingScheduler.resetAllCooldowns();
-    const lease2 = await keyRingScheduler.acquireKey('gemini');
-    const errTimeout: any = new Error('Gemini request timed out (20s): signal timed out');
-    errTimeout.status = 408;
-    errTimeout.isTimeout = true;
-    await lease2.release(false, errTimeout);
+    // Click Groq tab: shows My Groq Key & plaintext key, hides My Gemini Key
+    const groqTab = screen.getByRole('tab', { name: /Groq/i });
+    fireEvent.click(groqTab);
 
-    keys = await keyRingScheduler.refreshKeys();
-    expect(keys[0].status).toBe('cooling_down');
-    expect(keys[0].cooldownUntil).toBeGreaterThan(Date.now());
-    expect(keys[0].lastError).toContain('timed out');
+    await waitFor(() => {
+      expect(screen.getByText('My Groq Key')).toBeTruthy();
+      expect(screen.getByText('gsk_NormalReadableGroqKey888')).toBeTruthy();
+    });
+    expect(screen.queryByText('My Gemini Key')).toBeNull();
+  });
+
+  it('AI Vector Context Injection injects strict rule and strips photo/camera/photography from EPS vector metadata', () => {
+    const prompt = buildVisionPrompt('vintage_badge_logo.eps', '', 'vector', 'mixed', 'optimal', true);
+    expect(prompt).toContain(
+      "CRITICAL NOTE: The attached image is a rasterized preview of a Vector/EPS illustration. You MUST generate keywords appropriate for vector graphics and illustrations. Do NOT use words like 'photo', 'camera', or 'photography'."
+    );
+
+    const rawAiJson = JSON.stringify({
+      base_title: 'Vintage Badge Logo Stock Photo Isolated on White',
+      detailed_description: 'High quality macro photograph of a vintage badge logo taken with a DSLR camera and bokeh lens.',
+      ranked_keywords: [
+        'vintage', 'badge', 'logo', 'emblem', 'retro', 'shield', 'crest', 'heraldry',
+        'insignia', 'label', 'stamp', 'sticker', 'seal', 'ribbon', 'banner', 'classic',
+        'ornate', 'luxury', 'gold', 'black', 'photo', 'photography', 'camera', 'dslr', 'bokeh'
+      ],
+      category_adobe: 8,
+      category_shutterstock: ['Signs/Symbols', 'Arts'],
+    });
+
+    const parsed = parseAndNormalizeAiMetadata(
+      rawAiJson,
+      'vintage_badge_logo.eps',
+      'data:image/jpeg;base64,xxx',
+      'batch-vec',
+      true,
+      'Midjourney v6',
+      'mixed',
+      'vector'
+    );
+
+    expect(parsed.baseTitle.toLowerCase()).not.toContain('photo');
+    expect(parsed.detailedDescription.toLowerCase()).not.toContain('photograph');
+    expect(parsed.detailedDescription.toLowerCase()).not.toContain('camera');
+    expect(parsed.rankedKeywords).not.toContain('photo');
+    expect(parsed.rankedKeywords).not.toContain('photography');
+    expect(parsed.rankedKeywords).not.toContain('camera');
+    expect(parsed.rankedKeywords).not.toContain('dslr');
+    expect(parsed.rankedKeywords).not.toContain('bokeh');
   });
 
   it('EPS rasterizer releases uncompressed canvas reference from EpsRenderResult after encoding', async () => {
@@ -131,3 +270,4 @@ describe('Emergency Hotfix Suite: Memory GC, 503/Timeout Cooldowns, & Strict Pro
     }
   });
 });
+
