@@ -242,27 +242,17 @@ export const KeyRingView: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={handleToggleRoutingMode}
+          <div
             title={
               language === 'ar'
-                ? 'تغيير نظام التوزيع بين المفاتيح'
-                : 'Switch key rotation strategy'
+                ? 'يتم توزيع الطلبات بالتساوي بين جميع المفاتيح لزيادة السرعة والـ RPM وتفادي قيود الـ Rate Limit، مع التناوب التلقائي.'
+                : 'Requests are balanced evenly across all healthy keys for maximum RPM with automatic failover on rate limits.'
             }
-            className="px-2.5 py-1 rounded-lg bg-secondary hover:bg-secondary/80 border border-border flex items-center gap-1.5 text-xs font-mono cursor-pointer transition"
+            className="px-2.5 py-1 rounded-lg bg-secondary/70 border border-border flex items-center gap-1.5 text-xs font-mono text-muted-foreground select-none"
           >
             <Shuffle className="w-3.5 h-3.5 text-primary" />
-            <span>
-              {routingMode === 'round_robin'
-                ? language === 'ar'
-                  ? 'توزيع بالتساوي (Round-Robin)'
-                  : 'Round-Robin All'
-                : language === 'ar'
-                ? 'تتابع أولوية (Cascade)'
-                : 'Priority Cascade'}
-            </span>
-          </button>
+            <span>{language === 'ar' ? 'توزيع ذكي متوازن' : 'Smart Load-Balanced'}</span>
+          </div>
 
           {hasCoolingKeys && (
             <Button

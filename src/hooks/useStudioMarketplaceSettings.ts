@@ -38,7 +38,14 @@ export function useStudioMarketplaceSettings() {
     return localStorage.getItem('stock_custom_freepik_model') || '';
   });
 
-  const [userCustomPrompt, setUserCustomPrompt] = useState<string>('');
+  const [userCustomPrompt, setUserCustomPromptState] = useState<string>(() => {
+    return localStorage.getItem('stock_context_hint') || '';
+  });
+
+  const setUserCustomPrompt = useCallback((prompt: string) => {
+    setUserCustomPromptState(prompt);
+    localStorage.setItem('stock_context_hint', prompt);
+  }, []);
 
   // Dreamstime options
   const [dtAiGenerated, setDtAiGenerated] = useState<boolean>(() => {

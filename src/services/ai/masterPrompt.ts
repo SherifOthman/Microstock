@@ -272,17 +272,16 @@ export function buildVisionPrompt(
 
     const dimStr = videoWidth && videoHeight ? `${videoWidth}x${videoHeight}` : (videoResolution || 'standard video');
 
-    prompt += '\nCRITICAL MEDIA TYPE: VIDEO FOOTAGE. The input image is a 4-frame chronological storyboard (F1, F2, F3, F4) of a stock video clip. Analyze both visual subject and temporal motion progression. Include video/motion tags (footage, video clip, motion, slow motion, loop, aerial, panning, camera movement). NEVER include photography/static terms (still life, photo, photograph, illustration, picture).';
+    prompt += '\nCRITICAL MEDIA TYPE: VIDEO FOOTAGE. The input image is a 4-frame chronological storyboard (F1, F2, F3, F4) of a stock video clip. Analyze both visual subject and temporal motion progression. Prioritize the core SUBJECT, ACTION, ENVIRONMENT, and CONCEPT in the Top 10 keywords. NEVER waste Top 10 keyword positions on technical words like "video clip", "clip", "footage", or "1080p". Place general video/motion tags in secondary positions (#25-#45). NEVER include photography/static terms (still life, photo, photograph, illustration, picture).';
     prompt += '\nSHUTTERSTOCK VIDEO CATEGORIES: Choose strictly from the 19 valid Shutterstock Video categories (Animals/Wildlife, Arts, Backgrounds/Textures, Buildings/Landmarks, Business/Finance, Education, Food and drink, Healthcare/Medical, Holidays, Industrial, Nature, Objects, People, Religion, Science, Signs/Symbols, Sports/Recreation, Technology, Transportation). DO NOT output Abstract, Beauty/Fashion, Celebrities, Interiors, Miscellaneous, Parks/Outdoor, or Vintage for video.';
 
     if (is4K) {
-      prompt += `\n🎯 CONFIRMED RESOLUTION: 4K ULTRA HD (${dimStr}). This footage is genuine 4K UHD. Confidently include accurate resolution keywords: "4k", "4k footage", "4k video", "uhd", "ultra hd".`;
+      prompt += `\n🎯 CONFIRMED RESOLUTION: 4K ULTRA HD (${dimStr}). This footage is genuine 4K UHD. You may include "4k" in secondary keywords.`;
     } else {
-      const resLabel = is1080p ? '1080p Full HD (FHD)' : is720p ? '720p HD' : dimStr;
+      const resLabel = is1080p ? '1080p Full HD' : is720p ? '720p HD' : dimStr;
       prompt += `\n🚨 CRITICAL RESOLUTION RESTRICTION: This video is strictly ${resLabel} (${dimStr}), NOT 4K or UHD.
 ABSOLUTE RULE: DO NOT output "4k", "4k footage", "4k video", "uhd", "ultra hd", "8k", or "quad hd" in the keywords, title, or description!
-Stock agencies strictly reject submissions with inaccurate resolution tags.
-${is1080p ? 'You may include "1080p", "full hd", "fhd".' : is720p ? 'You may include "720p", "hd".' : ''}`;
+DO NOT spam technical resolution numbers ("1080p", "720p", "fhd") in keywords since stock websites index container resolution automatically. Focus keywords on subject matter and action.`;
     }
   } else if (isVectorAsset) {
     prompt += `\nCRITICAL NOTE: The attached image is a rasterized preview of a Vector/EPS illustration. You MUST generate keywords appropriate for vector graphics and illustrations. Do NOT use words like 'photo', 'camera', or 'photography'.`;

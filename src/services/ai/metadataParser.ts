@@ -326,10 +326,12 @@ export function parseAndNormalizeAiMetadata(
       const forbiddenRegex = /\b(?:4k|8k|uhd|ultra\s*hd|quad\s*hd|2160p|4320p)\b/i;
       finalKeywords = finalKeywords.filter((kw) => !forbiddenRegex.test(kw));
     } else {
-      // For genuine 4K, ensure '4k' is present
+      // For genuine 4K, remove 1080p tags and ensure '4k' is present
+      const forbidden1080pRegex = /\b(?:1080p?|fhd|full\s*hd)\b/i;
+      finalKeywords = finalKeywords.filter((kw) => !forbidden1080pRegex.test(kw));
       const has4k = finalKeywords.some((kw) => /\b4k\b/i.test(kw));
       if (!has4k && finalKeywords.length > 0) {
-        finalKeywords.splice(Math.min(8, finalKeywords.length), 0, '4k');
+        finalKeywords.push('4k');
       }
     }
   } else {
@@ -536,6 +538,19 @@ export function rebalanceTopKeywords(keywords: string[]): string[] {
     'svg',
     'isolated',
     'white background',
+    // Video medium words (keep out of top 10 keywords)
+    'video',
+    'videos',
+    'clip',
+    'clips',
+    'video clip',
+    'footage',
+    'stock footage',
+    'stock video',
+    'motion',
+    '4k',
+    '4k video',
+    '4k footage',
   ]);
 
   const topRootCounts = new Map<string, number>();

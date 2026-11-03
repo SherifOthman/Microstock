@@ -65,8 +65,52 @@ export const StudioView: React.FC<StudioViewProps> = ({ onOpenVideoMuter }) => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
 
+  const [mediaTypeFilter, setMediaTypeFilter] = useState<'all' | 'image' | 'video' | 'vector'>(() => {
+    return (localStorage.getItem('stock_studio_media_filter') as any) || 'all';
+  });
+
   const { unifiedAssets, filteredAssets, completedCount, pendingCount, brandNewPendingCount, failedCount } =
     useUnifiedAssets(queueState, searchQuery, 'all');
+
+  const mediaTypeCounts = useMemo(() => {
+    const counts: Record<'image' | 'video' | 'vector', number> = { image: 0, video: 0, vector: 0 };
+    for (const a of unifiedAssets) {
+      const ext = (a.filename || '').split('.').pop()?.toLowerCase() || '';
+      const rawType = (a as any).queueItem?.mediaType || (a as any).masterRecord?.mediaType;
+      const type: 'image' | 'video' | 'vector' =
+        rawType === 'video' || rawType === 'vector' || rawType === 'image'
+          ? rawType
+          : ['mp4', 'mov', 'webm', 'm4v', 'avi', 'mkv'].includes(ext)
+          ? 'video'
+          : ['eps', 'ai', 'svg'].includes(ext)
+          ? 'vector'
+          : 'image';
+      counts[type] = (counts[type] || 0) + 1;
+    }
+    return counts;
+  }, [unifiedAssets]);
+
+  const distinctMediaTypesCount = useMemo(() => {
+    return [mediaTypeCounts.image > 0, mediaTypeCounts.video > 0, mediaTypeCounts.vector > 0].filter(Boolean).length;
+  }, [mediaTypeCounts]);
+
+  const displayedAssets = useMemo(() => {
+    if (distinctMediaTypesCount <= 1 || mediaTypeFilter === 'all') {
+      return filteredAssets;
+    }
+    return filteredAssets.filter((a: any) => {
+      const ext = (a.filename || '').split('.').pop()?.toLowerCase() || '';
+      const type =
+        a.queueItem?.mediaType ||
+        a.masterRecord?.mediaType ||
+        (['mp4', 'mov', 'webm', 'm4v', 'avi', 'mkv'].includes(ext)
+          ? 'video'
+          : ['eps', 'ai', 'svg'].includes(ext)
+          ? 'vector'
+          : 'image');
+      return type === mediaTypeFilter;
+    });
+  }, [filteredAssets, mediaTypeFilter, distinctMediaTypesCount]);
 
   const records = useMemo(
     () => unifiedAssets.map((a: any) => a.masterRecord).filter(Boolean) as MasterMetadataRecord[],
@@ -271,6 +315,14 @@ export const StudioView: React.FC<StudioViewProps> = ({ onOpenVideoMuter }) => {
           isRunning={isRunning}
           isPaused={isPaused}
           hasHealthyKeys={healthyKeys.length > 0}
+          isResizing={queueState.status === 'resizing'}
+          mediaTypeFilter={mediaTypeFilter}
+          onMediaTypeFilterChange={(f) => {
+            setMediaTypeFilter(f);
+            localStorage.setItem('stock_studio_media_filter', f);
+          }}
+          mediaTypeCounts={mediaTypeCounts}
+          distinctMediaTypesCount={distinctMediaTypesCount}
           onStartQueue={handleStart}
           onPauseQueue={pause}
           onResumeQueue={handleResume}
@@ -298,7 +350,7 @@ export const StudioView: React.FC<StudioViewProps> = ({ onOpenVideoMuter }) => {
         />
 
         <AssetCardList
-          assets={filteredAssets}
+          assets={displayedAssets}
           viewMode={viewMode}
           freepikAiGenerated={settings.freepikAiGenerated}
           dtAiGenerated={settings.dtAiGenerated}

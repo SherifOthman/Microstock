@@ -189,32 +189,31 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
         setVideoObjectUrl(currentAsset.fallbackPreviewUrl);
       }
     } else if (currentAsset.mediaType === 'vector') {
-      if (!currentAsset.fallbackPreviewUrl && currentAsset.file && currentAsset.file.size > 0) {
-        rasterizeEpsFile(currentAsset.file, 1024, 0.85)
+      // EPS Vector: generate crisp 1280px preview for lightbox without artboard lag
+      if (currentAsset.file && currentAsset.file.size > 0) {
+        rasterizeEpsFile(currentAsset.file, 1280, 0.88)
           .then((res) => {
             if (!isCancelled) {
               setDynamicImageUrl(res.dataUrl || res.objectUrl || null);
             }
           })
           .catch(() => {
-            // ignore
+            // ignore fallback gracefully
           });
       }
     } else {
-      // Photo / Image: prefer full-res Blob or stockflow:// local file when fallbackPreviewUrl is missing
-      if (!currentAsset.fallbackPreviewUrl) {
-        if (currentAsset.file && currentAsset.file.size > 0 && typeof URL.createObjectURL === 'function') {
-          try {
-            createdBlobUrl = URL.createObjectURL(currentAsset.file);
-            setDynamicImageUrl(createdBlobUrl);
-          } catch {
-            if (currentAsset.nativePath) {
-              setDynamicImageUrl(`stockflow://local?path=${encodeURIComponent(currentAsset.nativePath)}`);
-            }
+      // Photo / Image: ALWAYS load full native resolution directly from file or disk
+      if (currentAsset.file && currentAsset.file.size > 0 && typeof URL.createObjectURL === 'function') {
+        try {
+          createdBlobUrl = URL.createObjectURL(currentAsset.file);
+          setDynamicImageUrl(createdBlobUrl);
+        } catch {
+          if (currentAsset.nativePath) {
+            setDynamicImageUrl(`stockflow://local?path=${encodeURIComponent(currentAsset.nativePath)}`);
           }
-        } else if (currentAsset.nativePath) {
-          setDynamicImageUrl(`stockflow://local?path=${encodeURIComponent(currentAsset.nativePath)}`);
         }
+      } else if (currentAsset.nativePath) {
+        setDynamicImageUrl(`stockflow://local?path=${encodeURIComponent(currentAsset.nativePath)}`);
       }
     }
 
@@ -270,7 +269,7 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
   const isVideo = currentAsset.mediaType === 'video';
   const isVector = currentAsset.mediaType === 'vector';
   const isAr = typeof document !== 'undefined' && document.documentElement.lang === 'ar';
-  const effectiveImageSrc = currentAsset.fallbackPreviewUrl || dynamicImageUrl || '';
+  const effectiveImageSrc = dynamicImageUrl || currentAsset.fallbackPreviewUrl || '';
 
   return (
     <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col justify-between select-none animate-in fade-in-0 duration-150">
