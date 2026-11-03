@@ -150,4 +150,85 @@ describe('Tier 1 Unit: 6-Way Track Segregation & Vector Pairing', () => {
       expect(result[1].newFilename).toBe('B01_AI_PH_001_another_valid_stock_image.jpg');
     });
   });
+
+  describe('File Cleaner Asset Origin Toggle (Real vs AI) & Batch Continuation', () => {
+    it('routes Real assets into Photos, Videos, Vectors and AI assets into AI_Photos, AI_Videos, AI_Vectors', async () => {
+      const { processFilesForBatchIngest, calculateAllMediaSlots } = await import(
+        '../../src/services/cleaner/fileCleanerEngine'
+      );
+      const { buildRenamedFilesFromCleanedItems } = await import(
+        '../../src/features/cleaner/hooks/useFileCleaner'
+      );
+
+      const sampleFiles = [
+        new File(['img'], 'golden_hour_desert_dunes.jpg', { type: 'image/jpeg' }),
+        new File(['vid'], 'aerial_ocean_waves_4k.mp4', { type: 'video/mp4' }),
+        new File(['vec'], 'minimalist_geometric_logo.eps', { type: 'application/postscript' }),
+      ];
+
+      const slots = calculateAllMediaSlots({}, 100);
+
+      // 1. Real Origin
+      const realItems = processFilesForBatchIngest(
+        sampleFiles,
+        { sortOrder: 'alphabetical', maxItemsPerBatch: 100, assetOrigin: 'real' },
+        slots
+      );
+      expect(realItems.map((i) => i.subFolder).sort()).toEqual(['Photos', 'Vectors', 'Videos']);
+      expect(realItems.every((i) => i.isAiGenerated === false && i.assetOrigin === 'real')).toBe(true);
+
+      // 2. AI Origin
+      const aiItems = processFilesForBatchIngest(
+        sampleFiles,
+        { sortOrder: 'alphabetical', maxItemsPerBatch: 100, assetOrigin: 'ai' },
+        slots
+      );
+      expect(aiItems.map((i) => i.subFolder).sort()).toEqual(['AI_Photos', 'AI_Vectors', 'AI_Videos']);
+      expect(aiItems.every((i) => i.isAiGenerated === true && i.assetOrigin === 'ai')).toBe(true);
+
+      // 3. Handoff to Metadata Studio preserves __isAiGenerated and target path
+      const handoffFiles = buildRenamedFilesFromCleanedItems(aiItems, 'C:/MasterStock');
+      expect(handoffFiles).toHaveLength(3);
+      for (const f of handoffFiles) {
+        expect((f as any).__isAiGenerated).toBe(true);
+        expect((f as any).__assetOrigin).toBe('ai');
+        expect((f as any).__nativePath).toMatch(/^C:\/MasterStock\/AI_(Photos|Videos|Vectors)\/B01\//);
+      }
+    });
+
+    it('strictly continues existing AI_Photos/B01 batch at B01_041 when 40 files exist on disk', async () => {
+      const { processFilesForBatchIngest, calculateAllMediaSlots } = await import(
+        '../../src/services/cleaner/fileCleanerEngine'
+      );
+
+      const slots = calculateAllMediaSlots(
+        {
+          Photos: [{ name: 'B01', number: 1, path: 'C:/Master/Photos/B01', fileCount: 10, highestIndex: 10 }],
+          Videos: [],
+          Vectors: [],
+          AI_Photos: [{ name: 'B01', number: 1, path: 'C:/Master/AI_Photos/B01', fileCount: 40, highestIndex: 40 }],
+          AI_Videos: [],
+          AI_Vectors: [],
+        },
+        100
+      );
+
+      expect(slots.AI_Photos.slotLabel).toBe('B01_041');
+      expect(slots.Photos.slotLabel).toBe('B01_011');
+
+      const newAiPhoto = new File(['ai-img'], 'futuristic_hologram_interface.jpg', { type: 'image/jpeg' });
+      const aiResult = processFilesForBatchIngest(
+        [newAiPhoto],
+        { sortOrder: 'alphabetical', maxItemsPerBatch: 100, assetOrigin: 'ai' },
+        slots
+      );
+
+      expect(aiResult).toHaveLength(1);
+      expect(aiResult[0].subFolder).toBe('AI_Photos');
+      expect(aiResult[0].batchFolder).toBe('B01');
+      expect(aiResult[0].batchIndex).toBe(41);
+      expect(aiResult[0].cleanedName).toBe('B01_041__futuristic_hologram_interface.jpg');
+      expect(aiResult[0].relativePath).toBe('AI_Photos/B01/B01_041__futuristic_hologram_interface.jpg');
+    });
+  });
 });

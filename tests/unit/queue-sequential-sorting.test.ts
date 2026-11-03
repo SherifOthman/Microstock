@@ -90,5 +90,21 @@ describe('Strict Sequential Queue Processing & Sequence Extractor', () => {
       const sorted = sortQueueItemsSequentially(items);
       expect(sorted.map((i) => i.id)).toEqual(['a', 'b']);
     });
+
+    it('strictly preserves top-to-bottom prefix order even when filenames contain arbitrary trailing numbers (never picks from the middle)', () => {
+      const items: QueueItem[] = [
+        { id: '3', filename: '003_mountain_view_5.jpg', status: 'ready', retryCount: 0 },
+        { id: '2', filename: '002_coffee_cup_1.jpg', status: 'ready', retryCount: 0 },
+        { id: '1', filename: '001_forest_scene_2026.jpg', status: 'ready', retryCount: 0 },
+      ];
+
+      const sorted = sortQueueItemsSequentially(items);
+      expect(sorted.map((i) => i.filename)).toEqual([
+        '001_forest_scene_2026.jpg',
+        '002_coffee_cup_1.jpg',
+        '003_mountain_view_5.jpg',
+      ]);
+    });
   });
 });
+

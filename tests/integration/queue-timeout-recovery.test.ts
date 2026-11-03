@@ -260,5 +260,49 @@ describe('Tier 2 Integration: Queue Timeouts, Watchdogs & Recovery States (Batch
         'clip_003.mp4',
       ]);
     });
+
+    it('automatically heals temporarily failed items in the background before completing the batch without user intervention', async () => {
+      const processedEvents: string[] = [];
+      let clip2Attempts = 0;
+
+      vi.spyOn(batchQueueService as any, 'processSingleItem').mockImplementation(async (item: QueueItem) => {
+        processedEvents.push(item.filename);
+        if (item.filename === '002_clip.mp4' && clip2Attempts === 0) {
+          clip2Attempts++;
+          item.status = 'error';
+          item.error = '503 High Demand spike';
+          item.retryCount = 3;
+          item.nextAutoRetryAt = Date.now() + 30;
+          return;
+        }
+        item.status = 'completed';
+        item.error = undefined;
+      });
+
+      const item1: QueueItem = { id: 'id-1', filename: '001_clip.mp4', thumbnailBase64: 'b64', status: 'ready', retryCount: 0, createdAt: 1000 };
+      const item2: QueueItem = { id: 'id-2', filename: '002_clip.mp4', thumbnailBase64: 'b64', status: 'ready', retryCount: 0, createdAt: 2000 };
+      const item3: QueueItem = { id: 'id-3', filename: '003_clip.mp4', thumbnailBase64: 'b64', status: 'ready', retryCount: 0, createdAt: 3000 };
+
+      (batchQueueService as any).items.set('id-1', item1);
+      (batchQueueService as any).items.set('id-2', item2);
+      (batchQueueService as any).items.set('id-3', item3);
+
+      (batchQueueService as any).status = 'running';
+      await (batchQueueService as any).dispatchLoop(false);
+
+      // First pass runs 001 -> 002 (fails) -> 003, then background self-healing automatically retries 002 -> completed!
+      expect(processedEvents).toEqual([
+        '001_clip.mp4',
+        '002_clip.mp4',
+        '003_clip.mp4',
+        '002_clip.mp4',
+      ]);
+      expect(item1.status).toBe('completed');
+      expect(item2.status).toBe('completed');
+      expect(item3.status).toBe('completed');
+      expect(batchQueueService.getState().failedCount).toBe(0);
+      expect(batchQueueService.getState().processedCount).toBe(3);
+    });
   });
 });
+

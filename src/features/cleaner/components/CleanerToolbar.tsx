@@ -8,6 +8,7 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowDownAZ,
+  Camera,
   CheckCircle2,
   Dice5,
   FolderCheck,
@@ -19,6 +20,7 @@ import {
   RefreshCw,
   Shuffle,
   SlidersHorizontal,
+  Sparkles,
   X,
 } from 'lucide-react';
 
@@ -67,11 +69,16 @@ export const CleanerToolbar: React.FC<CleanerToolbarProps> = React.memo(({
   onBulkMoveLowResPhotos,
   onDismissNotification,
 }) => {
+  const isAiOrigin = options.assetOrigin === 'ai';
+  const activePhotosSlot = (isAiOrigin ? mediaSlots?.AI_Photos : mediaSlots?.Photos) || mediaSlots?.Photos;
+  const activeVideosSlot = (isAiOrigin ? mediaSlots?.AI_Videos : mediaSlots?.Videos) || mediaSlots?.Videos;
+  const activeVectorsSlot = (isAiOrigin ? mediaSlots?.AI_Vectors : mediaSlots?.Vectors) || mediaSlots?.Vectors;
+
   return (
     <div className="space-y-3">
-      {/* 1. MASTER DESTINATION DIRECTORY */}
+      {/* 1. MASTER DESTINATION DIRECTORY & ASSET ORIGIN ISOLATION */}
       <div className="p-4 rounded-xl border border-border bg-card space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           <div className="space-y-0.5">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
               <HardDrive className="w-4 h-4 text-primary" />
@@ -84,7 +91,50 @@ export const CleanerToolbar: React.FC<CleanerToolbarProps> = React.memo(({
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Prominent Asset Origin Toggle: Real (أصلي) vs AI (ذكاء اصطناعي) */}
+            <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-secondary/70 border border-border">
+              <span className="text-[11px] font-semibold text-muted-foreground whitespace-nowrap">
+                {language === 'ar' ? 'مصدر الملفات:' : 'Asset Origin:'}
+              </span>
+              <div
+                role="radiogroup"
+                aria-label={language === 'ar' ? 'مصدر الملفات' : 'Asset Origin'}
+                className="inline-flex items-center rounded-md bg-background p-0.5 border border-border gap-0.5"
+              >
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={!isAiOrigin}
+                  disabled={isProcessing}
+                  onClick={() => setOptions((prev) => ({ ...prev, assetOrigin: 'real' }))}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold transition cursor-pointer ${
+                    !isAiOrigin
+                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/40 shadow-2xs'
+                      : 'text-muted-foreground hover:text-foreground border border-transparent'
+                  }`}
+                >
+                  <Camera className="w-3.5 h-3.5 shrink-0" />
+                  <span>{language === 'ar' ? 'أصلي' : 'Real'}</span>
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={isAiOrigin}
+                  disabled={isProcessing}
+                  onClick={() => setOptions((prev) => ({ ...prev, assetOrigin: 'ai' }))}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold transition cursor-pointer ${
+                    isAiOrigin
+                      ? 'bg-violet-500/15 text-violet-600 dark:text-violet-400 border border-violet-500/40 shadow-2xs'
+                      : 'text-muted-foreground hover:text-foreground border border-transparent'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                  <span>{language === 'ar' ? 'ذكاء اصطناعي' : 'AI'}</span>
+                </button>
+              </div>
+            </div>
+
             <Button
               size="sm"
               onClick={onSelectMasterDirectory}
@@ -121,9 +171,24 @@ export const CleanerToolbar: React.FC<CleanerToolbarProps> = React.memo(({
 
         {masterDirectory ? (
           <div className="p-3 rounded-lg bg-secondary/60 border border-border text-xs space-y-2">
-            <div dir="ltr" className="flex items-center gap-2 font-mono text-[11px] text-foreground truncate text-start">
-              <FolderCheck className="w-3.5 h-3.5 text-primary shrink-0" />
-              <span className="truncate">{masterDirectory}</span>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div dir="ltr" className="flex items-center gap-2 font-mono text-[11px] text-foreground truncate text-start">
+                <FolderCheck className="w-3.5 h-3.5 text-primary shrink-0" />
+                <span className="truncate">{masterDirectory}</span>
+              </div>
+
+              <span
+                dir="ltr"
+                className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold border ${
+                  isAiOrigin
+                    ? 'bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/30'
+                    : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                }`}
+              >
+                {isAiOrigin
+                  ? 'AI_Photos · AI_Videos · AI_Vectors'
+                  : 'Photos · Videos · Vectors'}
+              </span>
             </div>
 
             <div className="flex flex-wrap items-center gap-3 pt-1.5 border-t border-border text-[11px] font-mono tabular-nums text-muted-foreground">
@@ -142,35 +207,49 @@ export const CleanerToolbar: React.FC<CleanerToolbarProps> = React.memo(({
                 )}
               </span>
               <span>·</span>
-              <Tooltip content={mediaSlots.Photos.statusDescription}>
+              <Tooltip content={activePhotosSlot?.statusDescription}>
                 <span>
-                  {language === 'ar' ? 'الصور:' : 'Photos:'}{' '}
-                  <strong dir="ltr" className="text-foreground">{mediaSlots.Photos.slotLabel}</strong>
+                  <span dir="ltr">{isAiOrigin ? 'AI_Photos:' : 'Photos:'}</span>{' '}
+                  <strong dir="ltr" className="text-foreground">{activePhotosSlot?.slotLabel || 'B01_001'}</strong>
                 </span>
               </Tooltip>
               <span>·</span>
-              <Tooltip content={mediaSlots.Videos.statusDescription}>
+              <Tooltip content={activeVideosSlot?.statusDescription}>
                 <span>
-                  {language === 'ar' ? 'الفيديوهات:' : 'Videos:'}{' '}
-                  <strong dir="ltr" className="text-foreground">{mediaSlots.Videos.slotLabel}</strong>
+                  <span dir="ltr">{isAiOrigin ? 'AI_Videos:' : 'Videos:'}</span>{' '}
+                  <strong dir="ltr" className="text-foreground">{activeVideosSlot?.slotLabel || 'B01_001'}</strong>
                 </span>
               </Tooltip>
               <span>·</span>
-              <Tooltip content={mediaSlots.Vectors.statusDescription}>
+              <Tooltip content={activeVectorsSlot?.statusDescription}>
                 <span>
-                  {language === 'ar' ? 'المتجهات:' : 'Vectors:'}{' '}
-                  <strong dir="ltr" className="text-foreground">{mediaSlots.Vectors.slotLabel}</strong>
+                  <span dir="ltr">{isAiOrigin ? 'AI_Vectors:' : 'Vectors:'}</span>{' '}
+                  <strong dir="ltr" className="text-foreground">{activeVectorsSlot?.slotLabel || 'B01_001'}</strong>
                 </span>
               </Tooltip>
             </div>
           </div>
         ) : (
-          <div className="p-3 rounded-lg bg-secondary/50 border border-border text-muted-foreground text-xs flex items-center gap-2">
-            <FolderSync className="w-4 h-4 text-primary shrink-0" />
-            <span>
-              {language === 'ar'
-                ? 'حدد مجلد الوجهة الرئيسي أولاً لتفعيل الترقيم التلقائي واستكمال الـ Batch.'
-                : 'Select a Master Destination Directory to enable automatic batch numbering and resume detection.'}
+          <div className="p-3 rounded-lg bg-secondary/50 border border-border text-muted-foreground text-xs flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <FolderSync className="w-4 h-4 text-primary shrink-0" />
+              <span>
+                {language === 'ar'
+                  ? 'حدد مجلد الوجهة الرئيسي أولاً لتفعيل الترقيم التلقائي واستكمال الـ Batch.'
+                  : 'Select a Master Destination Directory to enable automatic batch numbering and resume detection.'}
+              </span>
+            </div>
+            <span
+              dir="ltr"
+              className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold border ${
+                isAiOrigin
+                  ? 'bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/30'
+                  : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+              }`}
+            >
+              {isAiOrigin
+                ? 'AI_Photos · AI_Videos · AI_Vectors'
+                : 'Photos · Videos · Vectors'}
             </span>
           </div>
         )}

@@ -17,6 +17,16 @@ export interface MediaResolutionValidation {
   message?: string;
 }
 
+export type AssetOrigin = 'real' | 'ai';
+
+export type SubFolderTrack =
+  | 'Photos'
+  | 'Videos'
+  | 'Vectors'
+  | 'AI_Photos'
+  | 'AI_Videos'
+  | 'AI_Vectors';
+
 export interface CleanedFileItem {
   id: string;
   file: File;
@@ -30,8 +40,10 @@ export interface CleanedFileItem {
   thumbnailUrl?: string;
   batchFolder: string; // e.g. "B01"
   batchIndex: number; // e.g. 1
-  subFolder: 'Photos' | 'Videos' | 'Vectors';
-  relativePath: string; // e.g. "B01/Photos/B01_001.jpg"
+  subFolder: SubFolderTrack;
+  assetOrigin?: AssetOrigin;
+  isAiGenerated?: boolean;
+  relativePath: string; // e.g. "Photos/B01/B01_001.jpg" or "AI_Photos/B01/B01_001.jpg"
   validation?: MediaResolutionValidation;
   nativePath?: string;
   fuzzyKey: string;
@@ -44,11 +56,13 @@ export type SortOrderOption = 'shuffle' | 'alphabetical';
 export interface CleanerOptions {
   sortOrder: SortOrderOption;
   maxItemsPerBatch: number;
+  assetOrigin?: AssetOrigin;
 }
 
 export const DEFAULT_CLEANER_OPTIONS: CleanerOptions = {
   sortOrder: 'shuffle', // Default Shuffle (Random Mix)
   maxItemsPerBatch: 100,
+  assetOrigin: 'real',
 };
 
 export interface ExistingBatchInfo {
@@ -71,17 +85,21 @@ export interface BatchSlotCalculation {
 }
 
 /**
- * Determines sub-folder category based on file extension
+ * Determines sub-folder track based on file extension and AssetOrigin ('real' vs 'ai')
  */
-export function getSubFolderForExtension(filename: string): 'Photos' | 'Videos' | 'Vectors' {
+export function getSubFolderForExtension(
+  filename: string,
+  assetOrigin: AssetOrigin = 'real'
+): SubFolderTrack {
   const ext = filename.split('.').pop()?.toLowerCase() || '';
-  if (['mp4', 'mov', 'm4v'].includes(ext)) {
-    return 'Videos';
+  const isAi = assetOrigin === 'ai';
+  if (['mp4', 'mov', 'm4v', 'webm', 'avi', 'mkv'].includes(ext)) {
+    return isAi ? 'AI_Videos' : 'Videos';
   }
-  if (['eps', 'ai'].includes(ext)) {
-    return 'Vectors';
+  if (['eps', 'ai', 'svg'].includes(ext)) {
+    return isAi ? 'AI_Vectors' : 'Vectors';
   }
-  return 'Photos'; // jpg, jpeg, png, etc.
+  return isAi ? 'AI_Photos' : 'Photos'; // jpg, jpeg, png, etc.
 }
 
 /**
@@ -375,22 +393,28 @@ function buildPhotoValidationResult(width: number, height: number): MediaResolut
   });
 }
 
-export type MediaType = 'Photos' | 'Videos' | 'Vectors';
+export type MediaType = SubFolderTrack;
 
 export interface MediaBatchesMap {
   Photos: ExistingBatchInfo[];
   Videos: ExistingBatchInfo[];
   Vectors: ExistingBatchInfo[];
+  AI_Photos?: ExistingBatchInfo[];
+  AI_Videos?: ExistingBatchInfo[];
+  AI_Vectors?: ExistingBatchInfo[];
 }
 
 export interface MediaSlotsMap {
   Photos: BatchSlotCalculation;
   Videos: BatchSlotCalculation;
   Vectors: BatchSlotCalculation;
+  AI_Photos: BatchSlotCalculation;
+  AI_Videos: BatchSlotCalculation;
+  AI_Vectors: BatchSlotCalculation;
 }
 
 /**
- * Calculates next available slots across all media types independently
+ * Calculates next available slots across all 6 Real & AI media tracks independently
  */
 export function calculateAllMediaSlots(
   mediaBatches: Partial<MediaBatchesMap> = {},
@@ -400,6 +424,9 @@ export function calculateAllMediaSlots(
     Photos: calculateNextAvailableSlot(mediaBatches.Photos || [], maxItemsPerBatch),
     Videos: calculateNextAvailableSlot(mediaBatches.Videos || [], maxItemsPerBatch),
     Vectors: calculateNextAvailableSlot(mediaBatches.Vectors || [], maxItemsPerBatch),
+    AI_Photos: calculateNextAvailableSlot(mediaBatches.AI_Photos || [], maxItemsPerBatch),
+    AI_Videos: calculateNextAvailableSlot(mediaBatches.AI_Videos || [], maxItemsPerBatch),
+    AI_Vectors: calculateNextAvailableSlot(mediaBatches.AI_Vectors || [], maxItemsPerBatch),
   };
 }
 
@@ -658,55 +685,69 @@ export function processFilesForBatchIngest(
     orderedFiles = shuffleArray(files, shuffleSeed);
   }
 
-  // Normalize initialSlots to MediaSlotsMap
+  // Normalize initialSlots to full 6-track MediaSlotsMap
+  const defaultFreshSlot: BatchSlotCalculation = {
+    startBatchNumber: 1,
+    startBatchFolder: 'B01',
+    startItemIndex: 1,
+    itemsRemainingInStartBatch: options.maxItemsPerBatch,
+    slotLabel: 'B01_001',
+    statusDescription: 'New Batch',
+    isContinuingExisting: false,
+  };
+
   let mediaSlots: MediaSlotsMap;
   if (initialSlotsInput && 'Photos' in initialSlotsInput) {
-    mediaSlots = initialSlotsInput as MediaSlotsMap;
-  } else {
-    const fallbackSlot = (initialSlotsInput as BatchSlotCalculation) || {
-      startBatchNumber: 1,
-      startBatchFolder: 'B01',
-      startItemIndex: 1,
-      itemsRemainingInStartBatch: options.maxItemsPerBatch,
-      slotLabel: 'B01_001',
-      statusDescription: 'New Batch',
-      isContinuingExisting: false,
+    const partial = initialSlotsInput as Partial<MediaSlotsMap>;
+    mediaSlots = {
+      Photos: partial.Photos || defaultFreshSlot,
+      Videos: partial.Videos || defaultFreshSlot,
+      Vectors: partial.Vectors || defaultFreshSlot,
+      AI_Photos: partial.AI_Photos || defaultFreshSlot,
+      AI_Videos: partial.AI_Videos || defaultFreshSlot,
+      AI_Vectors: partial.AI_Vectors || defaultFreshSlot,
     };
+  } else {
+    const fallbackSlot = (initialSlotsInput as BatchSlotCalculation) || defaultFreshSlot;
     mediaSlots = {
       Photos: fallbackSlot,
       Videos: fallbackSlot,
       Vectors: fallbackSlot,
+      AI_Photos: fallbackSlot,
+      AI_Videos: fallbackSlot,
+      AI_Vectors: fallbackSlot,
     };
   }
 
-  // Maintain independent tracker per media type
-  const trackers: Record<MediaType, {
+  const assetOrigin: AssetOrigin = options.assetOrigin === 'ai' ? 'ai' : 'real';
+  const isAiGenerated = assetOrigin === 'ai';
+
+  // Helper to build tracker state from a slot calculation
+  const makeTracker = (slot: BatchSlotCalculation) => ({
+    currentBatchNum: slot.startBatchNumber,
+    currentItemIdx: slot.startItemIndex,
+    itemsInCurrentBatch: Math.max(0, options.maxItemsPerBatch - slot.itemsRemainingInStartBatch),
+  });
+
+  // Maintain independent tracker per 6-way track (Real vs AI x Photo/Video/Vector)
+  const trackers: Record<SubFolderTrack, {
     currentBatchNum: number;
     currentItemIdx: number;
     itemsInCurrentBatch: number;
   }> = {
-    Photos: {
-      currentBatchNum: mediaSlots.Photos.startBatchNumber,
-      currentItemIdx: mediaSlots.Photos.startItemIndex,
-      itemsInCurrentBatch: Math.max(0, options.maxItemsPerBatch - mediaSlots.Photos.itemsRemainingInStartBatch),
-    },
-    Videos: {
-      currentBatchNum: mediaSlots.Videos.startBatchNumber,
-      currentItemIdx: mediaSlots.Videos.startItemIndex,
-      itemsInCurrentBatch: Math.max(0, options.maxItemsPerBatch - mediaSlots.Videos.itemsRemainingInStartBatch),
-    },
-    Vectors: {
-      currentBatchNum: mediaSlots.Vectors.startBatchNumber,
-      currentItemIdx: mediaSlots.Vectors.startItemIndex,
-      itemsInCurrentBatch: Math.max(0, options.maxItemsPerBatch - mediaSlots.Vectors.itemsRemainingInStartBatch),
-    },
+    Photos: makeTracker(mediaSlots.Photos),
+    Videos: makeTracker(mediaSlots.Videos),
+    Vectors: makeTracker(mediaSlots.Vectors),
+    AI_Photos: makeTracker(mediaSlots.AI_Photos),
+    AI_Videos: makeTracker(mediaSlots.AI_Videos),
+    AI_Vectors: makeTracker(mediaSlots.AI_Vectors),
   };
 
   return orderedFiles.map((file, idx) => {
-    const subFolder = getSubFolderForExtension(file.name);
+    const subFolder = getSubFolderForExtension(file.name, assetOrigin);
     const tracker = trackers[subFolder];
 
-    // Auto-split rollover when reaching batch size limit for this media type
+    // Auto-split rollover when reaching batch size limit for this media track
     if (tracker.itemsInCurrentBatch >= options.maxItemsPerBatch) {
       tracker.currentBatchNum++;
       tracker.currentItemIdx = 1;
@@ -721,7 +762,7 @@ export function processFilesForBatchIngest(
     // Hybrid Sequential Naming: [BATCH]_[SEQUENCE]__[CLEANED_ORIGINAL_NAME].ext
     const targetFilename = `${batchFolder}_${indexStr}__${cleanedOriginal}.${ext}`;
 
-    // Flipped Media-First Hierarchy: Master / [Media Type] / [Batch] / [Filename]
+    // 6-Track Media-First Hierarchy: Master / [Photos | AI_Photos | ...] / [Batch] / [Filename]
     const relativePath = `${subFolder}/${batchFolder}/${targetFilename}`;
 
     const fuzzyKey = getFuzzyNormalizedBaseName(file.name);
@@ -745,6 +786,8 @@ export function processFilesForBatchIngest(
       batchFolder,
       batchIndex: tracker.currentItemIdx - 1,
       subFolder,
+      assetOrigin,
+      isAiGenerated,
       relativePath,
       fuzzyKey,
       isDuplicate,

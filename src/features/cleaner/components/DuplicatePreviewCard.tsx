@@ -43,8 +43,8 @@ export const DuplicatePreviewCard: React.FC<DuplicatePreviewCardProps> = React.m
     };
   }, [item.file, item.nativePath]);
 
-  const isVideo = item.subFolder === 'Videos';
-  const isImage = item.subFolder === 'Photos';
+  const isVideo = item.subFolder === 'Videos' || item.subFolder === 'AI_Videos';
+  const isImage = item.subFolder === 'Photos' || item.subFolder === 'AI_Photos';
 
   return (
     <div className="flex flex-col border border-border bg-card rounded-xl p-3 space-y-2.5">

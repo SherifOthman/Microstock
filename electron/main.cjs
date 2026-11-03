@@ -686,8 +686,8 @@ function setupIpcHandlers() {
             let lastFileName = '';
 
             for (const f of files) {
-              // Match patterns like B01_001__name.jpg, B03_010.jpg, 010_...
-              const numMatch = f.match(/(?:^B\d+[-_](\d+)|[-_](\d+)\.[^.]+$|^(\d+)[-_])/i);
+              // Match patterns like B01_001__name.jpg, B01_AI_PH_040_name.jpg, B03_010.jpg, 010_...
+              const numMatch = f.match(/(?:^B\d+[-_](?:(?:AI|NT)[-_][A-Z]{2}[-_])?(\d+)|[-_](\d+)\.[^.]+$|^(\d+)[-_])/i);
               if (numMatch) {
                 const parsed = parseInt(numMatch[1] || numMatch[2] || numMatch[3], 10);
                 if (!isNaN(parsed) && parsed > highestIndex && parsed < 100000) {
@@ -716,11 +716,14 @@ function setupIpcHandlers() {
         return batches.sort((a, b) => a.number - b.number);
       };
 
-      // 1. Scan Media-First Hierarchies: Master/Photos, Master/Videos, Master/Vectors
+      // 1. Scan 6-Track Media-First Hierarchies: Real (Photos, Videos, Vectors) & AI (AI_Photos, AI_Videos, AI_Vectors)
       const mediaBatches = {
         Photos: scanBatchesInDir(path.join(masterPath, 'Photos')),
         Videos: scanBatchesInDir(path.join(masterPath, 'Videos')),
         Vectors: scanBatchesInDir(path.join(masterPath, 'Vectors')),
+        AI_Photos: scanBatchesInDir(path.join(masterPath, 'AI_Photos')),
+        AI_Videos: scanBatchesInDir(path.join(masterPath, 'AI_Videos')),
+        AI_Vectors: scanBatchesInDir(path.join(masterPath, 'AI_Vectors')),
       };
 
       // 2. Also scan Root Master for legacy B01, B02 batches if any
@@ -731,6 +734,9 @@ function setupIpcHandlers() {
         ...mediaBatches.Photos,
         ...mediaBatches.Videos,
         ...mediaBatches.Vectors,
+        ...mediaBatches.AI_Photos,
+        ...mediaBatches.AI_Videos,
+        ...mediaBatches.AI_Vectors,
         ...rootBatches,
       ];
       const latestBatch = allBatches.length > 0 ? allBatches.sort((a, b) => b.number - a.number)[0] : null;
@@ -739,7 +745,7 @@ function setupIpcHandlers() {
         success: true,
         masterPath,
         mediaBatches,
-        batches: rootBatches.length > 0 ? rootBatches : mediaBatches.Photos,
+        batches: rootBatches.length > 0 ? rootBatches : allBatches,
         latestBatch,
       };
     } catch (err) {

@@ -426,7 +426,7 @@ export function App() {
               />
             </div>
             <div className={activeTab === 'studio' ? 'flex-1 min-h-0 h-full px-3 sm:px-4 py-3 overflow-hidden flex flex-col' : 'hidden'}>
-              <StudioView />
+              <StudioView onOpenVideoMuter={() => handleTabChange('muter')} />
             </div>
             <div className={activeTab === 'cleaner' ? 'flex-1 min-h-0 h-full px-4 sm:px-6 py-4 overflow-hidden flex flex-col' : 'hidden'}>
               <FileCleanerView

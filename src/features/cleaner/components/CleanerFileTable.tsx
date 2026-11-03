@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { CleanedFileItem } from '../../../services/cleaner/fileCleanerEngine';
+import { CleanedFileItem, SubFolderTrack } from '../../../services/cleaner/fileCleanerEngine';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Tooltip } from '../../../components/ui/tooltip';
@@ -33,7 +33,7 @@ export interface CleanerFileTableProps {
   cleanedItems: CleanedFileItem[];
   filteredItems: CleanedFileItem[];
   mediaBatches: any;
-  batchDistribution: { folder: string; subFolder: 'Photos' | 'Videos' | 'Vectors'; total: number; isNew: boolean }[];
+  batchDistribution: { folder: string; subFolder: SubFolderTrack; total: number; isNew: boolean }[];
   searchFilter: string;
   setSearchFilter: (q: string) => void;
   isProcessing: boolean;
@@ -148,15 +148,22 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
             <span>{language === 'ar' ? 'توزيع الـ Batch:' : 'Batch Allocation:'}</span>
           </span>
 
-          {batchDistribution.map((b) => (
-            <span
-              key={`${b.subFolder}-${b.folder}`}
-              dir="ltr"
-              className="px-2 py-0.5 rounded bg-secondary border border-border text-[11px] font-mono tabular-nums text-foreground"
-            >
-              <strong>{b.subFolder}/{b.folder}:</strong> {b.total}
-            </span>
-          ))}
+          {batchDistribution.map((b) => {
+            const isAiTrack = b.subFolder.startsWith('AI_');
+            return (
+              <span
+                key={`${b.subFolder}-${b.folder}`}
+                dir="ltr"
+                className={`px-2 py-0.5 rounded border text-[11px] font-mono tabular-nums ${
+                  isAiTrack
+                    ? 'bg-violet-500/10 border-violet-500/30 text-violet-600 dark:text-violet-400'
+                    : 'bg-secondary border-border text-foreground'
+                }`}
+              >
+                <strong>{b.subFolder}/{b.folder}:</strong> {b.total}
+              </span>
+            );
+          })}
 
           <span className="text-muted-foreground font-mono tabular-nums text-[11px]">
             ({cleanedItems.length} {language === 'ar' ? 'إجمالي' : 'total'})
@@ -310,14 +317,9 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
               {rowsToRender.map(({ item, idx }) => {
                 if (!item) return null;
                 const val = item.validation;
-                const localizedSubFolder =
-                  language === 'ar'
-                    ? item.subFolder === 'Photos'
-                      ? 'صور'
-                      : item.subFolder === 'Videos'
-                      ? 'فيديو'
-                      : 'متجهات'
-                    : item.subFolder;
+                const isAiTrack = item.subFolder.startsWith('AI_');
+                const isPhoto = item.subFolder === 'Photos' || item.subFolder === 'AI_Photos';
+                const isVideo = item.subFolder === 'Videos' || item.subFolder === 'AI_Videos';
 
                 return (
                   <tr
@@ -338,15 +340,20 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
                       <div className="flex items-center gap-1.5 font-mono text-[11px]">
                         <span dir="ltr" className="font-semibold text-foreground">{item.batchFolder}</span>
                         <span className="text-muted-foreground">·</span>
-                        <span className="inline-flex items-center gap-1 text-muted-foreground">
-                          {item.subFolder === 'Photos' ? (
-                            <ImageIcon className="w-3 h-3 text-primary" />
-                          ) : item.subFolder === 'Videos' ? (
-                            <Film className="w-3 h-3 text-primary" />
+                        <span
+                          dir="ltr"
+                          className={`inline-flex items-center gap-1 ${
+                            isAiTrack ? 'text-violet-600 dark:text-violet-400 font-semibold' : 'text-muted-foreground'
+                          }`}
+                        >
+                          {isPhoto ? (
+                            <ImageIcon className={`w-3 h-3 ${isAiTrack ? 'text-violet-500' : 'text-primary'}`} />
+                          ) : isVideo ? (
+                            <Film className={`w-3 h-3 ${isAiTrack ? 'text-violet-500' : 'text-primary'}`} />
                           ) : (
-                            <PenTool className="w-3 h-3 text-primary" />
+                            <PenTool className={`w-3 h-3 ${isAiTrack ? 'text-violet-500' : 'text-primary'}`} />
                           )}
-                          <span>{localizedSubFolder}</span>
+                          <span>{item.subFolder}</span>
                         </span>
                       </div>
                     </td>

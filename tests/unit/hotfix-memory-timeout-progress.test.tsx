@@ -10,12 +10,57 @@ import { rasterizeEpsBufferDirect } from '../../src/services/eps/epsWorkerCore';
 import { buildVisionPrompt } from '../../src/services/ai/masterPrompt';
 import { parseAndNormalizeAiMetadata } from '../../src/services/ai/metadataParser';
 import { KeyRingView } from '../../src/features/keyring/components/KeyRingView';
+import { AssetCard } from '../../src/features/studio/components/AssetCard';
 import { LanguageProvider } from '../../src/context/LanguageContext';
 
 describe('Emergency Hotfix & Final UX Cleanup Suite', () => {
   beforeEach(async () => {
     await db.apiKeys.clear();
     await keyRingScheduler.refreshKeys();
+  });
+
+  it('AssetCard displays a "Has Audio!" warning badge when a video in Metadata Studio still contains an audio track', () => {
+    render(
+      <LanguageProvider>
+        <AssetCard
+          asset={{
+            id: 'vid-audio-1',
+            filename: 'B01_001__drone_flight.mp4',
+            status: 'completed',
+            createdAt: Date.now(),
+            queueItem: {
+              id: 'vid-audio-1',
+              filename: 'B01_001__drone_flight.mp4',
+              mediaType: 'video',
+              hasAudio: true,
+              status: 'completed',
+              retryCount: 0,
+            },
+          }}
+          rec={{
+            id: 'vid-audio-1',
+            batchId: 'b1',
+            filename: 'B01_001__drone_flight.mp4',
+            thumbnailBase64: '',
+            mediaType: 'video',
+            videoMeta: { hasAudio: true, resolution: '4K UHD' },
+            isAiGenerated: false,
+            baseTitle: 'Aerial Drone Flight Over Mountains',
+            detailedDescription: 'Smooth 4K aerial drone flight over rocky mountain peaks at sunrise.',
+            rankedKeywords: ['drone', 'aerial', 'mountains'],
+            status: 'completed',
+            createdAt: Date.now(),
+          }}
+          copiedKey={null}
+          onCopyText={() => {}}
+          onCopyAll={() => {}}
+          onDelete={() => {}}
+          onRegenerate={() => {}}
+        />
+      </LanguageProvider>
+    );
+
+    expect(screen.getByText('Has Audio!')).toBeTruthy();
   });
 
   it('Progress Bar strictly reflects (successful_items / total_items) * 100 and halts at 80% when 20 of 100 fail', () => {

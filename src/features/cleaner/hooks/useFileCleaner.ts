@@ -1,16 +1,27 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
+  AssetOrigin,
   CleanedFileItem,
   CleanerOptions,
   DEFAULT_CLEANER_OPTIONS,
   ExistingBatchInfo,
   MediaResolutionValidation,
   MediaBatchesMap,
+  SubFolderTrack,
   calculateAllMediaSlots,
   processFilesForBatchIngest,
   saveBatchFilesToMasterDirectory,
   validateMediaDimensions,
 } from '../../../services/cleaner/fileCleanerEngine';
+
+const EMPTY_MEDIA_BATCHES: MediaBatchesMap = {
+  Photos: [],
+  Videos: [],
+  Vectors: [],
+  AI_Photos: [],
+  AI_Videos: [],
+  AI_Vectors: [],
+};
 
 export function buildRenamedFilesFromCleanedItems(items: CleanedFileItem[], masterDir?: string): File[] {
   return items
@@ -21,13 +32,27 @@ export function buildRenamedFilesFromCleanedItems(items: CleanedFileItem[], mast
         type: item.file.type,
         lastModified: item.file.lastModified || Date.now(),
       });
-      if (item.subFolder === 'Vectors') {
+      if (item.subFolder === 'Vectors' || item.subFolder === 'AI_Vectors') {
         Object.defineProperty(renamedFile, '__sourceMediaType', {
           value: 'vector',
           enumerable: false,
           configurable: true,
         });
       }
+      const isAi = Boolean(
+        item.isAiGenerated || item.assetOrigin === 'ai' || item.subFolder.startsWith('AI_')
+      );
+      const origin: AssetOrigin = isAi ? 'ai' : 'real';
+      Object.defineProperty(renamedFile, '__isAiGenerated', {
+        value: isAi,
+        enumerable: false,
+        configurable: true,
+      });
+      Object.defineProperty(renamedFile, '__assetOrigin', {
+        value: origin,
+        enumerable: false,
+        configurable: true,
+      });
       const resolvedPath = masterDir
         ? `${masterDir.replace(/[\\/]+$/, '')}/${item.subFolder}/${item.batchFolder}/${finalName}`
         : item.nativePath || (item.file as any).__nativePath || (item.file as any).path || '';
@@ -47,11 +72,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
   const [masterDirectory, setMasterDirectory] = useState<string>(() => {
     return localStorage.getItem('stock_cleaner_master_dir') || '';
   });
-  const [mediaBatches, setMediaBatches] = useState<MediaBatchesMap>({
-    Photos: [],
-    Videos: [],
-    Vectors: [],
-  });
+  const [mediaBatches, setMediaBatches] = useState<MediaBatchesMap>(EMPTY_MEDIA_BATCHES);
   const [existingBatches, setExistingBatches] = useState<ExistingBatchInfo[]>([]);
   const [isScanningDisk, setIsScanningDisk] = useState(false);
 
@@ -60,7 +81,25 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
   const [lastProcessedFiles, setLastProcessedFiles] = useState<File[]>([]);
   const [isBatchSaved, setIsBatchSaved] = useState(false);
   const [nativePaths, setNativePaths] = useState<Record<string, string>>({});
-  const [options, setOptions] = useState<CleanerOptions>(DEFAULT_CLEANER_OPTIONS);
+  const [options, setOptionsState] = useState<CleanerOptions>(() => {
+    const savedOrigin = localStorage.getItem('stock_cleaner_asset_origin');
+    const assetOrigin: AssetOrigin = savedOrigin === 'ai' ? 'ai' : 'real';
+    return {
+      ...DEFAULT_CLEANER_OPTIONS,
+      assetOrigin,
+    };
+  });
+
+  const setOptions: React.Dispatch<React.SetStateAction<CleanerOptions>> = useCallback((updater) => {
+    setOptionsState((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      if (next.assetOrigin && next.assetOrigin !== prev.assetOrigin) {
+        localStorage.setItem('stock_cleaner_asset_origin', next.assetOrigin);
+        setIsBatchSaved(false);
+      }
+      return next;
+    });
+  }, []);
   const [shuffleSeed, setShuffleSeed] = useState(1);
   const [searchFilter, setSearchFilter] = useState('');
   const [manualOverrides, setManualOverrides] = useState<Record<string, string>>({});
@@ -102,18 +141,21 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
       const res = await window.electronAPI.scanMasterDirectory(dirPath);
       if (res.success) {
         if (res.mediaBatches) {
-          setMediaBatches(res.mediaBatches);
+          setMediaBatches({
+            ...EMPTY_MEDIA_BATCHES,
+            ...res.mediaBatches,
+          });
         }
         if (res.batches) {
           setExistingBatches(res.batches);
         }
       } else {
-        setMediaBatches({ Photos: [], Videos: [], Vectors: [] });
+        setMediaBatches(EMPTY_MEDIA_BATCHES);
         setExistingBatches([]);
       }
     } catch (err) {
       console.error('[FileCleaner] Failed to scan master directory:', err);
-      setMediaBatches({ Photos: [], Videos: [], Vectors: [] });
+      setMediaBatches(EMPTY_MEDIA_BATCHES);
       setExistingBatches([]);
     } finally {
       setIsScanningDisk(false);
@@ -290,7 +332,9 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
   // Non-upscaled photos that require upscaling to 4K+ (width < 3000 || height < 3000)
   const lowResPhotos = useMemo(() => {
     return cleanedItems.filter(
-      (i) => i.subFolder === 'Photos' && i.validation?.warningType === 'photo_low_resolution'
+      (i) =>
+        (i.subFolder === 'Photos' || i.subFolder === 'AI_Photos') &&
+        i.validation?.warningType === 'photo_low_resolution'
     );
   }, [cleanedItems]);
 
@@ -309,9 +353,9 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
     return cleanedItems.filter((i) => i.fuzzyKey === activeDuplicateKey);
   }, [cleanedItems, activeDuplicateKey]);
 
-  // Calculate batch distribution summary grouped by Media Type and Batch Folder
+  // Calculate batch distribution summary grouped by Media Track and Batch Folder
   const batchDistribution = useMemo(() => {
-    const counts = new Map<string, { folder: string; subFolder: 'Photos' | 'Videos' | 'Vectors'; total: number; isNew: boolean }>();
+    const counts = new Map<string, { folder: string; subFolder: SubFolderTrack; total: number; isNew: boolean }>();
     for (const item of cleanedItems) {
       const key = `${item.subFolder}/${item.batchFolder}`;
       const existing = counts.get(key) || {
@@ -386,10 +430,11 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
     });
   }, [masterDirectory, language]);
 
-  // Bulk-move all non-upscaled photos to _Needs_Fixing/Photos in one click
+  // Bulk-move all non-upscaled photos to _Needs_Fixing/[Photos | AI_Photos] in one click
   const handleBulkMoveLowResPhotos = useCallback(async () => {
     if (lowResPhotos.length === 0) return;
     setIsBulkMoving(true);
+    const targetPhotoFolder = options.assetOrigin === 'ai' ? 'AI_Photos' : 'Photos';
 
     try {
       for (const item of lowResPhotos) {
@@ -397,7 +442,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
           try {
             await window.electronAPI.quarantineFile({
               filePath: item.nativePath,
-              mediaType: 'Photos',
+              mediaType: item.subFolder || targetPhotoFolder,
               masterDir: masterDirectory,
             });
           } catch (err) {
@@ -422,8 +467,8 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
         type: 'success',
         message:
           language === 'ar'
-            ? `تم بنجاح نقل ${lowResPhotos.length} صورة تحتاج إلى تكبير إلى مجلد _Needs_Fixing/Photos وإزالتها من القائمة.`
-            : `Successfully moved ${lowResPhotos.length} low-res photo(s) to _Needs_Fixing/Photos & removed from queue.`,
+            ? `تم بنجاح نقل ${lowResPhotos.length} صورة تحتاج إلى تكبير إلى مجلد _Needs_Fixing/${targetPhotoFolder} وإزالتها من القائمة.`
+            : `Successfully moved ${lowResPhotos.length} low-res photo(s) to _Needs_Fixing/${targetPhotoFolder} & removed from queue.`,
       });
     } catch (err: any) {
       console.error('[FileCleaner] Bulk move error:', err);
@@ -434,7 +479,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
     } finally {
       setIsBulkMoving(false);
     }
-  }, [lowResPhotos, masterDirectory, language]);
+  }, [lowResPhotos, masterDirectory, language, options.assetOrigin]);
 
   const handleClearAll = useCallback(() => {
     setRawFiles([]);

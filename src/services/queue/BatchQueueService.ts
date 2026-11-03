@@ -17,6 +17,7 @@ export interface QueueItem {
   videoWidth?: number;
   videoHeight?: number;
   hasAudio?: boolean;
+  isAiGenerated?: boolean;
   isMuted?: boolean;
   mutedFile?: File;
   thumbnailBase64?: string;
@@ -32,6 +33,8 @@ export interface QueueItem {
   latencyMs?: number;
   error?: string;
   retryCount: number;
+  autoHealCount?: number;
+  nextAutoRetryAt?: number;
   isRetry?: boolean;
   createdAt?: number;
   attemptHistory?: Array<{ provider: string; model: string; keyId?: string; status: 'success' | 'failed'; error?: string }>;
@@ -77,29 +80,25 @@ export function extractFilenameSequence(filename: string): number | null {
 }
 
 /**
- * Sorts queue items in strict sequential order:
- * 1. By explicit filename sequence number if both have one.
- * 2. By natural alphanumeric comparison (e.g. item2 before item10).
- * 3. By creation timestamp (createdAt ascending).
+ * Sorts queue items in strict top-to-bottom sequential order matching the Studio UI list (sortUnifiedAssets):
+ * 1. Primary: Natural alphanumeric comparison on the full filename ({ numeric: true, sensitivity: 'base' }).
+ *    This ensures 100% alignment with the Studio UI table and prevents trailing numbers in descriptive names
+ *    from causing items in the middle of the list to be picked out of order.
+ * 2. Secondary: Creation timestamp (createdAt ascending).
+ * 3. Tertiary: Deterministic ID tie-breaker.
  */
 export function sortQueueItemsSequentially(items: QueueItem[]): QueueItem[] {
   return [...items].sort((a, b) => {
-    const seqA = extractFilenameSequence(a.filename);
-    const seqB = extractFilenameSequence(b.filename);
-
-    if (seqA !== null && seqB !== null && seqA !== seqB) {
-      return seqA - seqB;
-    }
-
-    // Natural alphanumeric sorting (handles 'item2.jpg' vs 'item10.jpg', 'apple.jpg' vs 'zebra.jpg')
     const nameComp = a.filename.localeCompare(b.filename, undefined, {
       numeric: true,
       sensitivity: 'base',
     });
     if (nameComp !== 0) return nameComp;
 
-    // Fallback to createdAt
-    return (a.createdAt ?? 0) - (b.createdAt ?? 0);
+    const timeDiff = (a.createdAt ?? 0) - (b.createdAt ?? 0);
+    if (timeDiff !== 0) return timeDiff;
+
+    return (a.id || '').localeCompare(b.id || '');
   });
 }
 
@@ -131,8 +130,9 @@ export class BatchQueueService {
   private timerInterval?: any;
   private elapsedSeconds = 0;
   private maxRetries = 3;
+  private readonly MAX_AUTO_HEAL_WAVES = 2; // Automatic background recovery passes per item
   private completedSinceLastRetry = 0; // Track successes for opportunistic retry
-  private readonly OPPORTUNISTIC_RETRY_THRESHOLD = 5; // Give failed items another chance every 5 successes
+  private readonly OPPORTUNISTIC_RETRY_THRESHOLD = 3; // Re-queue cooled-down failed items after every 3 successes
   private activeAbortControllers: Set<AbortController> = new Set();
 
   private constructor() {}
@@ -257,11 +257,39 @@ export class BatchQueueService {
     this.notify();
 
     const baseTime = Date.now();
+    let detectedExplicitOrigin: boolean | null = null;
+
     for (let i = 0; i < validMediaFiles.length; i++) {
       const file = validMediaFiles[i];
       const id = crypto.randomUUID();
       const sourceMediaType = (file as any).__sourceMediaType as MediaType | undefined;
       const createdAt = baseTime + i;
+
+      // Resolve Asset Origin (AI vs Real) from File Cleaner handoff or folder path
+      let fileIsAi: boolean | undefined =
+        typeof (file as any).__isAiGenerated === 'boolean' ? (file as any).__isAiGenerated : undefined;
+
+      if (fileIsAi === undefined) {
+        const rawPath = String(
+          (file as any).__nativePath || (file as any).path || (file as any).webkitRelativePath || ''
+        );
+        if (/(?:^|[\\/])AI_(?:Photos|Videos|Vectors)(?:[\\/]|$)/i.test(rawPath)) {
+          fileIsAi = true;
+        } else if (/(?:^|[\\/])(?:Photos|Videos|Vectors)(?:[\\/]|$)/i.test(rawPath)) {
+          fileIsAi = false;
+        }
+      }
+
+      if (typeof fileIsAi === 'boolean') {
+        detectedExplicitOrigin = fileIsAi;
+      }
+
+      const defaultStudioAi =
+        typeof localStorage !== 'undefined'
+          ? localStorage.getItem('stock_is_ai_generated') !== 'false'
+          : true;
+      const resolvedIsAi = typeof fileIsAi === 'boolean' ? fileIsAi : defaultStudioAi;
+
       const initialDraft: MasterMetadataRecord = {
         id,
         batchId: this.currentBatchId,
@@ -269,7 +297,7 @@ export class BatchQueueService {
         fileSize: file.size,
         thumbnailBase64: '',
         mediaType: sourceMediaType || 'image',
-        isAiGenerated: true,
+        isAiGenerated: resolvedIsAi,
         baseTitle: '',
         detailedDescription: '',
         rankedKeywords: [],
@@ -282,6 +310,7 @@ export class BatchQueueService {
         filename: file.name,
         file,
         mediaType: sourceMediaType,
+        isAiGenerated: fileIsAi,
         originalSizeBytes: file.size,
         status: 'resizing',
         retryCount: 0,
@@ -290,13 +319,29 @@ export class BatchQueueService {
       };
       this.items.set(id, item);
     }
+
+    if (detectedExplicitOrigin !== null && typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('stock_is_ai_generated', JSON.stringify(detectedExplicitOrigin));
+        localStorage.setItem('stock_freepik_ai', JSON.stringify(detectedExplicitOrigin));
+        localStorage.setItem('stock_dt_ai', JSON.stringify(detectedExplicitOrigin));
+        window.dispatchEvent(
+          new CustomEvent('stockflow:ai-origin-sync', {
+            detail: { isAiGenerated: detectedExplicitOrigin },
+          })
+        );
+      } catch {
+        // ignore storage errors
+      }
+    }
+
     this.notify();
 
-    // Process thumbnail downsampling and media extraction with bounded concurrency
-    // (2 workers when batch includes heavy EPS/AI vector files, 8 for standard media)
-    // and batched SQLite transactions to prevent memory spikes and UI freezes
-    const resizingItems = Array.from(this.items.values()).filter(
-      (item) => item.status === 'resizing' && item.file
+    // Process thumbnail downsampling and media extraction in strict top-to-bottom UI order
+    const resizingItems = sortQueueItemsSequentially(
+      Array.from(this.items.values()).filter(
+        (item) => item.status === 'resizing' && item.file
+      )
     );
     const hasHeavyVectors = resizingItems.some((item) => {
       const ext = item.filename.split('.').pop()?.toLowerCase() || '';
@@ -316,6 +361,8 @@ export class BatchQueueService {
         }
         const sourceMediaType = (item.file as any).__sourceMediaType;
         const companionEpsName = (item.file as any).__companionEpsName;
+        const isAiGeneratedProp = (item.file as any).__isAiGenerated;
+        const assetOriginProp = (item.file as any).__assetOrigin;
         // Replace multi-MB File Blob in heap with a 0-byte shell preserving metadata & native OS path
         const shellFile = new File([], item.file.name, {
           type: item.file.type || 'application/octet-stream',
@@ -329,6 +376,12 @@ export class BatchQueueService {
         }
         if (companionEpsName) {
           Object.defineProperty(shellFile, '__companionEpsName', { value: companionEpsName, configurable: true });
+        }
+        if (typeof isAiGeneratedProp === 'boolean') {
+          Object.defineProperty(shellFile, '__isAiGenerated', { value: isAiGeneratedProp, configurable: true });
+        }
+        if (assetOriginProp) {
+          Object.defineProperty(shellFile, '__assetOrigin', { value: assetOriginProp, configurable: true });
         }
         item.file = shellFile;
       } catch {
@@ -407,12 +460,13 @@ export class BatchQueueService {
                   (item.thumbnailBase64 ? `data:image/jpeg;base64,${item.thumbnailBase64}` : ''),
                 mediaType: item.mediaType || 'image',
                 videoMeta:
-                  item.videoDurationSeconds || item.videoResolution || item.videoWidth
+                  item.videoDurationSeconds || item.videoResolution || item.videoWidth || item.hasAudio !== undefined
                     ? {
                         durationSeconds: item.videoDurationSeconds,
                         resolution: item.videoResolution,
                         width: item.videoWidth,
                         height: item.videoHeight,
+                        hasAudio: item.hasAudio,
                       }
                     : undefined,
                 isAiGenerated: true,
@@ -526,15 +580,49 @@ export class BatchQueueService {
           continue;
         }
 
-        // Enforce strict sequential order: pick the next item in natural ascending sequence
-        const readyItems = Array.from(this.items.values()).filter(
-          (i) => i.status === 'ready'
-        );
-        const pendingItem = readyItems.length > 0 ? sortQueueItemsSequentially(readyItems)[0] : undefined;
+        // Check if any cooled-down failed items can be promoted back to 'ready' in the background
+        this.promoteCooledDownFailedItems(false);
 
-        // If no items are pending, check if any workers are still running
+        // Enforce strict top-to-bottom sequential order matching the Studio UI list:
+        // Consider both 'ready' and 'resizing' items in exact UI order so we never skip over a top item
+        // that is still finishing thumbnail extraction to pick a middle item out of order!
+        const allItems = Array.from(this.items.values());
+        const pendingOrResizing = sortQueueItemsSequentially(
+          allItems.filter((i) => i.status === 'ready' || i.status === 'resizing')
+        );
+
+        // Prefer first-pass items in strict top-to-bottom order before background retry items
+        const firstPassPending = pendingOrResizing.filter((i) => !i.isRetry);
+        const orderedCandidates = firstPassPending.length > 0 ? firstPassPending : pendingOrResizing;
+
+        if (orderedCandidates.length > 0 && orderedCandidates[0].status === 'resizing') {
+          // Wait briefly for the next top-to-bottom item to finish thumbnail extraction
+          await new Promise((r) => setTimeout(r, 80));
+          continue;
+        }
+
+        const pendingItem = orderedCandidates.find((i) => i.status === 'ready');
+
+        // If no items are currently ready, check if any workers are still running or if failed items need auto-healing
         if (!pendingItem) {
           if (this.activeWorkers === 0) {
+            // Automatic Background Self-Healing Pass:
+            // Before finishing the batch, check if any failed items can be automatically retried after a brief cooldown
+            const healableItems = this.getAutoHealableFailedItems();
+            if (healableItems.length > 0 && this.status === 'running') {
+              const now = Date.now();
+              const earliestRetryAt = Math.min(
+                ...healableItems.map((i) => i.nextAutoRetryAt || now)
+              );
+              const waitMs = Math.min(Math.max(0, earliestRetryAt - now), 2500);
+              if (waitMs > 0) {
+                await new Promise((r) => setTimeout(r, waitMs));
+              }
+              if (this.status !== 'running') break;
+              this.promoteCooledDownFailedItems(true);
+              continue;
+            }
+
             this.status = 'completed';
             this.stopTimer();
             this.notify();
@@ -695,12 +783,14 @@ export class BatchQueueService {
           item.latencyMs = latencyMs;
 
           // 3. Parse & normalize Master Metadata Record with requested keyword phrasing
+          const effectiveIsAi =
+            typeof item.isAiGenerated === 'boolean' ? item.isAiGenerated : isAiGenerated;
           const masterRecord = parseAndNormalizeAiMetadata(
             rawAiText,
             item.filename,
             item.thumbnailDataUrl || `data:image/jpeg;base64,${item.thumbnailBase64}`,
             this.currentBatchId,
-            isAiGenerated,
+            effectiveIsAi,
             defaultModelName,
             keywordPhrasing,
             item.mediaType,
@@ -725,12 +815,13 @@ export class BatchQueueService {
             masterRecord.compressedSize = Math.round((item.thumbnailBase64.length * 3) / 4);
           }
           masterRecord.mediaType = item.mediaType || 'image';
-          if (item.videoDurationSeconds || item.videoResolution || item.videoWidth) {
+          if (item.videoDurationSeconds || item.videoResolution || item.videoWidth || item.hasAudio !== undefined || existingRecord?.videoMeta?.hasAudio !== undefined) {
             masterRecord.videoMeta = {
-              durationSeconds: item.videoDurationSeconds,
-              resolution: item.videoResolution,
-              width: item.videoWidth,
-              height: item.videoHeight,
+              durationSeconds: item.videoDurationSeconds ?? existingRecord?.videoMeta?.durationSeconds,
+              resolution: item.videoResolution ?? existingRecord?.videoMeta?.resolution,
+              width: item.videoWidth ?? existingRecord?.videoMeta?.width,
+              height: item.videoHeight ?? existingRecord?.videoMeta?.height,
+              hasAudio: item.hasAudio ?? existingRecord?.videoMeta?.hasAudio,
             };
           }
 
@@ -824,10 +915,16 @@ export class BatchQueueService {
       }
     }
 
-    // All background attempts exhausted: officially mark as error
+    // All immediate attempts exhausted: mark as error and schedule for automatic background self-healing
     item.status = 'error';
     const finalErrMsg = `${item.assignedProvider ? `[${item.assignedProvider}] ` : ''}${lastError?.message || String(lastError)}`;
     item.error = finalErrMsg;
+    if (this.isLoopActive && item.thumbnailBase64) {
+      const currentWave = item.autoHealCount || 0;
+      if (currentWave < this.MAX_AUTO_HEAL_WAVES && !/no active api keys/i.test(finalErrMsg)) {
+        item.nextAutoRetryAt = Date.now() + 3000 * (currentWave + 1);
+      }
+    }
     this.notify();
 
     await db.masterRecords.update(item.id, {
@@ -889,6 +986,8 @@ export class BatchQueueService {
         item.status = 'ready';
         item.error = undefined;
         item.retryCount = 0;
+        item.autoHealCount = 0;
+        item.nextAutoRetryAt = undefined;
         item.isRetry = true;
         item.metadataRecord = undefined;
       }
@@ -955,25 +1054,58 @@ export class BatchQueueService {
   }
 
   /**
-   * Opportunistic background retry: Give ONE failed item another chance
-   * without resetting retry count. This helps recover from temporary issues
-   * (network glitches, brief API downtime) without user intervention.
-   * Called automatically after every N successful completions.
+   * Returns failed items that are eligible for automatic background self-healing during an active batch.
    */
-  private opportunisticRetryFailed(): void {
-    // Find the first failed item that still has retry attempts left
-    const failedItem = Array.from(this.items.values()).find(
-      (i) => i.status === 'error' && i.retryCount < this.maxRetries
+  private getAutoHealableFailedItems(): QueueItem[] {
+    const allItems = Array.from(this.items.values());
+    const hasAnySuccess = allItems.some((i) => i.status === 'completed');
+    // If at least one item in the batch has succeeded (proving API connectivity works), allow up to MAX_AUTO_HEAL_WAVES (2).
+    // If 0 items have succeeded so far, allow 1 background recovery wave.
+    const maxWavesAllowed = hasAnySuccess ? this.MAX_AUTO_HEAL_WAVES : 1;
+
+    return sortQueueItemsSequentially(
+      allItems.filter(
+        (i) =>
+          i.status === 'error' &&
+          Boolean(i.thumbnailBase64) &&
+          (i.autoHealCount || 0) < maxWavesAllowed &&
+          !/no active api keys|corrupted or empty/i.test(i.error || '')
+      )
     );
-    
-    if (failedItem) {
-      // Give it another chance by marking it ready (keeps retry count)
-      failedItem.status = 'ready';
-      failedItem.error = undefined;
-      failedItem.isRetry = true;
-      // Don't reset retryCount - this is an opportunistic attempt
+  }
+
+  /**
+   * Promotes cooled-down failed items back to 'ready' so the queue automatically retries them
+   * in the background without user intervention.
+   */
+  private promoteCooledDownFailedItems(forceAllHealable = false): void {
+    const now = Date.now();
+    const healable = this.getAutoHealableFailedItems();
+    if (healable.length === 0) return;
+
+    let promoted = false;
+    for (const item of healable) {
+      if (forceAllHealable || !item.nextAutoRetryAt || now >= item.nextAutoRetryAt) {
+        item.autoHealCount = (item.autoHealCount || 0) + 1;
+        item.status = 'ready';
+        if (item.retryCount >= this.maxRetries) {
+          item.retryCount = 0;
+        }
+        item.error = undefined;
+        item.isRetry = true;
+        item.nextAutoRetryAt = undefined;
+        promoted = true;
+        if (!forceAllHealable) break; // Mid-batch: promote one cooled-down item at a time so main sequence isn't stalled
+      }
+    }
+
+    if (promoted) {
       this.notify();
     }
+  }
+
+  private opportunisticRetryFailed(): void {
+    this.promoteCooledDownFailedItems(false);
   }
 
   public removeItem(id: string): void {

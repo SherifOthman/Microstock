@@ -25,7 +25,11 @@ export const FileCleanerView: React.FC<FileCleanerViewProps> = ({ onSendToStudio
       id: item.id,
       filename: `${item.originalName} → ${item.customName || item.cleanedName}`,
       mediaType:
-        item.subFolder === 'Videos' ? 'video' : item.subFolder === 'Vectors' ? 'vector' : 'image',
+        item.subFolder === 'Videos' || item.subFolder === 'AI_Videos'
+          ? 'video'
+          : item.subFolder === 'Vectors' || item.subFolder === 'AI_Vectors'
+          ? 'vector'
+          : 'image',
       file: item.file,
       nativePath: item.nativePath || (item.file as any)?.path,
       width: item.validation?.width,

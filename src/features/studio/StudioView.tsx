@@ -21,10 +21,14 @@ import { Button } from '../../components/ui/button';
 import { PLATFORMS_CONFIG } from '../../constants/platforms';
 import { getPlatformLogo } from '../../components/icons/StockLogos';
 import { MasterMetadataRecord } from '../../types';
-import { Archive, Copy, Eye, Check, Download, KeyRound, FolderDown, Loader2, AlertTriangle } from 'lucide-react';
+import { Archive, Copy, Eye, Check, Download, KeyRound, FolderDown, Loader2, AlertTriangle, Volume2, VolumeX } from 'lucide-react';
 import { Alert, AlertTitle, AlertDescription } from '../../components/ui/alert';
 
-export const StudioView: React.FC = () => {
+export interface StudioViewProps {
+  onOpenVideoMuter?: () => void;
+}
+
+export const StudioView: React.FC<StudioViewProps> = ({ onOpenVideoMuter }) => {
   const { t, language } = useLanguage();
   const [, startTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -66,6 +70,18 @@ export const StudioView: React.FC = () => {
 
   const records = useMemo(
     () => unifiedAssets.map((a: any) => a.masterRecord).filter(Boolean) as MasterMetadataRecord[],
+    [unifiedAssets]
+  );
+
+  const videosWithAudio = useMemo(
+    () =>
+      unifiedAssets.filter(
+        (a: any) =>
+          (a.queueItem?.mediaType === 'video' ||
+            a.masterRecord?.mediaType === 'video' ||
+            /\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(a.filename)) &&
+          Boolean(a.queueItem?.hasAudio ?? a.masterRecord?.videoMeta?.hasAudio)
+      ),
     [unifiedAssets]
   );
 
@@ -208,6 +224,37 @@ export const StudioView: React.FC = () => {
           </Alert>
         )}
 
+        {videosWithAudio.length > 0 && (
+          <Alert variant="warning" className="border-amber-500/50 bg-amber-500/10 py-2.5">
+            <Volume2 className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full">
+              <div className="space-y-0.5">
+                <AlertTitle className="text-xs font-semibold text-amber-700 dark:text-amber-400">
+                  {language === 'ar'
+                    ? `تحذير: تم اكتشاف مسار صوتي في ${videosWithAudio.length} فيديو — خطر رفض الملفات أو حظر الحساب`
+                    : `Audio Track Detected in ${videosWithAudio.length} Video(s) — Agency Rejection & Account Risk`}
+                </AlertTitle>
+                <AlertDescription className="text-[11px] text-amber-800/90 dark:text-amber-300/85 leading-snug">
+                  {language === 'ar'
+                    ? 'وكالات الميكروستوك (Adobe Stock, Shutterstock, Freepik, Pond5) ترفض الفيديوهات التي تحتوي على ضوضاء مايكروفون أو أصوات بشرية غير مرخصة أو موسيقى خلفية، وقد يؤدي رفع صوت محمي بحقوق نشر إلى حظر حسابك. يُنصح بإزالة الصوت عبر أداة عزل الصوت (Audio Stripper) قبل الرفع.'
+                    : 'Stock agencies (Adobe Stock, Shutterstock, Freepik, Pond5, Vecteezy) strictly reject clips containing mic noise, unreleased voices, or background music, and copyrighted audio can trigger account suspension. Strip audio in Audio Stripper before uploading to agencies.'}
+                </AlertDescription>
+              </div>
+              {onOpenVideoMuter && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onOpenVideoMuter}
+                  className="h-7 px-2.5 text-xs shrink-0 gap-1.5 border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 cursor-pointer"
+                >
+                  <VolumeX className="w-3.5 h-3.5" />
+                  <span>{language === 'ar' ? 'فتح أداة عزل الصوت' : 'Open Audio Stripper'}</span>
+                </Button>
+              )}
+            </div>
+          </Alert>
+        )}
+
         <StudioToolbar
           searchQuery={searchQuery}
           onSearchChange={(q) => startTransition(() => setSearchQuery(q))}
@@ -296,6 +343,17 @@ export const StudioView: React.FC = () => {
                 {language === 'ar'
                   ? `سيتم تصدير ${completedCount} ملف مكتمل فقط واستبعاد ${unifiedAssets.length - completedCount} ملف قيد الانتظار أو فاشل.`
                   : `Only the ${completedCount} completed asset(s) will be exported (${unifiedAssets.length - completedCount} pending/failed excluded).`}
+              </span>
+            </div>
+          )}
+
+          {videosWithAudio.length > 0 && (
+            <div className="p-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400 flex items-start gap-2 text-[11px]">
+              <Volume2 className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                {language === 'ar'
+                  ? `تنبيه هام قبل الرفع: يوجد ${videosWithAudio.length} فيديو يحتوي على مسار صوتي نشط. تأكد من إزالة الصوت قبل رفع الفيديوهات لمنصات الستوك لتجنب رفض الدفعة أو حظر الحساب.`
+                  : `Pre-Upload Notice: ${videosWithAudio.length} video(s) still contain an active audio track. Make sure to strip unwanted audio before uploading the video files to stock agencies to avoid rejections or account strikes.`}
               </span>
             </div>
           )}

@@ -1,6 +1,6 @@
 {
-  "summary": "Emergency Hotfix Plan addressing the 8-9 GB EPS & Ingestion Memory Leak, API Signal Timed Out / High Demand handling & UI freeze prevention, and Success-Only Progress Bar calculation.",
-  "updatedAt": "2026-11-03T15:28:22.349180494Z",
+  "summary": "Revised Implementation Plan for the File Cleaner Asset Origin (Real vs AI) Isolation feature, incorporating single-word terminology ('Real' / 'أصلي' vs 'AI' / 'ذكاء اصطناعي'), 6-track dynamic folder routing, and strict per-track batch continuation.",
+  "updatedAt": "2026-11-03T17:03:03.734377725Z",
   "requestFeedback": true,
   "userFacing": true
 }

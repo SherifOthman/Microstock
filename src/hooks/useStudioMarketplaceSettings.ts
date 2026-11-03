@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { SupportedPlatform } from '../types';
 import { KeywordPhrasing } from '../services/ai/metadataParser';
 import { UniversalTransformOptions } from '../services/rules/platformTransformers';
@@ -45,6 +45,21 @@ export function useStudioMarketplaceSettings() {
     const saved = localStorage.getItem('stock_dt_ai');
     return saved !== null ? JSON.parse(saved) : true;
   });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleAiOriginSync = (e: Event) => {
+      const customEvent = e as CustomEvent<{ isAiGenerated?: boolean }>;
+      if (typeof customEvent.detail?.isAiGenerated === 'boolean') {
+        const nextAi = customEvent.detail.isAiGenerated;
+        setIsAiGenerated(nextAi);
+        setFreepikAiGenerated(nextAi);
+        setDtAiGenerated(nextAi);
+      }
+    };
+    window.addEventListener('stockflow:ai-origin-sync', handleAiOriginSync);
+    return () => window.removeEventListener('stockflow:ai-origin-sync', handleAiOriginSync);
+  }, []);
 
   const [dtEditorial, setDtEditorial] = useState<boolean>(() => {
     const saved = localStorage.getItem('stock_dt_editorial');

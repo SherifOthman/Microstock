@@ -16,6 +16,8 @@ import {
   Loader2,
   RefreshCw,
   Trash2,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { useLanguage } from '../../../context/LanguageContext';
 import { AssetKeywordsManager } from './AssetKeywordsManager';
@@ -97,6 +99,14 @@ export const AssetCard: React.FC<AssetCardProps> = React.memo(({
   const isError = asset.status === 'error';
   const hasNonAsciiInFilename = /\u2026|[^\x00-\x7F]/.test(asset.filename);
 
+  const isVideo =
+    asset.queueItem?.mediaType === 'video' ||
+    rec?.mediaType === 'video' ||
+    /\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(asset.filename);
+  const videoHasAudio = isVideo
+    ? (asset.queueItem?.hasAudio ?? rec?.videoMeta?.hasAudio)
+    : undefined;
+
   const originalSize =
     rec?.fileSize ||
     asset.queueItem?.originalSizeBytes ||
@@ -142,7 +152,13 @@ export const AssetCard: React.FC<AssetCardProps> = React.memo(({
   }, [nativePath]);
 
   return (
-    <div className="rounded-lg border border-border bg-card hover:border-primary/40 transition-colors w-full min-w-0 overflow-hidden">
+    <div
+      className={`rounded-lg border bg-card transition-colors w-full min-w-0 overflow-hidden ${
+        videoHasAudio
+          ? 'border-amber-500/50 hover:border-amber-500'
+          : 'border-border hover:border-primary/40'
+      }`}
+    >
       {/* Single High-Density Row */}
       <div className="px-3 py-2 flex items-center gap-3 w-full min-w-0">
         {/* 40x40 Thumbnail */}
@@ -161,7 +177,7 @@ export const AssetCard: React.FC<AssetCardProps> = React.memo(({
         </Tooltip>
 
         {/* Filename & Status Column */}
-        <div className="w-36 sm:w-48 shrink-0 min-w-0 text-start">
+        <div className="w-40 sm:w-52 shrink-0 min-w-0 text-start">
           <div className="flex items-center gap-1.5 min-w-0">
             <span dir="ltr" className="text-xs font-semibold text-foreground truncate block text-start">
               {asset.filename}
@@ -172,6 +188,33 @@ export const AssetCard: React.FC<AssetCardProps> = React.memo(({
               hasNonAscii={hasNonAsciiInFilename}
               language={language}
             />
+            {isVideo && videoHasAudio === true && (
+              <Tooltip
+                content={
+                  language === 'ar'
+                    ? 'تحذير: يحتوي هذا الفيديو على مسار صوتي! ترفض وكالات الستوك (Adobe, Shutterstock, Freepik) الفيديوهات ذات الأصوات غير المرخصة أو ضوضاء المايكروفون وقد يؤدي ذلك لحظر الحساب. استخدم أداة عزل الصوت أولاً.'
+                    : 'Warning: Active audio track detected! Stock agencies (Adobe Stock, Shutterstock, Freepik, Pond5) reject videos with mic noise, voices, or background music and may block accounts for copyright/privacy violations. Strip audio in Audio Stripper before uploading.'
+                }
+              >
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/40 text-[10px] font-mono font-semibold shrink-0">
+                  <Volume2 className="w-2.5 h-2.5" />
+                  <span>{language === 'ar' ? 'صوت نشط!' : 'Has Audio!'}</span>
+                </span>
+              </Tooltip>
+            )}
+            {isVideo && videoHasAudio === false && (
+              <Tooltip
+                content={
+                  language === 'ar'
+                    ? 'آمن للرفع: فيديو صامت بدون مسار صوتي'
+                    : 'Agency Safe: Video has no audio track (silent)'
+                }
+              >
+                <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25 text-[9px] font-mono shrink-0">
+                  <VolumeX className="w-2.5 h-2.5" />
+                </span>
+              </Tooltip>
+            )}
           </div>
           <div className="flex items-center gap-1.5 text-[10px] font-mono tabular-nums text-muted-foreground mt-0.5">
             <span dir="ltr">{formatBytes(originalSize)}</span>

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useLayoutEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
 
@@ -16,11 +16,11 @@ export const Tooltip: React.FC<TooltipProps> = ({
   side = 'top',
 }) => {
   const [visible, setVisible] = useState(false);
-  const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
   const triggerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!visible || !triggerRef.current) return;
+  const computeCoords = useCallback(() => {
+    if (!triggerRef.current) return null;
     const rect = triggerRef.current.getBoundingClientRect();
     const gap = 6;
     const vw = typeof window !== 'undefined' ? window.innerWidth : 1440;
@@ -38,8 +38,29 @@ export const Tooltip: React.FC<TooltipProps> = ({
       left = rect.right + gap;
     }
 
-    setCoords({ top, left });
-  }, [visible, side]);
+    return { top, left };
+  }, [side]);
+
+  const handleShow = useCallback(() => {
+    const nextCoords = computeCoords();
+    if (nextCoords) {
+      setCoords(nextCoords);
+    }
+    setVisible(true);
+  }, [computeCoords]);
+
+  const handleHide = useCallback(() => {
+    setVisible(false);
+    setCoords(null);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!visible) return;
+    const nextCoords = computeCoords();
+    if (nextCoords) {
+      setCoords(nextCoords);
+    }
+  }, [visible, computeCoords]);
 
   if (!content) {
     return <>{children}</>;
@@ -58,20 +79,21 @@ export const Tooltip: React.FC<TooltipProps> = ({
     <div
       ref={triggerRef}
       className="inline-flex items-center"
-      onMouseEnter={() => setVisible(true)}
-      onMouseLeave={() => setVisible(false)}
-      onFocus={() => setVisible(true)}
-      onBlur={() => setVisible(false)}
+      onMouseEnter={handleShow}
+      onMouseLeave={handleHide}
+      onFocus={handleShow}
+      onBlur={handleHide}
     >
       {children}
       {visible &&
+        coords !== null &&
         typeof document !== 'undefined' &&
         createPortal(
           <div
             role="tooltip"
             style={{ top: `${coords.top}px`, left: `${coords.left}px` }}
             className={cn(
-              'fixed z-[100] w-max max-w-xs px-2.5 py-1 text-[11px] font-medium leading-snug text-popover-foreground bg-popover border border-border rounded-md shadow-md pointer-events-none animate-in fade-in-0 zoom-in-95 duration-100',
+              'fixed z-[250] w-max max-w-xs px-2.5 py-1 text-[11px] font-medium leading-snug text-popover-foreground bg-popover border border-border rounded-md shadow-md pointer-events-none',
               transformClass,
               className
             )}
@@ -83,3 +105,4 @@ export const Tooltip: React.FC<TooltipProps> = ({
     </div>
   );
 };
+

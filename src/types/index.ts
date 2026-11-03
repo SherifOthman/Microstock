@@ -62,6 +62,7 @@ export interface MasterMetadataRecord {
     resolution?: string;
     width?: number;
     height?: number;
+    hasAudio?: boolean;
   };
   isAiGenerated: boolean;
   baseTitle: string;
