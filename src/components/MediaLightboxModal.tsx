@@ -184,6 +184,10 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
         }
         if (cached) return cached;
       }
+    } else if (currentAsset.mediaType === 'vector') {
+      const vectorCacheKey = `eps_${currentAsset.id}_${currentAsset.filename}`;
+      const cached = objectUrlCacheRef.current.get(vectorCacheKey);
+      if (cached) return cached;
     }
     return '';
   }, [currentAsset?.id, currentAsset?.file, currentAsset?.nativePath, currentAsset?.mediaType, open]);
@@ -227,12 +231,19 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
         setVideoObjectUrl(currentAsset.fallbackPreviewUrl);
       }
     } else if (currentAsset.mediaType === 'vector') {
-      // EPS Vector: generate balanced, crisp 2048px preview for lightbox so user sees real artwork
-      if (currentAsset.file && currentAsset.file.size > 0) {
+      const vectorCacheKey = `eps_${currentAsset.id}_${currentAsset.filename}`;
+      const alreadyCached = objectUrlCacheRef.current.get(vectorCacheKey);
+      if (alreadyCached) {
+        setDynamicImageUrl(alreadyCached);
+      } else if (currentAsset.file && currentAsset.file.size > 0) {
         rasterizeEpsFile(currentAsset.file, 2048, 0.90)
           .then((res) => {
             if (!isCancelled) {
-              setDynamicImageUrl(res.dataUrl || res.objectUrl || null);
+              const url = res.dataUrl || res.objectUrl || null;
+              if (url) {
+                objectUrlCacheRef.current.set(vectorCacheKey, url);
+              }
+              setDynamicImageUrl(url);
             }
           })
           .catch(() => {});
@@ -245,7 +256,7 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
           if (!isCancelled && res.success && res.buffer) {
             const blob = new Blob([res.buffer], { type: 'image/jpeg' });
             const url = URL.createObjectURL(blob);
-            objectUrlCacheRef.current.set(currentAsset.id, url);
+            objectUrlCacheRef.current.set(vectorCacheKey, url);
             setDynamicImageUrl(url);
           }
         }).catch(() => {});
@@ -318,7 +329,13 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
   const isVideo = currentAsset.mediaType === 'video';
   const isVector = currentAsset.mediaType === 'vector';
   const isAr = typeof document !== 'undefined' && document.documentElement.lang === 'ar';
-  const effectiveImageSrc = synchronousImageSrc || dynamicImageUrl || currentAsset.fallbackPreviewUrl || '';
+  // For vector, do not show the tiny thumbnail while 2048px rasterization is in-flight (avoids small-to-large flash)
+  const isVectorRasterizing = isVector && !synchronousImageSrc && !dynamicImageUrl && Boolean(currentAsset.file || currentAsset.nativePath);
+  const effectiveImageSrc =
+    synchronousImageSrc ||
+    dynamicImageUrl ||
+    (isVectorRasterizing ? '' : currentAsset.fallbackPreviewUrl) ||
+    '';
 
   return (
     <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col justify-between select-none animate-in fade-in-0 duration-150">
@@ -465,6 +482,13 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
                 </p>
               </div>
             )
+          ) : isVectorRasterizing ? (
+            <div className="flex flex-col items-center justify-center gap-3 p-12 text-zinc-300">
+              <div className="w-10 h-10 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              <p className="text-xs font-mono text-zinc-400">
+                {isAr ? 'جارٍ تجهيز معاينة المتجه بالدقة الكاملة...' : 'Preparing high-resolution vector artwork...'}
+              </p>
+            </div>
           ) : effectiveImageSrc ? (
             <div
               className="overflow-auto max-h-[85vh] max-w-full flex items-center justify-center transition-transform duration-100"
