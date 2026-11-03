@@ -13,6 +13,44 @@ export interface EpsConvertItem {
   progressMsg?: string;
   errorMessage?: string;
   result?: EpsRenderResult;
+  previewThumbnailUrl?: string;
+}
+
+async function createLightweightThumbnail(blob?: Blob, maxDim = 384): Promise<string> {
+  if (!blob || typeof createImageBitmap !== 'function' || typeof document === 'undefined') {
+    return '';
+  }
+  try {
+    const bitmap = await createImageBitmap(blob);
+    const aspect = bitmap.width / Math.max(1, bitmap.height);
+    let w = maxDim;
+    let h = maxDim;
+    if (aspect >= 1) {
+      w = maxDim;
+      h = Math.max(1, Math.round(maxDim / aspect));
+    } else {
+      h = maxDim;
+      w = Math.max(1, Math.round(maxDim * aspect));
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
+      canvas.width = 0;
+      canvas.height = 0;
+      bitmap.close();
+      return dataUrl;
+    }
+    bitmap.close();
+  } catch {
+    // fallback gracefully
+  }
+  return '';
 }
 
 export function useEpsConverter(
@@ -108,6 +146,7 @@ export function useEpsConverter(
       if (res.objectUrl) {
         objectUrlsRef.current.add(res.objectUrl);
       }
+      const thumbUrl = await createLightweightThumbnail(res.blob, 384);
       setItems((prev) =>
         prev.map((i) => {
           if (i.id !== item.id) return i;
@@ -119,7 +158,13 @@ export function useEpsConverter(
             }
             objectUrlsRef.current.delete(i.result.objectUrl);
           }
-          return { ...i, status: 'completed', result: res, progressMsg: undefined };
+          return {
+            ...i,
+            status: 'completed',
+            result: res,
+            previewThumbnailUrl: thumbUrl || res.objectUrl || res.dataUrl,
+            progressMsg: undefined,
+          };
         })
       );
     } catch (err: any) {

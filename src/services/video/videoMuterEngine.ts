@@ -1,5 +1,5 @@
 import { saveFilesToLocalDirectory, FileToSave } from '../desktop/desktopFs';
-import { inspectMoovBytes, stripAudioFromBufferInPlace } from '../../workers/videoMuter.worker';
+import { inspectMoovBytes, stripAudioFromBufferInPlace } from '../../utils/videoBoxParser';
 
 export interface VideoInspectionResult {
   id: string;

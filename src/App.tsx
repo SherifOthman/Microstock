@@ -111,6 +111,7 @@ export function App() {
   }, [isRailCollapsed]);
 
   useEffect(() => {
+    if (isElectron) return;
     const handlePopState = () => {
       const pathname = window.location.pathname.toLowerCase().replace(/\/$/, '') || '/';
       if (PATH_TO_TAB[pathname]) {
@@ -120,14 +121,16 @@ export function App() {
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
+  }, [isElectron]);
 
   const handleTabChange = (tab: AppTab) => {
     setActiveTab(tab);
     localStorage.setItem('stock_active_tab', tab);
-    const targetPath = TAB_TO_PATH[tab] || '/';
-    if (window.location.pathname !== targetPath) {
-      window.history.pushState({ tab }, '', targetPath);
+    if (!isElectron) {
+      const targetPath = TAB_TO_PATH[tab] || '/';
+      if (window.location.pathname !== targetPath) {
+        window.history.pushState({ tab }, '', targetPath);
+      }
     }
   };
 

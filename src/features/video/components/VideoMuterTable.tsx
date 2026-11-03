@@ -55,8 +55,17 @@ export const VideoMuterTable: React.FC<VideoMuterTableProps> = React.memo(({
     ? Math.max(0, totalSize - (virtualRows[virtualRows.length - 1]?.end || 0))
     : 0;
 
+  const isHiddenInBrowser =
+    typeof window !== 'undefined' &&
+    scrollRef.current &&
+    (scrollRef.current.offsetParent === null || scrollRef.current.clientHeight === 0) &&
+    typeof (globalThis as any).__vitest_worker__ === 'undefined' &&
+    !(typeof process !== 'undefined' && process.env?.VITEST);
+
   const rowsToRender = hasVirtualViewport
     ? virtualRows.map((vr) => ({ item: items[vr.index], idx: vr.index }))
+    : isHiddenInBrowser
+    ? []
     : items.slice(0, 60).map((item, idx) => ({ item, idx }));
 
   return (

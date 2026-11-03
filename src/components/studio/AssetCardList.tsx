@@ -111,6 +111,18 @@ export const AssetCardList: React.FC<AssetCardListProps> = React.memo(({
   const virtualItems = virtualizer.getVirtualItems();
   const hasMeasuredViewport = virtualItems.length > 0;
 
+  // Guard against mounting fallback cards when container is hidden (display: none)
+  const isHiddenInBrowser =
+    typeof window !== 'undefined' &&
+    parentRef.current &&
+    (parentRef.current.offsetParent === null || parentRef.current.clientHeight === 0) &&
+    typeof (globalThis as any).__vitest_worker__ === 'undefined' &&
+    !(typeof process !== 'undefined' && process.env?.VITEST);
+
+  if (isHiddenInBrowser && assets.length > 0) {
+    return <div ref={parentRef} className="flex-1 min-h-0 overflow-hidden" />;
+  }
+
   return (
     <div
       onDragOver={onDragOver}

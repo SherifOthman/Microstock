@@ -428,7 +428,8 @@ export class BatchQueueService {
             let extractTimer: any;
             try {
               const extractTimeoutPromise = new Promise<never>((_, reject) => {
-                extractTimer = setTimeout(() => reject(new Error('Media extraction timed out after 15s')), 15000);
+                const timeoutMs = hasHeavyVectors ? 60000 : 25000;
+                extractTimer = setTimeout(() => reject(new Error('Media extraction timed out after ' + (timeoutMs / 1000) + 's')), timeoutMs);
               });
 
               const media = await Promise.race([

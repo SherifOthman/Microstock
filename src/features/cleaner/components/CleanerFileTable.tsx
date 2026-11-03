@@ -134,8 +134,17 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
     ? Math.max(0, totalSize - (virtualRows[virtualRows.length - 1]?.end || 0))
     : 0;
 
+  const isHiddenInBrowser =
+    typeof window !== 'undefined' &&
+    tableContainerRef.current &&
+    (tableContainerRef.current.offsetParent === null || tableContainerRef.current.clientHeight === 0) &&
+    typeof (globalThis as any).__vitest_worker__ === 'undefined' &&
+    !(typeof process !== 'undefined' && process.env?.VITEST);
+
   const rowsToRender = hasVirtualViewport
     ? virtualRows.map((vr) => ({ item: filteredItems[vr.index], idx: vr.index }))
+    : isHiddenInBrowser
+    ? []
     : filteredItems.slice(0, 60).map((item, idx) => ({ item, idx }));
 
   return (

@@ -2,7 +2,7 @@ import { isElectron } from '../desktop/desktopFs';
 import { sanitizeRenamerFilename } from '../../utils/renamerSanitizer';
 import { type SegregatedTrack, SEGREGATED_TRACKS, NEEDS_FIXING_FOLDER } from '../../constants/renamerRules';
 import { AssetBatchType, RenamerFileItem, RenamerMediaType, RenamerJobResult } from '../../types/renamer';
-import { parseImageHeaderBuffer } from '../../workers/mediaInspector.worker';
+import { parseImageHeaderBuffer } from '../../utils/imageHeaderParser';
 
 export type { SegregatedTrack };
 export { SEGREGATED_TRACKS, NEEDS_FIXING_FOLDER };
