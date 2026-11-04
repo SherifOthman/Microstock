@@ -122,6 +122,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
   // Imported Files & Configuration
   const [rawFiles, setRawFiles] = useState<File[]>([]);
   const [lastProcessedFiles, setLastProcessedFiles] = useState<File[]>([]);
+  const lastProcessedFilesRef = useRef<File[]>([]);
   const [isBatchSaved, setIsBatchSaved] = useState(false);
   const [nativePaths, setNativePaths] = useState<Record<string, string>>({});
   const [options, setOptionsState] = useState<CleanerOptions>(() => {
@@ -555,6 +556,8 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
   const handleClearAll = useCallback(() => {
     validationRunIdRef.current++;
     setRawFiles([]);
+    lastProcessedFilesRef.current = [];
+    setLastProcessedFiles([]);
     setManualOverrides({});
     setValidations({});
     validatedKeysRef.current.clear();
@@ -630,6 +633,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
 
       if (res.success) {
         const preparedFiles = buildRenamedFilesFromCleanedItems(cleanedItems, targetMasterDir);
+        lastProcessedFilesRef.current = preparedFiles;
         setLastProcessedFiles(preparedFiles);
         setIsBatchSaved(true);
 
@@ -673,6 +677,11 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
 
   const handleSendToStudio = useCallback(() => {
     if (!onSendToStudio) return;
+    const filesFromRef = lastProcessedFilesRef.current;
+    if (filesFromRef && filesFromRef.length > 0) {
+      onSendToStudio(filesFromRef);
+      return;
+    }
     if (lastProcessedFiles.length > 0) {
       onSendToStudio(lastProcessedFiles);
       return;

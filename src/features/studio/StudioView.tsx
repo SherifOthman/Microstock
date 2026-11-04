@@ -69,6 +69,18 @@ export const StudioView: React.FC<StudioViewProps> = ({ onOpenVideoMuter }) => {
     return (localStorage.getItem('stock_studio_media_filter') as any) || 'all';
   });
 
+  // Reset media type filter to all when receiving batch assets from Cleaner or EPS engine
+  React.useEffect(() => {
+    const handleReset = () => {
+      setMediaTypeFilter('all');
+      try {
+        localStorage.setItem('stock_studio_media_filter', 'all');
+      } catch {}
+    };
+    window.addEventListener('stockflow:reset-media-filter', handleReset);
+    return () => window.removeEventListener('stockflow:reset-media-filter', handleReset);
+  }, []);
+
   const { unifiedAssets, filteredAssets, completedCount, pendingCount, brandNewPendingCount, failedCount } =
     useUnifiedAssets(queueState, searchQuery, 'all');
 

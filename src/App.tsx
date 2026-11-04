@@ -433,9 +433,10 @@ export function App() {
             </div>
             <div className={activeTab === 'cleaner' ? 'flex-1 min-h-0 h-full px-4 sm:px-6 py-4 overflow-hidden flex flex-col' : 'hidden'}>
               <FileCleanerView
-                onSendToStudio={(files) => {
-                  batchQueueService.addFiles(files);
+                onSendToStudio={async (files) => {
                   handleTabChange('studio');
+                  window.dispatchEvent(new CustomEvent('stockflow:reset-media-filter'));
+                  await batchQueueService.addFiles(files);
                 }}
               />
             </div>
@@ -444,9 +445,10 @@ export function App() {
             </div>
             <div className={activeTab === 'eps' ? 'flex-1 min-h-0 h-full px-4 sm:px-6 py-4 overflow-hidden flex flex-col' : 'hidden'}>
               <EpsConverterView
-                onSendToStudio={(files) => {
-                  batchQueueService.addFiles(files);
+                onSendToStudio={async (files) => {
                   handleTabChange('studio');
+                  window.dispatchEvent(new CustomEvent('stockflow:reset-media-filter'));
+                  await batchQueueService.addFiles(files);
                 }}
               />
             </div>
