@@ -298,17 +298,18 @@ export const KeyRingView: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <div
-            title={
+          <Tooltip
+            content={
               language === 'ar'
                 ? 'يتم توزيع الطلبات بالتساوي بين جميع المفاتيح لزيادة السرعة والـ RPM وتفادي قيود الـ Rate Limit، مع التناوب التلقائي.'
                 : 'Requests are balanced evenly across all healthy keys for maximum RPM with automatic failover on rate limits.'
             }
-            className="px-2.5 py-1 rounded-lg bg-secondary/70 border border-border flex items-center gap-1.5 text-xs font-mono text-muted-foreground select-none"
           >
-            <Shuffle className="w-3.5 h-3.5 text-primary" />
-            <span>{language === 'ar' ? 'توزيع ذكي متوازن' : 'Smart Load-Balanced'}</span>
-          </div>
+            <div className="px-2.5 py-1 rounded-lg bg-secondary/70 border border-border flex items-center gap-1.5 text-xs font-mono text-muted-foreground select-none cursor-help">
+              <Shuffle className="w-3.5 h-3.5 text-primary" />
+              <span>{language === 'ar' ? 'توزيع ذكي متوازن' : 'Smart Load-Balanced'}</span>
+            </div>
+          </Tooltip>
 
           {hasCoolingKeys && (
             <Button
@@ -322,14 +323,22 @@ export const KeyRingView: React.FC = () => {
             </Button>
           )}
 
-          <div
-            dir="ltr"
-            className="px-2.5 py-1 rounded-lg bg-secondary border border-border flex items-center gap-1.5 text-xs font-mono tabular-nums"
+          <Tooltip
+            content={
+              language === 'ar'
+                ? 'إجمالي الطلبات في الدقيقة (RPM) المتاحة من جميع المفاتيح النشطة السليمة.'
+                : 'Combined requests per minute (RPM) across all healthy active keys.'
+            }
           >
-            <Activity className="w-3.5 h-3.5 text-primary" />
-            <span className="text-muted-foreground">RPM:</span>
-            <span className="font-semibold text-foreground">{totalHealthyRpm}</span>
-          </div>
+            <div
+              dir="ltr"
+              className="px-2.5 py-1 rounded-lg bg-secondary border border-border flex items-center gap-1.5 text-xs font-mono tabular-nums cursor-help"
+            >
+              <Activity className="w-3.5 h-3.5 text-primary" />
+              <span className="text-muted-foreground">RPM:</span>
+              <span className="font-semibold text-foreground">{totalHealthyRpm}</span>
+            </div>
+          </Tooltip>
 
           <Button
             size="sm"
@@ -514,18 +523,19 @@ export const KeyRingView: React.FC = () => {
                 }`}
               >
                 <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
-                  <div
-                    className="flex items-center gap-1 bg-background border border-border rounded-md px-1.5 py-1 shrink-0 cursor-grab active:cursor-grabbing hover:border-primary/60 transition"
-                    title={language === 'ar' ? 'اسحب لإعادة الترتيب' : 'Drag to reorder priority'}
-                  >
-                    <GripVertical className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span
-                      dir="ltr"
-                      className="text-[10px] font-mono font-bold text-primary tabular-nums"
+                  <Tooltip content={language === 'ar' ? 'اسحب لإعادة الترتيب' : 'Drag to reorder priority'}>
+                    <div
+                      className="flex items-center gap-1 bg-background border border-border rounded-md px-1.5 py-1 shrink-0 cursor-grab active:cursor-grabbing hover:border-primary/60 transition"
                     >
-                      #{idx + 1}
-                    </span>
-                  </div>
+                      <GripVertical className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span
+                        dir="ltr"
+                        className="text-[10px] font-mono font-bold text-primary tabular-nums"
+                      >
+                        #{idx + 1}
+                      </span>
+                    </div>
+                  </Tooltip>
 
                   <div className="space-y-1.5 min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
@@ -556,30 +566,36 @@ export const KeyRingView: React.FC = () => {
                         <span className="select-all break-all font-mono text-[11px]">
                           {formatNormalKey(key)}
                         </span>
-                        <button
-                          type="button"
-                          title={isRevealed ? (language === 'ar' ? 'إخفاء المفتاح' : 'Mask key') : (language === 'ar' ? 'إظهار المفتاح' : 'Show full key')}
-                          onClick={() => handleToggleMask(key.id)}
-                          className="text-muted-foreground hover:text-foreground cursor-pointer shrink-0"
-                        >
-                          {isRevealed ? (
-                            <EyeOff className="w-3 h-3" />
-                          ) : (
-                            <Eye className="w-3 h-3" />
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          title="Copy API key"
-                          onClick={() => handleCopyKey(key.id, plainKey)}
-                          className="text-muted-foreground hover:text-foreground cursor-pointer shrink-0"
-                        >
-                          {copiedId === key.id ? (
-                            <Check className="w-3 h-3 text-emerald-500" />
-                          ) : (
-                            <Copy className="w-3 h-3" />
-                          )}
-                        </button>
+                        <Tooltip content={isRevealed ? (language === 'ar' ? 'إخفاء المفتاح' : 'Mask key') : (language === 'ar' ? 'إظهار المفتاح' : 'Show full key')}>
+                          <button
+                            type="button"
+                            title={isRevealed ? (language === 'ar' ? 'إخفاء المفتاح' : 'Mask key') : (language === 'ar' ? 'إظهار المفتاح' : 'Show full key')}
+                            aria-label={isRevealed ? (language === 'ar' ? 'إخفاء المفتاح' : 'Mask key') : (language === 'ar' ? 'إظهار المفتاح' : 'Show full key')}
+                            onClick={() => handleToggleMask(key.id)}
+                            className="text-muted-foreground hover:text-foreground cursor-pointer shrink-0"
+                          >
+                            {isRevealed ? (
+                              <EyeOff className="w-3 h-3" />
+                            ) : (
+                              <Eye className="w-3 h-3" />
+                            )}
+                          </button>
+                        </Tooltip>
+                        <Tooltip content={language === 'ar' ? 'نسخ مفتاح API' : 'Copy API key'}>
+                          <button
+                            type="button"
+                            title="Copy API key"
+                            aria-label="Copy API key"
+                            onClick={() => handleCopyKey(key.id, plainKey)}
+                            className="text-muted-foreground hover:text-foreground cursor-pointer shrink-0"
+                          >
+                            {copiedId === key.id ? (
+                              <Check className="w-3 h-3 text-emerald-500" />
+                            ) : (
+                              <Copy className="w-3 h-3" />
+                            )}
+                          </button>
+                        </Tooltip>
                       </div>
                       <span>·</span>
                       <span dir="ltr">{key.rpmLimit} RPM</span>
