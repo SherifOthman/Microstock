@@ -147,10 +147,13 @@ export interface PlatformLimitConfig {
 
 export type AiExecutionMode = 'cloud' | 'local';
 
+export type LocalHardwareProfile = 'auto' | 'integrated' | 'dedicated';
+
 export interface LocalAiConfig {
   baseUrl: string; // e.g. 'http://127.0.0.1:1234/v1'
   modelId: string; // e.g. 'default' or detected loaded model
   timeoutSeconds: number; // e.g. 300s
+  hardwareProfile?: LocalHardwareProfile; // 'auto' (default) | 'integrated' (384px iGPU) | 'dedicated' (512px dGPU)
 }
 
 export interface AppSettings {

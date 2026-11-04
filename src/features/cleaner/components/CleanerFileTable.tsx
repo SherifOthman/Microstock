@@ -185,93 +185,66 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
         />
       )}
 
-      {/* Batch Allocation & Action Toolbar (Sticky / Pinned Top Toolbar) */}
-      <div className="p-3 bg-card rounded-xl border border-border flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0 sticky top-0 z-10 shadow-2xs">
-        {/* Categorized Batch Distribution Groups */}
-        <div className="flex flex-col gap-1.5 flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-            <Layers className="w-3.5 h-3.5 text-primary shrink-0" />
-            <span>{language === 'ar' ? 'توزيع الـ Batch:' : 'Batch Allocation:'}</span>
-            <span className="text-muted-foreground font-mono tabular-nums text-[11px] font-normal">
-              ({cleanedItems.length} {language === 'ar' ? 'إجمالي' : 'total'})
+      {/* Compact Single-Row Table Action & Filter Bar */}
+      <div className="px-3 py-2 bg-card rounded-xl border border-border flex flex-wrap items-center justify-between gap-2.5 shrink-0 sticky top-0 z-10 shadow-2xs">
+        {/* Start: Search Filter + Inline Batch Allocation Badges */}
+        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[220px]">
+          <div className="relative w-44 sm:w-56 shrink-0">
+            <Search className="w-3.5 h-3.5 absolute start-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+            <Input
+              placeholder={language === 'ar' ? 'بحث في الأسماء...' : 'Filter filenames...'}
+              value={searchFilter}
+              onChange={(e) => setSearchFilter(e.target.value)}
+              className="h-8 ps-8 text-xs bg-background"
+            />
+          </div>
+
+          <span dir="ltr" className="text-[11px] text-muted-foreground font-mono tabular-nums px-1.5 py-0.5 rounded bg-secondary/60 border border-border shrink-0">
+            {filteredItems.length} / {cleanedItems.length}
+          </span>
+
+          {/* Inline Batch Summary Badges */}
+          {groupedBatches.photos.map((b) => (
+            <span
+              key={`${b.subFolder}-${b.folder}`}
+              dir="ltr"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-mono tabular-nums bg-secondary/60 border-border text-foreground"
+            >
+              <ImageIcon className="w-3 h-3 text-emerald-500 shrink-0" />
+              <strong>{b.folder}:</strong> {b.total}
             </span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2.5 text-xs">
-            {/* PHOTOS */}
-            {groupedBatches.photos.length > 0 && (
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted-foreground bg-secondary/80 px-2 py-0.5 rounded border border-border">
-                  <ImageIcon className="w-3 h-3 text-emerald-500" />
-                  <span>{groupedBatches.photos[0]?.subFolder.startsWith('AI_') ? 'AI Photos' : 'Photos'}</span>
-                </span>
-                <div className="flex items-center gap-1 flex-wrap">
-                  {groupedBatches.photos.map((b) => (
-                    <span
-                      key={`${b.subFolder}-${b.folder}`}
-                      dir="ltr"
-                      className="px-2 py-0.5 rounded border text-[11px] font-mono tabular-nums bg-secondary/60 border-border text-foreground"
-                    >
-                      <strong>{b.folder}:</strong> {b.total}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* VIDEOS */}
-            {groupedBatches.videos.length > 0 && (
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted-foreground bg-secondary/80 px-2 py-0.5 rounded border border-border">
-                  <Film className="w-3 h-3 text-blue-500" />
-                  <span>{groupedBatches.videos[0]?.subFolder.startsWith('AI_') ? 'AI Videos' : 'Videos'}</span>
-                </span>
-                <div className="flex items-center gap-1 flex-wrap">
-                  {groupedBatches.videos.map((b) => (
-                    <span
-                      key={`${b.subFolder}-${b.folder}`}
-                      dir="ltr"
-                      className="px-2 py-0.5 rounded border text-[11px] font-mono tabular-nums bg-secondary/60 border-border text-foreground"
-                    >
-                      <strong>{b.folder}:</strong> {b.total}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* VECTORS */}
-            {groupedBatches.vectors.length > 0 && (
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted-foreground bg-secondary/80 px-2 py-0.5 rounded border border-border">
-                  <PenTool className="w-3 h-3 text-violet-500" />
-                  <span>{groupedBatches.vectors[0]?.subFolder.startsWith('AI_') ? 'AI Vectors' : 'Vectors'}</span>
-                </span>
-                <div className="flex items-center gap-1 flex-wrap">
-                  {groupedBatches.vectors.map((b) => (
-                    <span
-                      key={`${b.subFolder}-${b.folder}`}
-                      dir="ltr"
-                      className="px-2 py-0.5 rounded border text-[11px] font-mono tabular-nums bg-secondary/60 border-border text-foreground"
-                    >
-                      <strong>{b.folder}:</strong> {b.total}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          ))}
+          {groupedBatches.videos.map((b) => (
+            <span
+              key={`${b.subFolder}-${b.folder}`}
+              dir="ltr"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-mono tabular-nums bg-secondary/60 border-border text-foreground"
+            >
+              <Film className="w-3 h-3 text-blue-500 shrink-0" />
+              <strong>{b.folder}:</strong> {b.total}
+            </span>
+          ))}
+          {groupedBatches.vectors.map((b) => (
+            <span
+              key={`${b.subFolder}-${b.folder}`}
+              dir="ltr"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-mono tabular-nums bg-secondary/60 border-border text-foreground"
+            >
+              <PenTool className="w-3 h-3 text-violet-500 shrink-0" />
+              <strong>{b.folder}:</strong> {b.total}
+            </span>
+          ))}
         </div>
 
-        {/* Action Buttons Toolbar */}
-        <div className="flex items-center gap-2 flex-wrap justify-between md:justify-end shrink-0">
+        {/* End: Action Buttons */}
+        <div className="flex items-center gap-1.5 flex-wrap justify-end shrink-0">
           {onClearAll && (
             <Button
               variant="outline"
               size="sm"
               onClick={onClearAll}
               disabled={isProcessing}
-              className="gap-1.5 text-xs text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive cursor-pointer font-medium"
+              className="h-8 gap-1.5 text-xs text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive cursor-pointer font-medium"
             >
               <Trash2 className="w-3.5 h-3.5" />
               <span>{language === 'ar' ? 'مسح الكل' : 'Clear All'}</span>
@@ -283,7 +256,7 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
             size="sm"
             onClick={onSelectFilesClick}
             disabled={isProcessing}
-            className="gap-1.5 text-xs cursor-pointer font-medium"
+            className="h-8 gap-1.5 text-xs cursor-pointer font-medium"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>{t.selectFiles}</span>
@@ -294,7 +267,7 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
             size="sm"
             onClick={onSelectFolderClick}
             disabled={isProcessing}
-            className="gap-1.5 text-xs cursor-pointer font-medium"
+            className="h-8 gap-1.5 text-xs cursor-pointer font-medium"
           >
             <FolderUp className="w-3.5 h-3.5" />
             <span>{t.selectFolder}</span>
@@ -318,7 +291,7 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
                   size="sm"
                   onClick={onSendToStudio}
                   disabled={!isBatchSaved || isProcessing || (cleanedItems.length === 0 && (!lastProcessedFilesCount || lastProcessedFilesCount === 0)) || blockingErrorCount > 0}
-                  className="gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 cursor-pointer"
+                  className="h-8 gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 cursor-pointer"
                 >
                   <Wand2 className="w-3.5 h-3.5" />
                   <span>
@@ -335,7 +308,7 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
             size="sm"
             onClick={onInitiateProcess}
             disabled={isProcessing || cleanedItems.length === 0 || blockingErrorCount > 0}
-            className="gap-1.5 text-xs font-semibold cursor-pointer"
+            className="h-8 gap-1.5 text-xs font-semibold cursor-pointer"
           >
             {isProcessing ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -382,22 +355,6 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
           <span>{progressMsg}</span>
         </div>
       )}
-
-      {/* Search Filter */}
-      <div className="flex items-center justify-between gap-2 text-xs shrink-0">
-        <div className="relative w-full max-w-xs">
-          <Search className="w-3.5 h-3.5 absolute start-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-          <Input
-            placeholder={language === 'ar' ? 'تصفية الأسماء...' : 'Filter filenames...'}
-            value={searchFilter}
-            onChange={(e) => setSearchFilter(e.target.value)}
-            className="h-8 ps-8 text-xs bg-background"
-          />
-        </div>
-        <span dir="ltr" className="text-[11px] text-muted-foreground font-mono tabular-nums">
-          {filteredItems.length} / {cleanedItems.length}
-        </span>
-      </div>
 
       {/* TanStack Virtualized Table (Full Window Height, 60fps for 2,000+ files) */}
       <div className="flex-1 min-h-0 rounded-xl border border-border bg-card overflow-hidden flex flex-col">

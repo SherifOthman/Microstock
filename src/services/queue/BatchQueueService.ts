@@ -4,8 +4,21 @@ import { extractMediaInfo } from '../../utils/mediaExtractor';
 import { terminateEpsWorker } from '../eps/epsEngine';
 import { keyRingScheduler } from '../scheduler/KeyRingScheduler';
 import { getProviderAdapter, localAiAdapter } from '../providers';
-import { SYSTEM_VISION_PROMPT, SYSTEM_LOCAL_VISION_PROMPT, buildVisionPrompt } from '../ai/masterPrompt';
-import { parseAndNormalizeAiMetadata, KeywordPhrasing } from '../ai/metadataParser';
+import {
+  SYSTEM_VISION_PROMPT,
+  SYSTEM_LOCAL_VISION_PROMPT,
+  buildVisionPrompt,
+  buildLocalVisionPrompt,
+  buildLocalKeywordTopUpPrompt,
+} from '../ai/masterPrompt';
+import {
+  parseAndNormalizeAiMetadata,
+  KeywordPhrasing,
+  validateMinimumKeywords,
+  mergeUniqueRankedKeywords,
+  MIN_REQUIRED_KEYWORDS,
+  MAX_LOCAL_KEYWORDS,
+} from '../ai/metadataParser';
 
 export interface QueueItem {
   id: string;
@@ -31,6 +44,7 @@ export interface QueueItem {
   originalSizeBytes?: number;
   compressedSizeBytes?: number;
   latencyMs?: number;
+  processingStartedAt?: number;
   error?: string;
   retryCount: number;
   autoHealCount?: number;
@@ -134,6 +148,7 @@ export class BatchQueueService {
   private completedSinceLastRetry = 0; // Track successes for opportunistic retry
   private readonly OPPORTUNISTIC_RETRY_THRESHOLD = 3; // Re-queue cooled-down failed items after every 3 successes
   private activeAbortControllers: Set<AbortController> = new Set();
+  private itemAbortControllers: Map<string, AbortController> = new Map();
   private queueSessionId = 0;
 
   private constructor() {}
@@ -610,7 +625,9 @@ export class BatchQueueService {
   }
 
   /**
-   * Starts the batch processing queue across all available healthy keys
+   * Starts the batch processing queue sequentially (strictly 1 item at a time).
+   * If the dispatch loop is already running for the active session, newly queued items
+   * simply wait in line without invalidating the active session or spawning parallel workers.
    */
   public async start(
     isAiGenerated = true,
@@ -619,17 +636,19 @@ export class BatchQueueService {
     keywordPhrasing: KeywordPhrasing = 'mixed',
     titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal'
   ): Promise<void> {
-    this.status = 'running';
-    this.queueSessionId++;
-    const currentSession = this.queueSessionId;
-    this.startTimer();
-    this.notify();
-
-    if (this.isLoopActive) {
+    if (this.status === 'running' && this.isLoopActive) {
+      this.startTimer();
+      this.notify();
       return;
     }
 
-    // Fill concurrency slots up to maximum healthy keys capacity
+    this.status = 'running';
+    this.queueSessionId++;
+    const currentSession = this.queueSessionId;
+    this.isLoopActive = true;
+    this.startTimer();
+    this.notify();
+
     this.dispatchLoop(isAiGenerated, userPrompt, defaultModelName, keywordPhrasing, titleLengthPreset, currentSession);
   }
 
@@ -641,9 +660,8 @@ export class BatchQueueService {
     titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal',
     session?: number
   ): Promise<void> {
-    if (this.isLoopActive) return;
-    this.isLoopActive = true;
     const currentSession = session !== undefined ? session : this.queueSessionId;
+    this.isLoopActive = true;
 
     try {
       while (this.status === 'running' && this.queueSessionId === currentSession) {
@@ -691,40 +709,55 @@ export class BatchQueueService {
               if (waitMs > 0) {
                 await new Promise((r) => setTimeout(r, waitMs));
               }
-              if (this.status !== 'running') break;
+              if (this.status !== 'running' || this.queueSessionId !== currentSession) break;
               this.promoteCooledDownFailedItems(true);
               continue;
             }
 
-            this.status = 'completed';
-            this.stopTimer();
-            this.notify();
-            await this.saveBatchToDB();
+            if (this.queueSessionId === currentSession) {
+              this.status = this.items.size > 0 ? 'completed' : 'idle';
+              this.stopTimer();
+              this.notify();
+              await this.saveBatchToDB();
+            }
             break;
           }
           await new Promise((r) => setTimeout(r, 100));
           continue;
         }
 
-        // Mark item as processing so another loop iteration won't pick it
+        // Mark ONLY this single item as processing; all other waiting items remain 'ready' (Queued)
         pendingItem.status = 'processing';
-        this.activeWorkers++;
+        pendingItem.processingStartedAt = Date.now();
+        this.activeWorkers = 1;
         this.notify();
 
-        // Launch async worker for this item
-        this.processSingleItem(pendingItem, isAiGenerated, userPrompt, defaultModelName, keywordPhrasing, titleLengthPreset, currentSession)
-          .catch((err) => {
-            console.error(`Item processing failed for ${pendingItem.filename}:`, err);
-          })
-          .finally(() => {
-            this.activeWorkers = Math.max(0, this.activeWorkers - 1);
+        try {
+          await this.processSingleItem(
+            pendingItem,
+            isAiGenerated,
+            userPrompt,
+            defaultModelName,
+            keywordPhrasing,
+            titleLengthPreset,
+            currentSession
+          );
+        } catch (err) {
+          console.error(`Item processing failed for ${pendingItem.filename}:`, err);
+        } finally {
+          if (this.queueSessionId === currentSession) {
+            this.activeWorkers = 0;
             this.notify();
-          });
+          }
+        }
 
-        await new Promise((r) => setTimeout(r, 50));
+        if (this.status !== 'running' || this.queueSessionId !== currentSession) break;
+        await new Promise((r) => setTimeout(r, 30));
       }
     } finally {
-      this.isLoopActive = false;
+      if (this.queueSessionId === currentSession) {
+        this.isLoopActive = false;
+      }
     }
   }
 
@@ -741,6 +774,7 @@ export class BatchQueueService {
       return this.status !== 'running' || (currentSession !== 0 && this.queueSessionId !== currentSession) || !this.items.has(item.id);
     };
 
+    await new Promise((r) => setTimeout(r, 0));
     if (isCancelled()) return;
     if (!item.thumbnailBase64) {
       item.status = 'error';
@@ -769,6 +803,7 @@ export class BatchQueueService {
       const startTime = performance.now();
       const abortController = new AbortController();
       this.activeAbortControllers.add(abortController);
+      this.itemAbortControllers.set(item.id, abortController);
       let watchdogTimer: any;
 
       try {
@@ -794,17 +829,26 @@ export class BatchQueueService {
         const processingTask = (async () => {
           if (isCancelled()) return;
 
-          const prompt = buildVisionPrompt(
-            item.filename,
-            userPrompt,
-            item.mediaType,
-            keywordPhrasing,
-            titleLengthPreset,
-            item.hasRealPreview,
-            item.videoResolution,
-            item.videoWidth,
-            item.videoHeight
-          );
+          const prompt = isLocalMode
+            ? buildLocalVisionPrompt(
+                item.filename,
+                userPrompt,
+                item.mediaType,
+                keywordPhrasing,
+                titleLengthPreset,
+                item.hasRealPreview
+              )
+            : buildVisionPrompt(
+                item.filename,
+                userPrompt,
+                item.mediaType,
+                keywordPhrasing,
+                titleLengthPreset,
+                item.hasRealPreview,
+                item.videoResolution,
+                item.videoWidth,
+                item.videoHeight
+              );
 
           let rawAiText: string;
 
@@ -828,7 +872,8 @@ export class BatchQueueService {
               prompt,
               SYSTEM_LOCAL_VISION_PROMPT,
               abortController.signal,
-              localTimeoutMs
+              localTimeoutMs,
+              localConfig.hardwareProfile || 'auto'
             );
           } else {
             // 1. Acquire key lease from KeyRingScheduler
@@ -906,9 +951,6 @@ export class BatchQueueService {
             }
           }
 
-          const latencyMs = Math.round(performance.now() - startTime);
-          item.latencyMs = latencyMs;
-
           // 3. Parse & normalize Master Metadata Record with requested keyword phrasing
           const effectiveIsAi =
             typeof item.isAiGenerated === 'boolean' ? item.isAiGenerated : isAiGenerated;
@@ -925,6 +967,110 @@ export class BatchQueueService {
             item.videoWidth,
             item.videoHeight
           );
+
+          const maxKeywordsAllowed = isLocalMode ? MAX_LOCAL_KEYWORDS : 50;
+          if (masterRecord.rankedKeywords.length > maxKeywordsAllowed) {
+            masterRecord.rankedKeywords = masterRecord.rankedKeywords.slice(0, maxKeywordsAllowed);
+          }
+
+          // 3b. Enforce 45+ Keywords Validation with Capped 2-Retry Loop
+          let kwValidation = validateMinimumKeywords(masterRecord.rankedKeywords, MIN_REQUIRED_KEYWORDS);
+          let kwRetryCount = 0;
+          const MAX_KEYWORD_VALIDATION_RETRIES = 2;
+
+          while (!kwValidation.isValid && kwRetryCount < MAX_KEYWORD_VALIDATION_RETRIES) {
+            if (isCancelled() || abortController.signal.aborted) break;
+            kwRetryCount++;
+            const validationFeedback = kwValidation.retryMessage!;
+            const baseSysPrompt = isLocalMode ? SYSTEM_LOCAL_VISION_PROMPT : SYSTEM_VISION_PROMPT;
+            const retrySystemPrompt = `${baseSysPrompt}\n\n${validationFeedback}`;
+            const neededCount = Math.max(1, MIN_REQUIRED_KEYWORDS - masterRecord.rankedKeywords.length);
+            const retryUserPrompt = isLocalMode
+              ? buildLocalKeywordTopUpPrompt(
+                  masterRecord.baseTitle,
+                  masterRecord.detailedDescription,
+                  masterRecord.rankedKeywords,
+                  neededCount,
+                  validationFeedback
+                )
+              : `${prompt}\n\nCRITICAL: ${validationFeedback}`;
+
+            try {
+              let retryRawText = '';
+              if (isLocalMode) {
+                const localTimeoutMs = (localConfig.timeoutSeconds || 300) * 1000;
+                // Pass empty string '' for imageBase64 on Local AI keyword top-up so Iris Xe GPU skips vision re-encoding!
+                retryRawText = await localAiAdapter.analyzeImage(
+                  localConfig.baseUrl,
+                  localConfig.modelId,
+                  '',
+                  retryUserPrompt,
+                  retrySystemPrompt,
+                  abortController.signal,
+                  localTimeoutMs,
+                  localConfig.hardwareProfile || 'auto'
+                );
+              } else if (lease?.keyRecord) {
+                const adapter = getProviderAdapter(lease.keyRecord.providerId);
+                retryRawText = await adapter.analyzeImage(
+                  lease.keyRecord.key,
+                  lease.keyRecord.modelId,
+                  item.thumbnailBase64!,
+                  retryUserPrompt,
+                  retrySystemPrompt,
+                  abortController.signal
+                );
+              }
+
+              if (!retryRawText || typeof retryRawText !== 'string') {
+                break;
+              }
+
+              const hasExplicitTitleInRetry = /"base_title"\s*:/i.test(retryRawText);
+              const retryRecord = parseAndNormalizeAiMetadata(
+                retryRawText,
+                item.filename,
+                item.thumbnailDataUrl || `data:image/jpeg;base64,${item.thumbnailBase64}`,
+                this.currentBatchId,
+                effectiveIsAi,
+                defaultModelName,
+                keywordPhrasing,
+                item.mediaType,
+                item.videoResolution,
+                item.videoWidth,
+                item.videoHeight
+              );
+
+              if (hasExplicitTitleInRetry && retryRecord.rankedKeywords.length >= masterRecord.rankedKeywords.length) {
+                masterRecord.rankedKeywords = mergeUniqueRankedKeywords(
+                  retryRecord.rankedKeywords,
+                  masterRecord.rankedKeywords,
+                  maxKeywordsAllowed
+                );
+                if (retryRecord.baseTitle) masterRecord.baseTitle = retryRecord.baseTitle;
+                if (retryRecord.detailedDescription) {
+                  masterRecord.detailedDescription = retryRecord.detailedDescription;
+                }
+              } else {
+                masterRecord.rankedKeywords = mergeUniqueRankedKeywords(
+                  masterRecord.rankedKeywords,
+                  retryRecord.rankedKeywords,
+                  maxKeywordsAllowed
+                );
+              }
+
+              kwValidation = validateMinimumKeywords(masterRecord.rankedKeywords, MIN_REQUIRED_KEYWORDS);
+            } catch (kwRetryErr: any) {
+              if (abortController.signal.aborted || isCancelled()) {
+                throw kwRetryErr;
+              }
+              break;
+            }
+          }
+
+          const latencyMs = Math.round(performance.now() - startTime);
+          item.latencyMs = latencyMs;
+
           masterRecord.id = item.id;
           // CRITICAL FIX: Preserve original creation timestamp so item never jumps to top of list!
           const existingRecord = await db.masterRecords.get(item.id);
@@ -1047,15 +1193,38 @@ export class BatchQueueService {
         }
 
         // Silent backoff before background retry if we have attempts remaining
-        if (attempt < maxAttempts && this.status === 'running') {
+        if (attempt < maxAttempts && this.status === 'running' && !isCancelled()) {
           item.error = `Retrying (${attempt}/${maxAttempts}): ${err.message || String(err)}`;
           this.notify();
-          // Yield to UI and wait 1.5s before next attempt
-          await new Promise((r) => setTimeout(r, 1500 * attempt));
+          // Abortable backoff sleep so removing or stopping the item during retry wakes immediately
+          const retrySleepCtrl = new AbortController();
+          this.itemAbortControllers.set(item.id, retrySleepCtrl);
+          this.activeAbortControllers.add(retrySleepCtrl);
+          try {
+            await new Promise<void>((resolve) => {
+              const t = setTimeout(resolve, 1500 * attempt);
+              retrySleepCtrl.signal.addEventListener(
+                'abort',
+                () => {
+                  clearTimeout(t);
+                  resolve();
+                },
+                { once: true }
+              );
+            });
+          } finally {
+            this.activeAbortControllers.delete(retrySleepCtrl);
+            if (this.itemAbortControllers.get(item.id) === retrySleepCtrl) {
+              this.itemAbortControllers.delete(item.id);
+            }
+          }
         }
       } finally {
         if (watchdogTimer) clearTimeout(watchdogTimer);
         this.activeAbortControllers.delete(abortController);
+        if (this.itemAbortControllers.get(item.id) === abortController) {
+          this.itemAbortControllers.delete(item.id);
+        }
       }
     }
 
@@ -1086,12 +1255,14 @@ export class BatchQueueService {
       } catch {}
     }
     this.activeAbortControllers.clear();
+    this.itemAbortControllers.clear();
   }
 
   public pause(): void {
     if (this.status === 'running') {
       this.status = 'paused';
       this.queueSessionId++;
+      this.isLoopActive = false;
       this.abortAllInFlight();
       this.stopTimer();
       this.activeWorkers = 0;
@@ -1108,6 +1279,7 @@ export class BatchQueueService {
   public stop(): void {
     this.status = 'idle';
     this.queueSessionId++;
+    this.isLoopActive = false;
     this.abortAllInFlight();
     this.stopTimer();
     this.activeWorkers = 0;
@@ -1178,7 +1350,7 @@ export class BatchQueueService {
         }
 
         await db.masterRecords.update(rec.id, {
-          status: 'processing',
+          status: 'pending' as any,
           errorMessage: undefined,
         });
       }
@@ -1260,7 +1432,31 @@ export class BatchQueueService {
   }
 
   public removeItem(id: string): void {
+    // 1. Immediately abort any in-flight HTTP request or retry backoff timer for this item
+    const ctrl = this.itemAbortControllers.get(id);
+    if (ctrl) {
+      try {
+        ctrl.abort(new Error('Item removed by user'));
+      } catch {}
+      this.itemAbortControllers.delete(id);
+      this.activeAbortControllers.delete(ctrl);
+    }
+
+    // 2. Remove item from in-memory queue
     this.items.delete(id);
+
+    // 3. If no active/queued items remain, unlock queue status immediately
+    if (this.status === 'running') {
+      const remainingActive = Array.from(this.items.values()).some(
+        (i) => i.status === 'ready' || i.status === 'resizing' || i.status === 'processing'
+      );
+      if (!remainingActive) {
+        this.status = this.items.size > 0 ? 'completed' : 'idle';
+        this.stopTimer();
+        this.activeWorkers = 0;
+      }
+    }
+
     this.notify();
   }
 
@@ -1298,6 +1494,15 @@ export class BatchQueueService {
       }
     }
 
+    // If this specific item is currently in flight, abort its previous run before re-queuing
+    const prevCtrl = this.itemAbortControllers.get(id);
+    if (prevCtrl) {
+      try {
+        prevCtrl.abort(new Error('Reprocessing item'));
+      } catch {}
+      this.itemAbortControllers.delete(id);
+    }
+
     const existing = this.items.get(id);
     if (existing) {
       existing.status = 'ready';
@@ -1305,6 +1510,7 @@ export class BatchQueueService {
       existing.isRetry = true;
       existing.error = undefined;
       existing.metadataRecord = undefined;
+      existing.processingStartedAt = undefined;
     } else {
       const rec = await db.masterRecords.get(id);
       if (rec) {
@@ -1330,8 +1536,9 @@ export class BatchQueueService {
     }
 
     try {
+      // Mark as 'pending' (Queued) in DB until dispatchLoop actually selects this item as the single 'processing' worker
       await db.masterRecords.update(id, {
-        status: 'processing',
+        status: 'pending' as any,
         errorMessage: undefined,
       });
     } catch (e) {
@@ -1343,8 +1550,8 @@ export class BatchQueueService {
   }
 
   /**
-   * Global Regenerate All: Takes all items in batch / DB, resets them to 'ready',
-   * updates DB status to 'processing', and dispatches the queue loop.
+   * Global Regenerate All: Takes all items in batch / DB, resets them to 'ready' (Queued),
+   * updates DB status to 'pending', and dispatches the sequential queue loop.
    */
   public async reprocessAll(
     isAiGenerated = true,
@@ -1389,17 +1596,18 @@ export class BatchQueueService {
         item.isRetry = true;
         item.error = undefined;
         item.metadataRecord = undefined;
+        item.processingStartedAt = undefined;
       }
     }
 
-    // 2. Mark all records as processing in Dexie DB
+    // 2. Mark all records as pending (Queued) in DB; dispatchLoop will promote 1 at a time to 'processing'
     try {
       await db.masterRecords.toCollection().modify({
-        status: 'processing',
+        status: 'pending' as any,
         errorMessage: undefined,
       });
     } catch (e) {
-      console.warn('Could not update all masterRecords to processing:', e);
+      console.warn('Could not update all masterRecords to pending:', e);
     }
 
     this.notify();

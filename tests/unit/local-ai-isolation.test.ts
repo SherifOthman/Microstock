@@ -61,7 +61,7 @@ describe('Local LM Studio Integration with Strict Isolation', () => {
 
       // Verify multipart payload structure
       expect(capturedBody.model).toBe('lfm-3-vl-2b');
-      expect(capturedBody.temperature).toBe(0.2);
+      expect(capturedBody.temperature).toBe(0.1);
       expect(capturedBody.messages).toHaveLength(2);
       expect(capturedBody.messages[0]).toEqual({ role: 'system', content: 'You are a microstock assistant.' });
       expect(capturedBody.messages[1].role).toBe('user');

@@ -20,7 +20,7 @@ export const StockTemplatesModal: React.FC<StockTemplatesModalProps> = ({ open, 
   const activeTemplate = CSV_TEMPLATES.find((t) => t.id === selectedId) || CSV_TEMPLATES[0];
 
   const generateCsvString = (tpl: CsvTemplateSpec): string => {
-    const delimiter = tpl.id === 'freepik' ? ';' : ',';
+    const delimiter = tpl.delimiter || (tpl.id === 'freepik' ? ';' : ',');
     const escapeCell = (val: string) => {
       if (val.includes(delimiter) || val.includes('"') || val.includes('\n')) {
         return `"${val.replace(/"/g, '""')}"`;
@@ -30,10 +30,12 @@ export const StockTemplatesModal: React.FC<StockTemplatesModalProps> = ({ open, 
 
     const headerRow = tpl.headers.map(escapeCell).join(delimiter);
     const dataRows = tpl.sampleRows.map((row) => row.map(escapeCell).join(delimiter));
-    return [headerRow, ...dataRows].join('\r\n');
+    const newline = tpl.id === 'adobe' ? '\r\n' : '\n';
+    return [headerRow, ...dataRows].join(newline) + newline;
   };
 
   const handleDownloadSample = async (tpl: CsvTemplateSpec) => {
+    const cleanDownloadName = tpl.fileName.split(' ')[0].replace('{batch}_', 'sample_');
     try {
       const response = await fetch(tpl.sampleUrl);
       if (response.ok) {
@@ -41,7 +43,7 @@ export const StockTemplatesModal: React.FC<StockTemplatesModalProps> = ({ open, 
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.setAttribute('download', tpl.sampleUrl.split('/').pop() || tpl.fileName);
+        link.setAttribute('download', cleanDownloadName);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -52,12 +54,12 @@ export const StockTemplatesModal: React.FC<StockTemplatesModalProps> = ({ open, 
       // Fallback to generated CSV string
     }
 
-    const csvContent = '\uFEFF' + generateCsvString(tpl);
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const csvContent = generateCsvString(tpl);
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', tpl.fileName.split(' ')[0]);
+    link.setAttribute('download', cleanDownloadName);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -65,7 +67,7 @@ export const StockTemplatesModal: React.FC<StockTemplatesModalProps> = ({ open, 
   };
 
   const handleCopyHeaders = (tpl: CsvTemplateSpec) => {
-    const delimiter = tpl.id === 'freepik' ? ';' : ',';
+    const delimiter = tpl.delimiter || (tpl.id === 'freepik' ? ';' : ',');
     navigator.clipboard.writeText(tpl.headers.join(delimiter));
     setCopiedId(tpl.id);
     setTimeout(() => setCopiedId(null), 1500);
@@ -81,7 +83,7 @@ export const StockTemplatesModal: React.FC<StockTemplatesModalProps> = ({ open, 
       title={language === 'ar' ? 'قوالب ومعايير CSV للمنصات الست' : '6-Platform CSV Specifications & Samples'}
       size="lg"
     >
-      <div className="space-y-4 text-xs">
+      <div className="space-y-3.5 text-xs">
         {/* Platform Selector Tabs */}
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 p-1 bg-secondary rounded-lg border border-border">
           {CSV_TEMPLATES.map((tpl) => {
@@ -107,18 +109,22 @@ export const StockTemplatesModal: React.FC<StockTemplatesModalProps> = ({ open, 
         {/* Active Platform Specification Panel */}
         <div className="rounded-xl border border-border bg-card overflow-hidden">
           {/* Header Row */}
-          <div className="p-4 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-secondary/40">
+          <div className="p-3.5 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-secondary/40">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-lg bg-card border border-border flex items-center justify-center shrink-0">
                 {getPlatformLogo(activeTemplate.id as any, 20)}
               </div>
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <h3 dir="ltr" className="text-sm font-semibold text-foreground">{activeTemplate.name}</h3>
-                  <span className="text-[11px] font-mono text-muted-foreground">
-                    · {activeTemplate.headers.length} {language === 'ar' ? 'أعمدة' : 'Columns'}
-                    {activeTemplate.id === 'freepik' ? ' (;)' : ' (,)'}
-                  </span>
+                  <Badge variant="outline" className="font-mono text-[10px] px-1.5 py-0 h-4.5 bg-card">
+                    {activeTemplate.headers.length} {language === 'ar' ? 'أعمدة' : 'Cols'}
+                  </Badge>
+                  <Badge variant="outline" className="font-mono text-[10px] px-1.5 py-0 h-4.5 bg-card">
+                    {activeTemplate.delimiter === ';'
+                      ? language === 'ar' ? 'فاصل ;' : 'Delimiter (;)'
+                      : language === 'ar' ? 'فاصل ,' : 'Delimiter (,)'}
+                  </Badge>
                 </div>
                 <p dir="ltr" className="text-[11px] text-muted-foreground font-mono mt-0.5 text-start">{activeTemplate.fileName}</p>
               </div>
@@ -157,7 +163,7 @@ export const StockTemplatesModal: React.FC<StockTemplatesModalProps> = ({ open, 
             </div>
           </div>
 
-          <div className="p-4 space-y-4">
+          <div className="p-3.5 space-y-3.5">
             {/* Limits Summary Row */}
             <div className="grid grid-cols-3 gap-2.5">
               <div className="p-2.5 rounded-lg bg-secondary/60 border border-border">
@@ -193,7 +199,9 @@ export const StockTemplatesModal: React.FC<StockTemplatesModalProps> = ({ open, 
                   {language === 'ar' ? 'الكلمات المفتاحية (Keywords)' : 'Max Keywords'}
                 </span>
                 <span className="text-xs font-mono font-semibold text-primary tabular-nums">
-                  {language === 'ar' ? `${activeTemplate.maxKeywords} كلمة` : `${activeTemplate.maxKeywords} tags`}
+                  {activeTemplate.id === 'freepik'
+                    ? language === 'ar' ? '49 (AI) / 50 (أصلي)' : '49 (AI) / 50 (Real)'
+                    : language === 'ar' ? `${activeTemplate.maxKeywords} كلمة` : `${activeTemplate.maxKeywords} tags`}
                 </span>
               </div>
             </div>
@@ -202,7 +210,15 @@ export const StockTemplatesModal: React.FC<StockTemplatesModalProps> = ({ open, 
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5 font-semibold text-foreground">
                 <FileSpreadsheet className="w-3.5 h-3.5 text-primary" />
-                <span>{language === 'ar' ? 'ترتيب الأعمدة الرسمي' : 'Column Schema'}</span>
+                <span>
+                  {activeTemplate.secondaryHeaders
+                    ? language === 'ar'
+                      ? 'هيكل أعمدة الصور والمتجهات (15 عموداً — {batch}_dreamstime_images.csv)'
+                      : 'Images & Vectors Schema (15 Columns — {batch}_dreamstime_images.csv)'
+                    : language === 'ar'
+                    ? 'ترتيب الأعمدة الرسمي'
+                    : 'Column Schema'}
+                </span>
               </div>
               <div className="flex flex-wrap gap-1.5 p-2.5 rounded-lg bg-secondary/50 border border-border" dir="ltr">
                 {activeTemplate.headers.map((h, i) => (
@@ -212,6 +228,27 @@ export const StockTemplatesModal: React.FC<StockTemplatesModalProps> = ({ open, 
                   </Badge>
                 ))}
               </div>
+
+              {activeTemplate.secondaryHeaders && (
+                <div className="pt-1.5 space-y-1.5">
+                  <div className="flex items-center gap-1.5 font-semibold text-foreground">
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-primary" />
+                    <span>
+                      {language === 'ar'
+                        ? activeTemplate.secondaryHeadersLabelAr || activeTemplate.secondaryHeadersLabel
+                        : activeTemplate.secondaryHeadersLabel}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 p-2.5 rounded-lg bg-secondary/50 border border-border" dir="ltr">
+                    {activeTemplate.secondaryHeaders.map((h, i) => (
+                      <Badge key={h} variant="outline" className="font-mono text-[11px] bg-card border-border text-foreground">
+                        <span className="text-muted-foreground mr-1 tabular-nums">{i + 1}.</span>
+                        {h}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Sample Data Preview Table */}

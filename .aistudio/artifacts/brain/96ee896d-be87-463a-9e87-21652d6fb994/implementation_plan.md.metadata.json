@@ -1,6 +1,6 @@
 {
-  "summary": "Revised Implementation Plan for the File Cleaner Asset Origin (Real vs AI) Isolation feature, incorporating single-word terminology ('Real' / 'أصلي' vs 'AI' / 'ذكاء اصطناعي'), 6-track dynamic folder routing, and strict per-track batch continuation.",
-  "updatedAt": "2026-11-03T17:03:03.734377725Z",
+  "summary": "Comprehensive architectural plan for optimizing LFM3-VL-2B Local AI inference, 4-bucket 45-49 keyword generation with fast text-only top-up fallback, auto-scaling hardware profiles (iGPU Laptop vs Dedicated GPU), and an embedded LM Studio tuning checklist—while keeping Cloud KeyRing 100% untouched.",
+  "updatedAt": "2026-11-04T19:39:03.549769247Z",
   "requestFeedback": true,
   "userFacing": true
 }

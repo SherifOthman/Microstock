@@ -1,5 +1,5 @@
 import React, { useRef, useState, useMemo, useCallback, useTransition } from 'react';
-import { db, useSqliteQuery } from '../../db';
+import { db, useSqliteQuery, getAppSettings } from '../../db';
 import { useLanguage } from '../../context/LanguageContext';
 import {
   useBatchQueue,
@@ -54,7 +54,10 @@ export const StudioView: React.FC<StudioViewProps> = ({ onOpenVideoMuter }) => {
   const dialogs = useStudioDialogs();
 
   const keys = useSqliteQuery(() => db.apiKeys.toArray(), [], []) || [];
+  const appSettings = useSqliteQuery(() => getAppSettings(), [], null);
+  const isLocalMode = appSettings?.aiExecutionMode === 'local';
   const healthyKeys = useMemo(() => keys.filter((k) => k.status !== 'invalid' && k.status !== 'disabled'), [keys]);
+  const canRunAi = isLocalMode || healthyKeys.length > 0;
   const combinedRpm = useMemo(() => healthyKeys.reduce((acc, k) => acc + (k.rpmLimit || 15), 0), [healthyKeys]);
   const [isKeyShake, setIsKeyShake] = useState(false);
 
@@ -181,14 +184,14 @@ export const StudioView: React.FC<StudioViewProps> = ({ onOpenVideoMuter }) => {
   }, [handleFiles]);
 
   const handleStart = useCallback(() => {
-    if (healthyKeys.length === 0) {
+    if (!canRunAi) {
       setIsKeyShake(true);
       setTimeout(() => setIsKeyShake(false), 800);
       return;
     }
     const model = settings.freepikModel === 'Other' ? settings.customFreepikModel : settings.freepikModel;
     start(settings.isAiGenerated, settings.userCustomPrompt, model, settings.keywordPhrasing, settings.titleLengthPreset);
-  }, [healthyKeys, settings, start]);
+  }, [canRunAi, settings, start]);
 
   const handleResume = useCallback(() => {
     const model = settings.freepikModel === 'Other' ? settings.customFreepikModel : settings.freepikModel;
@@ -213,9 +216,11 @@ export const StudioView: React.FC<StudioViewProps> = ({ onOpenVideoMuter }) => {
   const handleDeleteSingle = useCallback(async () => {
     if (dialogs.assetToDelete) {
       const { id } = dialogs.assetToDelete;
-      await db.masterRecords.delete(id);
-      remove(id);
       dialogs.setAssetToDelete(null);
+      // 1. Immediately abort any in-flight generation and remove from in-memory queue
+      remove(id);
+      // 2. Delete from persistent storage
+      await db.masterRecords.delete(id);
     }
   }, [dialogs, remove]);
 
@@ -263,7 +268,7 @@ export const StudioView: React.FC<StudioViewProps> = ({ onOpenVideoMuter }) => {
       />
 
       <main className="flex-1 w-full min-w-0 space-y-3 h-full min-h-0 flex flex-col overflow-hidden pr-1">
-        {healthyKeys.length === 0 && (
+        {!canRunAi && (
           <Alert variant="warning" className={isKeyShake ? 'animate-shake ring-2 ring-amber-500/50' : ''}>
             <KeyRound className="w-4 h-4" />
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full">
@@ -328,7 +333,7 @@ export const StudioView: React.FC<StudioViewProps> = ({ onOpenVideoMuter }) => {
           failedCount={failedCount}
           isRunning={isRunning}
           isPaused={isPaused}
-          hasHealthyKeys={healthyKeys.length > 0}
+          hasHealthyKeys={canRunAi}
           isResizing={queueState.status === 'resizing'}
           mediaTypeFilter={mediaTypeFilter}
           onMediaTypeFilterChange={(f) => {

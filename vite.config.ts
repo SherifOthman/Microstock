@@ -16,8 +16,9 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
-    strictPort: true,
+    port: Number(process.env.PORT) || 3000,
+    host: '0.0.0.0',
+    strictPort: false,
     open: false,
     proxy: {
       '/api/cloudflare': {

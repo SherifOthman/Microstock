@@ -100,6 +100,28 @@ export const AssetCard: React.FC<AssetCardProps> = React.memo(({
   const isError = asset.status === 'error';
   const hasNonAsciiInFilename = /\u2026|[^\x00-\x7F]/.test(asset.filename);
 
+  const rawLatencyMs = rec?.aiGenerationInfo?.latencyMs ?? asset.queueItem?.latencyMs;
+  const durationSec =
+    typeof rawLatencyMs === 'number' && rawLatencyMs > 0
+      ? Math.max(1, Math.round(rawLatencyMs / 1000))
+      : null;
+
+  const [liveElapsedSec, setLiveElapsedSec] = useState<number>(0);
+
+  useEffect(() => {
+    if (!isProcessing) {
+      setLiveElapsedSec(0);
+      return;
+    }
+    const startedAt = asset.queueItem?.processingStartedAt || Date.now();
+    const updateElapsed = () => {
+      setLiveElapsedSec(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    };
+    updateElapsed();
+    const intervalId = setInterval(updateElapsed, 1000);
+    return () => clearInterval(intervalId);
+  }, [isProcessing, asset.queueItem?.processingStartedAt]);
+
   const isVideo =
     asset.queueItem?.mediaType === 'video' ||
     rec?.mediaType === 'video' ||
@@ -221,17 +243,20 @@ export const AssetCard: React.FC<AssetCardProps> = React.memo(({
             <span dir="ltr">{formatBytes(originalSize)}</span>
             <span>·</span>
             {isCompleted && (
-              <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                {t.completedStatus}
+              <span className="text-emerald-600 dark:text-emerald-400 font-medium" data-testid={`asset-ready-badge-${asset.id}`}>
+                {durationSec !== null ? `${t.completedStatus} (${durationSec}s)` : t.completedStatus}
               </span>
             )}
             {isProcessing && (
-              <span className="inline-flex items-center gap-1 text-primary font-medium">
+              <span className="inline-flex items-center gap-1 text-primary font-medium" data-testid={`asset-processing-badge-${asset.id}`}>
                 <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                {t.processingStatus}
+                <span>
+                  {t.processingStatus}
+                  {liveElapsedSec > 0 ? ` (${liveElapsedSec}s)` : ''}
+                </span>
               </span>
             )}
-            {isQueued && <span>{t.queuedStatus}</span>}
+            {isQueued && <span data-testid={`asset-queued-badge-${asset.id}`}>{t.queuedStatus}</span>}
             {isError && <span className="text-destructive font-medium">{t.failedStatus}</span>}
           </div>
         </div>

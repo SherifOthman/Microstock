@@ -244,9 +244,15 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
           console.warn('[FileCleaner] Failed to reconcile with DB records:', dbErr);
         }
         setMediaBatches(scannedMedia);
-        if (res.batches) {
-          setExistingBatches(res.batches);
-        }
+        const allTrackBatches = [
+          ...(scannedMedia.Photos || []),
+          ...(scannedMedia.Videos || []),
+          ...(scannedMedia.Vectors || []),
+          ...(scannedMedia.AI_Photos || []),
+          ...(scannedMedia.AI_Videos || []),
+          ...(scannedMedia.AI_Vectors || []),
+        ];
+        setExistingBatches(allTrackBatches.length > 0 ? allTrackBatches : res.batches || []);
       } else {
         setMediaBatches(EMPTY_MEDIA_BATCHES);
         setExistingBatches([]);

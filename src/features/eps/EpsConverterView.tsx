@@ -70,7 +70,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
   }, [sortedItems]);
 
   return (
-    <div className="w-full max-w-6xl mx-auto flex-1 min-h-0 h-full flex flex-col gap-3 overflow-hidden">
+    <div className="w-full flex-1 min-h-0 h-full flex flex-col gap-2.5 overflow-hidden">
       <input
         ref={fileInputRef}
         type="file"
@@ -88,39 +88,16 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
         onChange={onFileInputChange}
       />
 
-      {/* Compact Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card border border-border p-3.5 rounded-xl shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-secondary text-primary border border-border">
-            <Layers className="w-4 h-4" />
-          </div>
-          <div className="text-start">
-            <h1 className="text-sm sm:text-base font-semibold text-foreground tracking-tight">
-              {language === 'ar' ? 'محول EPS إلى JPG (300 DPI)' : 'EPS 10 to High-Res JPG Engine'}
-            </h1>
-            <p className="text-xs text-muted-foreground">
-              {language === 'ar'
-                ? 'تحويل متجهات Illustrator إلى صور JPG بدقة 300 DPI ونظام ألوان RGB وخلفية بيضاء.'
-                : 'Ghostscript 300 DPI vector rasterization in sRGB with pure white canvas.'}
-            </p>
-          </div>
-        </div>
-
-        <span className="text-[11px] font-mono text-muted-foreground shrink-0">
-          {language === 'ar' ? '300 DPI · RGB · جودة 100%' : '300 DPI · RGB · 100% Quality'}
-        </span>
-      </div>
-
       {/* Status Notice */}
       {statusMessage && (
         <div
-          className={`p-3 rounded-lg border text-xs font-medium flex items-center gap-2 shrink-0 ${
+          className={`px-3 py-2 rounded-lg border text-xs font-medium flex items-center gap-2 shrink-0 ${
             statusMessage.type === 'success'
               ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
               : 'bg-destructive/10 border-destructive/30 text-destructive'
           }`}
         >
-          {statusMessage.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <Layers className="w-4 h-4" />}
+          {statusMessage.type === 'success' ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> : <Layers className="w-3.5 h-3.5 shrink-0" />}
           <span>{statusMessage.text}</span>
         </div>
       )}
@@ -143,11 +120,11 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
               {language === 'ar' ? 'اسحب ملفات EPS هنا للتحويل' : 'Drop EPS vector files here'}
             </h3>
             <p dir="ltr" className="text-xs text-muted-foreground font-mono">
-              .eps · .ai (EPS 10 / EPS 8)
+              .eps · .ai (300 DPI · sRGB)
             </p>
           </div>
           <div className="flex items-center justify-center gap-2 pt-1">
-            <Button size="sm" onClick={() => fileInputRef.current?.click()} className="gap-1.5 text-xs font-semibold cursor-pointer">
+            <Button size="sm" onClick={() => fileInputRef.current?.click()} className="h-8 gap-1.5 text-xs font-semibold cursor-pointer">
               <Plus className="w-3.5 h-3.5" />
               <span>{t.selectFiles}</span>
             </Button>
@@ -155,7 +132,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
               variant="outline"
               size="sm"
               onClick={() => folderInputRef.current?.click()}
-              className="gap-1.5 text-xs cursor-pointer"
+              className="h-8 gap-1.5 text-xs cursor-pointer"
             >
               <FolderUp className="w-3.5 h-3.5" />
               <span>{t.selectFolder}</span>
@@ -163,9 +140,9 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
           </div>
         </div>
       ) : (
-        <div className="flex-1 min-h-0 h-full flex flex-col gap-2.5 overflow-hidden">
-          {/* Sticky Action Toolbar with Both "Add Files" & "Add Folder" */}
-          <div className="flex flex-wrap items-center justify-between gap-3 bg-card border border-border p-3 rounded-xl shrink-0 sticky top-0 z-10">
+        <div className="flex-1 min-h-0 h-full flex flex-col gap-2 overflow-hidden">
+          {/* Compact Single-Row Action Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-2 bg-card border border-border px-3 py-2 rounded-xl shrink-0 sticky top-0 z-10">
             <div className="flex items-center gap-2 text-xs font-mono tabular-nums">
               <span className="font-semibold text-foreground">
                 {items.length} {language === 'ar' ? 'ملف' : 'files'}
@@ -176,12 +153,12 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
               </span>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => fileInputRef.current?.click()}
-                className="gap-1.5 text-xs cursor-pointer"
+                className="h-8 px-2.5 gap-1.5 text-xs cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>{t.selectFiles}</span>
@@ -191,7 +168,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
                 variant="outline"
                 size="sm"
                 onClick={() => folderInputRef.current?.click()}
-                className="gap-1.5 text-xs cursor-pointer"
+                className="h-8 px-2.5 gap-1.5 text-xs cursor-pointer"
               >
                 <FolderUp className="w-3.5 h-3.5" />
                 <span>{t.selectFolder}</span>
@@ -201,7 +178,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
                 size="sm"
                 onClick={handleConvertAll}
                 disabled={isConvertingBatch || allCompleted}
-                className="gap-1.5 text-xs font-semibold cursor-pointer"
+                className="h-8 px-3 gap-1.5 text-xs font-semibold cursor-pointer"
               >
                 {isConvertingBatch ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                 <span>{language === 'ar' ? 'تحويل الكل إلى JPG' : 'Render All to JPG'}</span>
@@ -212,7 +189,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
                 size="sm"
                 onClick={handleSaveToDirectory}
                 disabled={completedCount === 0 || isConvertingBatch}
-                className="gap-1.5 text-xs font-semibold cursor-pointer"
+                className="h-8 px-3 gap-1.5 text-xs font-semibold cursor-pointer"
               >
                 <FolderDown className="w-3.5 h-3.5" />
                 <span>
@@ -242,7 +219,7 @@ export const EpsConverterView: React.FC<EpsConverterViewProps> = ({ onSendToStud
                       size="sm"
                       onClick={handleSendToStudio}
                       disabled={!allCompleted || isConvertingBatch || !isBatchSaved}
-                      className="gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 cursor-pointer"
+                      className="h-8 px-3 gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 cursor-pointer"
                     >
                       <Wand2 className="w-3.5 h-3.5" />
                       <span>

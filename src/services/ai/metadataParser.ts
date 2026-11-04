@@ -57,6 +57,11 @@ export interface RawAiOutput {
   base_title?: string;
   detailed_description?: string;
   ranked_keywords?: string[] | string;
+  subject_keywords?: string[] | string;
+  concept_keywords?: string[] | string;
+  mood_style_keywords?: string[] | string;
+  setting_color_keywords?: string[] | string;
+  additional_keywords?: string[] | string;
   category_adobe?: number;
   category_shutterstock?: string[] | string;
   dreamstime_category_1?: string | number;
@@ -233,17 +238,36 @@ export function parseAndNormalizeAiMetadata(
     'is', 'it', 'as', 'into', 'like', 'than', 'onto'
   ]);
 
-  let rawList: string[] = [];
-  if (Array.isArray(parsed.ranked_keywords)) {
-    rawList = parsed.ranked_keywords
-      .map((k) => String(k ?? '').trim().toLowerCase())
-      .filter(Boolean);
-  } else if (typeof parsed.ranked_keywords === 'string') {
-    rawList = (parsed.ranked_keywords ?? '')
-      .split(',')
-      .map((k) => (k ?? '').trim().toLowerCase())
-      .filter(Boolean);
-  }
+  const extractFieldArray = (field?: string[] | string): string[] => {
+    if (!field) return [];
+    if (Array.isArray(field)) {
+      return field.map((k) => String(k ?? '').trim().toLowerCase()).filter(Boolean);
+    }
+    if (typeof field === 'string') {
+      return field
+        .split(',')
+        .map((k) => (k ?? '').trim().toLowerCase())
+        .filter(Boolean);
+    }
+    return [];
+  };
+
+  const hasLocalBuckets = Boolean(
+    parsed.subject_keywords ||
+      parsed.concept_keywords ||
+      parsed.mood_style_keywords ||
+      parsed.setting_color_keywords ||
+      parsed.additional_keywords
+  );
+
+  const rawList: string[] = [
+    ...extractFieldArray(parsed.ranked_keywords),
+    ...extractFieldArray(parsed.subject_keywords),
+    ...extractFieldArray(parsed.concept_keywords),
+    ...extractFieldArray(parsed.mood_style_keywords),
+    ...extractFieldArray(parsed.setting_color_keywords),
+    ...extractFieldArray(parsed.additional_keywords),
+  ];
 
   let finalKeywords: string[] = [];
 
@@ -378,7 +402,9 @@ export function parseAndNormalizeAiMetadata(
     ? finalKeywords
     : rebalanceTopKeywords(finalKeywords);
 
-  const uniqueKeywords = rebalancedKeywords.slice(0, 50);
+  // Local 4-bucket schema strictly caps at 49 keywords (45 to 49 target range); legacy flat schema caps at 50
+  const maxKeywordCap = hasLocalBuckets ? 49 : 50;
+  const uniqueKeywords = rebalancedKeywords.slice(0, maxKeywordCap);
 
   if (uniqueKeywords.length < 10) {
     throw new Error(`AI generated only ${uniqueKeywords.length} keywords for "${filename}" (minimum 10 required). Triggering failover retry.`);
@@ -463,7 +489,7 @@ export function parseAndNormalizeAiMetadata(
     isAiGenerated,
     baseTitle,
     detailedDescription,
-    rankedKeywords: uniqueKeywords.slice(0, 50),
+    rankedKeywords: uniqueKeywords.slice(0, maxKeywordCap),
     mediaType,
     videoMeta: (videoResolution || videoWidth || videoHeight) ? {
       resolution: videoResolution,
@@ -679,13 +705,87 @@ function extractFallbackRegex(text: string): RawAiOutput {
   const descMatch = text.match(/"detailed_description"\s*:\s*"([^"]+)"/i);
   if (descMatch) result.detailed_description = descMatch[1];
 
-  const kwMatch = text.match(/"ranked_keywords"\s*:\s*\[([^\]]+)\]/i);
-  if (kwMatch) {
-    result.ranked_keywords = (kwMatch[1] ?? '')
-      .split(',')
-      .map((k) => (k ?? '').replace(/["']/g, '').trim())
-      .filter(Boolean);
+  const bucketKeys = [
+    'ranked_keywords',
+    'subject_keywords',
+    'concept_keywords',
+    'mood_style_keywords',
+    'setting_color_keywords',
+    'additional_keywords',
+  ] as const;
+
+  const collectedFallbackKeywords: string[] = [];
+  for (const key of bucketKeys) {
+    const regex = new RegExp(`"${key}"\\s*:\\s*\\[([^\\]]+)`, 'i');
+    const match = text.match(regex);
+    if (match && match[1]) {
+      const items = match[1]
+        .split(',')
+        .map((k) => (k ?? '').replace(/["'\r\n]/g, '').trim())
+        .filter(Boolean);
+      collectedFallbackKeywords.push(...items);
+    }
+  }
+
+  if (collectedFallbackKeywords.length > 0) {
+    result.ranked_keywords = collectedFallbackKeywords;
   }
 
   return result;
 }
+
+export const MIN_REQUIRED_KEYWORDS = 45;
+export const MAX_LOCAL_KEYWORDS = 49;
+
+export interface KeywordValidationResult {
+  isValid: boolean;
+  count: number;
+  retryMessage?: string;
+}
+
+/**
+ * Validates that the normalized keyword list meets the 45+ microstock tag requirement.
+ * Returns the exact system retry prompt message when count < minRequired.
+ */
+export function validateMinimumKeywords(
+  keywords: string[],
+  minRequired = MIN_REQUIRED_KEYWORDS
+): KeywordValidationResult {
+  const count = Array.isArray(keywords) ? keywords.length : 0;
+  if (count < minRequired) {
+    return {
+      isValid: false,
+      count,
+      retryMessage: `You only provided ${count} keywords. You MUST provide at least ${minRequired} keywords.`,
+    };
+  }
+  return {
+    isValid: true,
+    count,
+  };
+}
+
+/**
+ * Merges two ranked keyword arrays while preserving priority order and case-insensitive uniqueness.
+ */
+export function mergeUniqueRankedKeywords(
+  existing: string[],
+  incoming: string[],
+  maxCount = 50
+): string[] {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+
+  for (const kw of [...(existing || []), ...(incoming || [])]) {
+    const clean = (kw ?? '').trim().toLowerCase();
+    if (!clean || clean.length < 2) continue;
+    if (!seen.has(clean)) {
+      seen.add(clean);
+      merged.push(clean);
+      if (merged.length >= maxCount) break;
+    }
+  }
+
+  return merged;
+}
+

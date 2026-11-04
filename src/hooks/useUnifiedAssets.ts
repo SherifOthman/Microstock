@@ -145,6 +145,24 @@ export function useUnifiedAssets(
     // Strict in-place deterministic sort
     const allRows = sortUnifiedAssets(Array.from(rowMap.values()));
 
+    // Enforce strict sequential UI invariant: at most 1 item can ever display "Generating..." (processing) at a time.
+    // Prefer the active in-memory queue item; demote any other 'processing' rows to 'queued'.
+    const activeInMemoryId = queueState.items.find((i) => i.status === 'processing')?.id;
+    let seenProcessing = false;
+    for (const row of allRows) {
+      if (row.status === 'processing') {
+        if (activeInMemoryId) {
+          if (row.id !== activeInMemoryId) {
+            row.status = 'queued';
+          }
+        } else if (seenProcessing) {
+          row.status = 'queued';
+        } else {
+          seenProcessing = true;
+        }
+      }
+    }
+
     // Filter by search query & status filter
     const query = searchQuery.trim().toLowerCase();
     const filteredAssets = allRows.filter((asset) => {

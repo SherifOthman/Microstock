@@ -56,30 +56,6 @@ export const FileCleanerView: React.FC<FileCleanerViewProps> = ({ onSendToStudio
         className="hidden"
       />
 
-      {/* Compact Workspace Header */}
-      <div className="p-3.5 rounded-xl border border-border bg-card flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-secondary text-primary border border-border">
-            <Sparkles className="w-4 h-4" />
-          </div>
-          <div>
-            <h1 className="text-sm sm:text-base font-semibold text-foreground tracking-tight">
-              {language === 'ar'
-                ? 'منظم ومُسمّي ملفات الستوك'
-                : 'Batch File Cleaner & Sequential Renamer'}
-            </h1>
-            <p className="text-xs text-muted-foreground">
-              {language === 'ar'
-                ? 'تنظيف الأسماء، فحص الأبعاد، والفرز التلقائي إلى مجلدات الـ Batch.'
-                : 'Sanitize filenames, verify agency resolution thresholds, and auto-route into batch folders.'}
-            </p>
-          </div>
-        </div>
-        <span className="text-[11px] font-mono text-muted-foreground shrink-0">
-          {language === 'ar' ? '≤ 55 حرف · فحص 4K/1080p' : '≤ 55 chars · 4K/1080p Check'}
-        </span>
-      </div>
-
       {/* Post-Process Handoff Banner when queue was saved */}
       {c.rawFiles.length === 0 && c.lastProcessedFiles.length > 0 && onSendToStudio && (
         <div className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shrink-0">

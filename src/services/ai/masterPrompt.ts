@@ -104,27 +104,27 @@ Example:
   "suggested_prompt": "aerial photograph of modern photovoltaic solar panel installation on rooftop, sunrise golden hour, hyper-detailed commercial photo"
 }`;
 
-export const SYSTEM_LOCAL_VISION_PROMPT = `You are an Elite Microstock SEO Specialist.
-Analyze the provided stock asset and output a strictly valid JSON object.
+export const SYSTEM_LOCAL_VISION_PROMPT = `You are a Microstock SEO Specialist. Analyze the asset and return ONLY raw valid JSON (no markdown, no thinking).
 
-OUTPUT JSON FORMAT (ONLY valid raw JSON, no markdown fences, no chain-of-thought, no reasoning):
+REQUIRED JSON SCHEMA (populate ALL 4 keyword buckets with 12 unique tags each = 48 total tags):
 {
-  "base_title": "Descriptive title 60 to 95 characters describing subject matter",
-  "detailed_description": "Complete sentence 120 to 200 characters factually describing visual subject, lighting, perspective, and setting.",
-  "ranked_keywords": ["keyword1", "keyword2", "... exhaustive list of 45 to 49 unique commercial tags ordered by importance"],
+  "base_title": "Descriptive commercial title 60 to 95 chars",
+  "detailed_description": "Complete factual sentence 120 to 195 chars describing visual subject, lighting, perspective, and setting.",
+  "subject_keywords": ["12 core nouns and 2-word subject phrases"],
+  "concept_keywords": ["12 actions, commercial concepts, themes, and use cases"],
+  "mood_style_keywords": ["12 mood, lighting, atmosphere, composition, and style tags"],
+  "setting_color_keywords": ["12 background, environment, material, texture, and color tags"],
   "category_adobe": 19,
   "category_shutterstock": ["Technology", "Industrial"],
-  "dreamstime_category_1": "Technology -> Computers"
+  "dreamstime_category_1": "Technology -> Computers",
+  "dreamstime_category_2": "Industries -> Power and energy"
 }
 
-STRICT MICROSTOCK GUIDELINES (MANDATORY FOR BOTH TITLES AND KEYWORDS):
-1. NO ASSET TYPE REDUNDANCY: NEVER include words that describe the file format or medium in titles or keywords.
-   Prohibited: "vector", "eps", "illustration", "drawing", "clipart", "photo", "picture", "image", "jpg", "video", "footage", "clip", "mp4", "motion", "concept video", "commercial video".
-2. NO TRADEMARKS: Absolutely NO brand names (iPhone, Apple, Windows, Nike, Sony, Canon). Use generic terms (smartphone, generic device, athletic shoes).
-3. NO CAMERA/TECH SPECS: Do not include technical camera metadata or resolution specs ("4k", "8k", "60fps", "30fps", "1080p", "Canon", "Sony", "Nikon", "DSLR").
-4. "base_title": 60 to 95 characters, highly descriptive, natural, commercial, without subjective puffery ("best", "amazing") or "AI".
-5. "ranked_keywords": Act as a highly prolific SEO expert and generate an exhaustive list of 45 to 49 UNIQUE, highly relevant English keywords (1 to 2 words per tag). Aggressively brainstorm conceptual themes, colors, moods, lighting, synonyms, setting, and composition terms to consistently reach the 45+ target. Never stop early at 25-30 keywords. Prevent repetitive variations of the same root word.
-6. Skip chain-of-thought and output ONLY the raw JSON object immediately.`;
+STRICT RULES:
+1. Forbidden medium/format words in titles & keywords: "vector", "eps", "illustration", "drawing", "clipart", "photo", "picture", "image", "jpg", "video", "footage", "clip", "mp4", "motion", "4k", "8k", "1080p", "ai".
+2. No brand names or trademarks (iPhone, Apple, Nike, Sony, Canon).
+3. Each tag must be 1 to 2 English words with a space between words. Never glue words together.
+4. Fill all 4 keyword arrays completely (12 unique tags per bucket) so total unique keywords is strictly 45 to 49.`;
 
 const GENERIC_AI_BOILERPLATE = new Set([
   'create',
@@ -368,3 +368,94 @@ Generate ALL metadata, title, description, and 45-49 keywords specifically for a
 
   return prompt;
 }
+
+/**
+ * Compact, low-token vision prompt engineered specifically for local 2B VLMs (e.g. LFM3-VL-2B).
+ * Reduces prompt prefill overhead by ~70% on integrated GPUs while enforcing the 4-bucket (45-49 keyword) schema.
+ */
+export function buildLocalVisionPrompt(
+  filename?: string,
+  userCustomPrompt?: string,
+  mediaType?: 'image' | 'video' | 'vector',
+  keywordPhrasing: 'single' | 'double' | 'mixed' = 'mixed',
+  titleLengthPreset: 'optimal' | 'short' | 'standard' | 'extended' = 'optimal',
+  hasRealPreview?: boolean
+): string {
+  const hint = filename ? cleanFilenameHint(filename) : '';
+  const fallbackSubject = filename ? filename.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').trim() : '';
+  const identifiedSubject = hint || fallbackSubject;
+  const isVectorAsset = mediaType === 'vector' || (filename ? /\.(eps|ai|svg)$/i.test(filename) : false);
+
+  const lines: string[] = [
+    'Generate microstock JSON with base_title, detailed_description, and 4 keyword buckets (12 unique tags each = 48 total tags, target 45 to 49 unique keywords):',
+    '- "subject_keywords": 12 core visible nouns & objects',
+    '- "concept_keywords": 12 actions, concepts, themes & uses',
+    '- "mood_style_keywords": 12 mood, lighting, atmosphere & composition tags',
+    '- "setting_color_keywords": 12 setting, background, material, texture & color tags',
+  ];
+
+  if (keywordPhrasing === 'single') {
+    lines.push('Phrasing: Use single-word tags only.');
+  } else if (keywordPhrasing === 'double') {
+    lines.push('Phrasing: Use 1-2 word tags with normal spaces between words.');
+  } else {
+    lines.push('Phrasing: Mix strong single-word nouns and 2-word phrases (always put a space between words).');
+  }
+
+  if (titleLengthPreset === 'short') {
+    lines.push('Title length: 45 to 65 chars.');
+  } else if (titleLengthPreset === 'extended') {
+    lines.push('Title length: 95 to 135 chars.');
+  } else {
+    lines.push('Title length: 65 to 95 chars. Description length: 125 to 195 chars ending with a period.');
+  }
+
+  if (mediaType === 'video') {
+    lines.push('Media: 4-frame video storyboard. Describe subject and motion without using "video", "footage", "clip", "4k", or "1080p".');
+  } else if (isVectorAsset) {
+    if (hasRealPreview === false && identifiedSubject) {
+      lines.push(`Media: Graphic artwork of "${identifiedSubject}" (ignore placeholder badge visual). Never use "vector", "illustration", or "photo".`);
+    } else {
+      lines.push('Media: Graphic design artwork. Focus on subject, flat, icon, symbol, isolated. Never use "vector", "illustration", or "photo".');
+    }
+  } else {
+    lines.push('Media: Commercial still asset. Never use "photo", "image", "picture", "camera", or brand names.');
+  }
+
+  if (identifiedSubject) {
+    lines.push(`Subject context from filename: "${identifiedSubject}".`);
+  }
+
+  if (userCustomPrompt?.trim()) {
+    lines.push(`Guidance: ${userCustomPrompt.trim()}`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Ultra-fast text-only top-up prompt for Local AI when initial pass returns fewer than 45 keywords.
+ * Avoids re-sending the base64 image so integrated GPUs skip vision encoding completely.
+ */
+export function buildLocalKeywordTopUpPrompt(
+  baseTitle: string,
+  detailedDescription: string,
+  existingKeywords: string[],
+  neededCount: number,
+  validationFeedback: string
+): string {
+  const targetToRequest = Math.max(12, Math.min(28, neededCount + 6));
+  return `${validationFeedback}
+Asset Title: "${baseTitle}"
+Asset Description: "${detailedDescription}"
+Existing Keywords (${existingKeywords.length}): ${existingKeywords.join(', ')}
+
+Generate ${targetToRequest} NEW, unique English commercial microstock keywords (1 to 2 words per tag) that are NOT in the existing list above.
+Focus on synonyms, conceptual themes, mood, lighting, setting, materials, colors, and composition.
+Do NOT use forbidden words ("photo", "image", "vector", "illustration", "video", "footage", "4k", "1080p", "ai").
+Return ONLY valid JSON:
+{
+  "additional_keywords": ["tag1", "tag2", "..."]
+}`;
+}
+

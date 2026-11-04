@@ -74,7 +74,7 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
   }, [items]);
 
   return (
-    <div className="w-full max-w-6xl mx-auto flex-1 min-h-0 h-full flex flex-col gap-3 overflow-hidden">
+    <div className="w-full flex-1 min-h-0 h-full flex flex-col gap-2.5 overflow-hidden">
       <input
         ref={fileInputRef}
         type="file"
@@ -92,33 +92,10 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
         className="hidden"
       />
 
-      {/* Header Bar */}
-      <div className="p-3.5 rounded-xl border border-border bg-card flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-secondary text-primary border border-border">
-            <VolumeX className="w-4 h-4" />
-          </div>
-          <div className="text-start">
-            <h1 className="text-sm sm:text-base font-semibold text-foreground tracking-tight">
-              {language === 'ar' ? 'حذف صوت الفيديو بدون إعادة ترميز' : 'Lossless Video Audio Stripper'}
-            </h1>
-            <p className="text-xs text-muted-foreground">
-              {language === 'ar'
-                ? 'إزالة مسارات الصوت من ملفات MP4 و MOV مع الحفاظ على الاسم الأصلي ودقة الفيديو 100%.'
-                : 'Strip audio tracks from MP4 and MOV containers while preserving exact original filenames.'}
-            </p>
-          </div>
-        </div>
-
-        <span className="text-[11px] font-mono text-muted-foreground shrink-0">
-          {language === 'ar' ? 'MP4 · MOV · بدون إعادة ترميز' : 'MP4 · MOV · Zero Re-encode'}
-        </span>
-      </div>
-
       {/* Success Banner */}
       {exportSuccessMessage && (
-        <div className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-2 shrink-0">
-          <CheckCircle2 className="w-4 h-4 shrink-0" />
+        <div className="px-3 py-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-2 shrink-0">
+          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
           <span>{exportSuccessMessage}</span>
         </div>
       )}
@@ -139,12 +116,12 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
             </h3>
             <p className="text-xs text-muted-foreground">
               {language === 'ar'
-                ? 'فحص تلقائي لوجود الصوت وحذفه في أجزاء من الثانية.'
-                : 'Automatic audio track detection and sub-second stream stripping.'}
+                ? 'فحص تلقائي لوجود الصوت وحذفه بدون إعادة ترميز.'
+                : 'Automatic audio track detection and lossless stream stripping.'}
             </p>
           </div>
           <div className="flex items-center justify-center gap-2 pt-1">
-            <Button size="sm" onClick={() => fileInputRef.current?.click()} className="gap-1.5 text-xs font-semibold cursor-pointer">
+            <Button size="sm" onClick={() => fileInputRef.current?.click()} className="h-8 gap-1.5 text-xs font-semibold cursor-pointer">
               <Plus className="w-3.5 h-3.5" />
               <span>{t.selectFiles}</span>
             </Button>
@@ -152,7 +129,7 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
               variant="outline"
               size="sm"
               onClick={() => folderInputRef.current?.click()}
-              className="gap-1.5 text-xs cursor-pointer"
+              className="h-8 gap-1.5 text-xs cursor-pointer"
             >
               <FolderUp className="w-3.5 h-3.5" />
               <span>{t.selectFolder}</span>
@@ -160,9 +137,9 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
           </div>
         </div>
       ) : (
-        <div className="flex-1 min-h-0 h-full flex flex-col gap-2.5 overflow-hidden">
-          {/* Sticky Action Toolbar with Both "Add Files" and "Add Folder" + Standalone "Save to Folder" */}
-          <div className="p-3 bg-card rounded-xl border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 sticky top-0 z-10">
+        <div className="flex-1 min-h-0 h-full flex flex-col gap-2 overflow-hidden">
+          {/* Compact Single-Row Action Bar */}
+          <div className="px-3 py-2 bg-card rounded-xl border border-border flex flex-wrap items-center justify-between gap-2 shrink-0 sticky top-0 z-10">
             <div className="flex items-center gap-2 text-xs font-mono tabular-nums">
               <span className="font-semibold text-foreground">
                 {items.length} {language === 'ar' ? 'فيديو' : 'videos'}
@@ -173,12 +150,12 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
               </span>
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => fileInputRef.current?.click()}
-                className="gap-1.5 text-xs cursor-pointer"
+                className="h-8 px-2.5 gap-1.5 text-xs cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>{t.selectFiles}</span>
@@ -188,7 +165,7 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
                 variant="outline"
                 size="sm"
                 onClick={() => folderInputRef.current?.click()}
-                className="gap-1.5 text-xs cursor-pointer"
+                className="h-8 px-2.5 gap-1.5 text-xs cursor-pointer"
               >
                 <FolderUp className="w-3.5 h-3.5" />
                 <span>{t.selectFolder}</span>
@@ -199,7 +176,7 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
                   size="sm"
                   onClick={handleMuteAll}
                   disabled={isMutingBatch}
-                  className="gap-1.5 text-xs font-semibold cursor-pointer"
+                  className="h-8 px-3 gap-1.5 text-xs font-semibold cursor-pointer"
                 >
                   {isMutingBatch ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -215,7 +192,7 @@ export const VideoMuterView: React.FC<VideoMuterViewProps> = ({ onSendToStudio }
                 variant={completedCount === items.length ? 'default' : 'secondary'}
                 onClick={handleExportToFolder}
                 disabled={isExporting}
-                className="gap-1.5 text-xs font-semibold cursor-pointer"
+                className="h-8 px-3 gap-1.5 text-xs font-semibold cursor-pointer"
               >
                 {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FolderUp className="w-3.5 h-3.5" />}
                 <span>{language === 'ar' ? 'حفظ في مجلد' : 'Save to Folder'}</span>
