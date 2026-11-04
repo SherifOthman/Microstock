@@ -361,7 +361,11 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
   }, [cleanedItems]);
 
   const softWarningCount = useMemo(() => {
-    return cleanedItems.filter((i) => i.validation?.warningType === 'photo_low_resolution').length;
+    return cleanedItems.filter(
+      (i) =>
+        (i.subFolder === 'Photos' || i.subFolder === 'AI_Photos') &&
+        i.validation?.warningType === 'photo_low_resolution'
+    ).length;
   }, [cleanedItems]);
 
   // Non-upscaled photos that require upscaling to 4K+ (width < 3000 || height < 3000)

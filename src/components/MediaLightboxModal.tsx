@@ -185,6 +185,22 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
         if (cached) return cached;
       }
     } else if (currentAsset.mediaType === 'vector') {
+      const companionPath = (currentAsset.file as any)?.__companionJpgNativePath;
+      if (companionPath) {
+        return `stockflow://local?path=${encodeURIComponent(companionPath)}`;
+      }
+      const companionFile = (currentAsset.file as any)?.__companionJpg;
+      if (companionFile && companionFile.size > 0 && typeof URL.createObjectURL === 'function') {
+        const cacheKey = `${companionFile.name}-${companionFile.size}-${companionFile.lastModified}`;
+        let cached = objectUrlCacheRef.current.get(cacheKey);
+        if (!cached) {
+          try {
+            cached = URL.createObjectURL(companionFile);
+            objectUrlCacheRef.current.set(cacheKey, cached);
+          } catch {}
+        }
+        if (cached) return cached;
+      }
       const vectorCacheKey = `eps_${currentAsset.id}_${currentAsset.filename}`;
       const cached = objectUrlCacheRef.current.get(vectorCacheKey);
       if (cached) return cached;
@@ -231,6 +247,20 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
         setVideoObjectUrl(currentAsset.fallbackPreviewUrl);
       }
     } else if (currentAsset.mediaType === 'vector') {
+      const companionPath = (currentAsset.file as any)?.__companionJpgNativePath;
+      if (companionPath) {
+        setDynamicImageUrl(`stockflow://local?path=${encodeURIComponent(companionPath)}`);
+        return;
+      }
+      const companionFile = (currentAsset.file as any)?.__companionJpg;
+      if (companionFile && companionFile.size > 0 && typeof URL.createObjectURL === 'function') {
+        try {
+          const companionBlobUrl = URL.createObjectURL(companionFile);
+          objectUrlCacheRef.current.set(`companion_${currentAsset.id}`, companionBlobUrl);
+          setDynamicImageUrl(companionBlobUrl);
+          return;
+        } catch {}
+      }
       const vectorCacheKey = `eps_${currentAsset.id}_${currentAsset.filename}`;
       const alreadyCached = objectUrlCacheRef.current.get(vectorCacheKey);
       if (alreadyCached) {

@@ -248,6 +248,45 @@ export class BatchQueueService {
     const validMediaFiles = files.filter((f) => BatchQueueService.isSupportedStockMediaFile(f));
     if (validMediaFiles.length === 0) return;
 
+    // Detect paired vector assets (.eps/.ai + companion .jpg/.jpeg/.png preview)
+    // If an EPS and JPG share the exact same base stem name, ingest ONLY the .eps file
+    // and attach the companion .jpg to it for instant, lightweight preview extraction.
+    const VECTOR_EXTS = new Set(['eps', 'ai', 'svg']);
+    const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp']);
+
+    const getStem = (name: string) => {
+      const lastDot = name.lastIndexOf('.');
+      return (lastDot > 0 ? name.slice(0, lastDot) : name).trim().toLowerCase();
+    };
+
+    const vectorFileMap = new Map<string, File>();
+    for (const f of validMediaFiles) {
+      const ext = f.name.split('.').pop()?.toLowerCase() || '';
+      if (VECTOR_EXTS.has(ext)) {
+        vectorFileMap.set(getStem(f.name), f);
+      }
+    }
+
+    const companionFilesToSkip = new Set<File>();
+    for (const f of validMediaFiles) {
+      const ext = f.name.split('.').pop()?.toLowerCase() || '';
+      if (IMAGE_EXTS.has(ext)) {
+        const stem = getStem(f.name);
+        const matchingVector = vectorFileMap.get(stem);
+        if (matchingVector && matchingVector !== f) {
+          companionFilesToSkip.add(f);
+          (matchingVector as any).__companionJpg = f;
+          const companionPath = (f as any).__nativePath || (f as any).path || '';
+          if (companionPath) {
+            (matchingVector as any).__companionJpgNativePath = companionPath;
+          }
+        }
+      }
+    }
+
+    const filesToQueue = validMediaFiles.filter((f) => !companionFilesToSkip.has(f));
+    if (filesToQueue.length === 0) return;
+
     if (this.status === 'idle' && this.items.size === 0) {
       this.currentBatchId = crypto.randomUUID();
       this.batchName = `Batch #${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
@@ -260,8 +299,8 @@ export class BatchQueueService {
     const baseTime = Date.now();
     let detectedExplicitOrigin: boolean | null = null;
 
-    for (let i = 0; i < validMediaFiles.length; i++) {
-      const file = validMediaFiles[i];
+    for (let i = 0; i < filesToQueue.length; i++) {
+      const file = filesToQueue[i];
       const id = crypto.randomUUID();
       const sourceMediaType = (file as any).__sourceMediaType as MediaType | undefined;
       const createdAt = baseTime + i;
@@ -362,6 +401,7 @@ export class BatchQueueService {
         }
         const sourceMediaType = (item.file as any).__sourceMediaType;
         const companionEpsName = (item.file as any).__companionEpsName;
+        const companionJpgNativePath = (item.file as any).__companionJpgNativePath;
         const isAiGeneratedProp = (item.file as any).__isAiGenerated;
         const assetOriginProp = (item.file as any).__assetOrigin;
         // Replace multi-MB File Blob in heap with a 0-byte shell preserving metadata & native OS path
@@ -377,6 +417,9 @@ export class BatchQueueService {
         }
         if (companionEpsName) {
           Object.defineProperty(shellFile, '__companionEpsName', { value: companionEpsName, configurable: true });
+        }
+        if (companionJpgNativePath) {
+          Object.defineProperty(shellFile, '__companionJpgNativePath', { value: companionJpgNativePath, configurable: true });
         }
         if (typeof isAiGeneratedProp === 'boolean') {
           Object.defineProperty(shellFile, '__isAiGenerated', { value: isAiGeneratedProp, configurable: true });
@@ -433,8 +476,9 @@ export class BatchQueueService {
                 extractTimer = setTimeout(() => reject(new Error('Media extraction timed out after ' + (timeoutMs / 1000) + 's')), timeoutMs);
               });
 
+              const companionFile = (item.file as any)?.__companionJpg;
               const media = await Promise.race([
-                extractMediaInfo(item.file, undefined, 384, 0.72),
+                extractMediaInfo(item.file, companionFile, 384, 0.72),
                 extractTimeoutPromise,
               ]);
 

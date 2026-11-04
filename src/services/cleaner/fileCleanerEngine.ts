@@ -666,9 +666,43 @@ export function processFilesForBatchIngest(
 ): CleanedFileItem[] {
   if (files.length === 0) return [];
 
-  // Count fuzzy keys across all imported files to detect duplicates
-  const fuzzyCounts = new Map<string, number>();
+  const VECTOR_EXTENSIONS = new Set(['eps', 'ai', 'svg']);
+  const RASTER_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp']);
+
+  const getFileStem = (filename: string): string => {
+    const lastDot = filename.lastIndexOf('.');
+    return (lastDot > 0 ? filename.slice(0, lastDot) : filename).trim().toLowerCase();
+  };
+
+  // Identify all vector files by their base name stem
+  const vectorStems = new Set<string>();
   for (const f of files) {
+    const ext = f.name.split('.').pop()?.toLowerCase() || '';
+    if (VECTOR_EXTENSIONS.has(ext)) {
+      vectorStems.add(getFileStem(f.name));
+    }
+  }
+
+  // Count fuzzy keys across all imported files to detect duplicates.
+  // A vector file (.eps) and its companion preview image (.jpg) represent a SINGLE paired stock asset.
+  // Do NOT double count them against each other so they are never falsely flagged as duplicates!
+  const fuzzyCounts = new Map<string, number>();
+  const countedPairStems = new Set<string>();
+
+  for (const f of files) {
+    const ext = f.name.split('.').pop()?.toLowerCase() || '';
+    const stem = getFileStem(f.name);
+    const isPairedRaster = RASTER_EXTENSIONS.has(ext) && vectorStems.has(stem);
+
+    if (isPairedRaster) {
+      if (countedPairStems.has(stem)) {
+        continue;
+      }
+      countedPairStems.add(stem);
+    } else if (VECTOR_EXTENSIONS.has(ext)) {
+      countedPairStems.add(stem);
+    }
+
     const key = getFuzzyNormalizedBaseName(f.name);
     if (key.length >= 2) {
       fuzzyCounts.set(key, (fuzzyCounts.get(key) || 0) + 1);
@@ -682,7 +716,41 @@ export function processFilesForBatchIngest(
     );
   } else {
     // Default: Shuffle (Random Mix)
-    orderedFiles = shuffleArray(files, shuffleSeed);
+    // Keep linked EPS + JPG vector pairs adjacent so they stay unified when reviewing batches
+    const pairedGroups = new Map<string, File[]>();
+    const singles: File[] = [];
+
+    for (const f of files) {
+      const ext = f.name.split('.').pop()?.toLowerCase() || '';
+      const stem = getFileStem(f.name);
+      const isPairedRaster = RASTER_EXTENSIONS.has(ext) && vectorStems.has(stem);
+      if (VECTOR_EXTENSIONS.has(ext) || isPairedRaster) {
+        if (!pairedGroups.has(stem)) {
+          pairedGroups.set(stem, []);
+        }
+        pairedGroups.get(stem)!.push(f);
+      } else {
+        singles.push(f);
+      }
+    }
+
+    // In each pair, ensure the .eps is ordered first, followed by the companion .jpg
+    for (const group of pairedGroups.values()) {
+      group.sort((a, b) => {
+        const aExt = a.name.split('.').pop()?.toLowerCase() || '';
+        const bExt = b.name.split('.').pop()?.toLowerCase() || '';
+        const aIsVec = VECTOR_EXTENSIONS.has(aExt) ? 0 : 1;
+        const bIsVec = VECTOR_EXTENSIONS.has(bExt) ? 0 : 1;
+        return aIsVec - bIsVec;
+      });
+    }
+
+    const units: File[][] = [
+      ...Array.from(pairedGroups.values()),
+      ...singles.map((f) => [f]),
+    ];
+    const shuffledUnits = shuffleArray(units, shuffleSeed);
+    orderedFiles = shuffledUnits.flat();
   }
 
   // Normalize initialSlots to full 6-track MediaSlotsMap
@@ -743,36 +811,107 @@ export function processFilesForBatchIngest(
     AI_Vectors: makeTracker(mediaSlots.AI_Vectors),
   };
 
+  interface PairedVectorAllocation {
+    batchFolder: string;
+    batchIndex: number;
+    targetBaseName: string;
+    subFolder: SubFolderTrack;
+  }
+  const pairedAllocations = new Map<string, PairedVectorAllocation>();
+
   return orderedFiles.map((file, idx) => {
-    const subFolder = getSubFolderForExtension(file.name, assetOrigin);
-    const tracker = trackers[subFolder];
-
-    // Auto-split rollover when reaching batch size limit for this media track
-    if (tracker.itemsInCurrentBatch >= options.maxItemsPerBatch) {
-      tracker.currentBatchNum++;
-      tracker.currentItemIdx = 1;
-      tracker.itemsInCurrentBatch = 0;
-    }
-
     const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
-    const batchFolder = `B${String(tracker.currentBatchNum).padStart(2, '0')}`;
-    const indexStr = String(tracker.currentItemIdx).padStart(3, '0');
-    const cleanedOriginal = cleanOriginalBaseName(file.name);
+    const stem = getFileStem(file.name);
+    const isVector = VECTOR_EXTENSIONS.has(ext);
+    const isPairedRaster = RASTER_EXTENSIONS.has(ext) && vectorStems.has(stem);
+    const isPartOfVectorPair = isVector || isPairedRaster;
 
-    // For AI files, ensure the word "AI" is explicitly present in the filename as a safety measure
+    let subFolder: SubFolderTrack;
+    let batchFolder: string;
+    let batchIndex: number;
     let targetFilename: string;
-    if (assetOrigin === 'ai') {
-      const aiTokenRegex = /(?:^|_)(ai)(?:_|$)/i;
-      if (aiTokenRegex.test(cleanedOriginal)) {
-        // AI is already present in cleanedOriginal, keep it clearly uppercase
-        const withUpperAi = cleanedOriginal.replace(aiTokenRegex, (match, p1) => match.replace(p1, 'AI'));
-        targetFilename = `${batchFolder}_${indexStr}__${withUpperAi}.${ext}`;
+
+    if (isPartOfVectorPair) {
+      // Both the EPS and its matching companion preview route together to Vectors (or AI_Vectors)
+      const vectorTrack: SubFolderTrack = isAiGenerated ? 'AI_Vectors' : 'Vectors';
+      subFolder = vectorTrack;
+
+      if (pairedAllocations.has(stem)) {
+        // Reuse synchronized allocation from partner
+        const alloc = pairedAllocations.get(stem)!;
+        batchFolder = alloc.batchFolder;
+        batchIndex = alloc.batchIndex;
+        targetFilename = `${alloc.targetBaseName}.${ext}`;
       } else {
-        // Embed AI token so the file is unmistakably marked as AI even if moved out of the directory
-        targetFilename = `${batchFolder}_${indexStr}_AI__${cleanedOriginal}.${ext}`;
+        // First file of pair: allocate new slot from vector tracker
+        const tracker = trackers[vectorTrack];
+        if (tracker.itemsInCurrentBatch >= options.maxItemsPerBatch) {
+          tracker.currentBatchNum++;
+          tracker.currentItemIdx = 1;
+          tracker.itemsInCurrentBatch = 0;
+        }
+
+        batchFolder = `B${String(tracker.currentBatchNum).padStart(2, '0')}`;
+        const indexStr = String(tracker.currentItemIdx).padStart(3, '0');
+        const cleanedOriginal = cleanOriginalBaseName(file.name);
+
+        let targetBaseName: string;
+        if (assetOrigin === 'ai') {
+          const aiTokenRegex = /(?:^|_)(ai)(?:_|$)/i;
+          if (aiTokenRegex.test(cleanedOriginal)) {
+            const withUpperAi = cleanedOriginal.replace(aiTokenRegex, (match, p1) => match.replace(p1, 'AI'));
+            targetBaseName = `${batchFolder}_${indexStr}__${withUpperAi}`;
+          } else {
+            targetBaseName = `${batchFolder}_${indexStr}_AI__${cleanedOriginal}`;
+          }
+        } else {
+          targetBaseName = `${batchFolder}_${indexStr}__${cleanedOriginal}`;
+        }
+
+        batchIndex = tracker.currentItemIdx;
+        targetFilename = `${targetBaseName}.${ext}`;
+
+        pairedAllocations.set(stem, {
+          batchFolder,
+          batchIndex,
+          targetBaseName,
+          subFolder: vectorTrack,
+        });
+
+        // Advance vector counter once for the whole pair
+        tracker.currentItemIdx++;
+        tracker.itemsInCurrentBatch++;
       }
     } else {
-      targetFilename = `${batchFolder}_${indexStr}__${cleanedOriginal}.${ext}`;
+      // Standard routing for photos, videos, and standalone files
+      subFolder = getSubFolderForExtension(file.name, assetOrigin);
+      const tracker = trackers[subFolder];
+
+      if (tracker.itemsInCurrentBatch >= options.maxItemsPerBatch) {
+        tracker.currentBatchNum++;
+        tracker.currentItemIdx = 1;
+        tracker.itemsInCurrentBatch = 0;
+      }
+
+      batchFolder = `B${String(tracker.currentBatchNum).padStart(2, '0')}`;
+      const indexStr = String(tracker.currentItemIdx).padStart(3, '0');
+      const cleanedOriginal = cleanOriginalBaseName(file.name);
+
+      if (assetOrigin === 'ai') {
+        const aiTokenRegex = /(?:^|_)(ai)(?:_|$)/i;
+        if (aiTokenRegex.test(cleanedOriginal)) {
+          const withUpperAi = cleanedOriginal.replace(aiTokenRegex, (match, p1) => match.replace(p1, 'AI'));
+          targetFilename = `${batchFolder}_${indexStr}__${withUpperAi}.${ext}`;
+        } else {
+          targetFilename = `${batchFolder}_${indexStr}_AI__${cleanedOriginal}.${ext}`;
+        }
+      } else {
+        targetFilename = `${batchFolder}_${indexStr}__${cleanedOriginal}.${ext}`;
+      }
+
+      batchIndex = tracker.currentItemIdx;
+      tracker.currentItemIdx++;
+      tracker.itemsInCurrentBatch++;
     }
 
     // Media-First Dual-Root Hierarchy: Master / [Real | AI] / [Photos | AI_Photos | ...] / [Batch] / [Filename]
@@ -785,9 +924,6 @@ export function processFilesForBatchIngest(
 
     const nativePath = nativePathsMap[file.name] || (file as any).path || '';
 
-    tracker.currentItemIdx++;
-    tracker.itemsInCurrentBatch++;
-
     return {
       id: `${file.name}-${file.size}-${idx}`,
       file,
@@ -798,7 +934,7 @@ export function processFilesForBatchIngest(
       size: file.size,
       charCount: targetFilename.length,
       batchFolder,
-      batchIndex: tracker.currentItemIdx - 1,
+      batchIndex,
       subFolder,
       assetOrigin,
       isAiGenerated,

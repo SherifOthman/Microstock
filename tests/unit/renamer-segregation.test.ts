@@ -230,5 +230,105 @@ describe('Tier 1 Unit: 6-Way Track Segregation & Vector Pairing', () => {
       expect(aiResult[0].cleanedName).toBe('B01_041_AI__futuristic_hologram_interface.jpg');
       expect(aiResult[0].relativePath).toBe('AI/AI_Photos/B01/B01_041_AI__futuristic_hologram_interface.jpg');
     });
+    it('pairs EPS and JPG sharing the exact same base name into Vectors with synchronized names and no duplicate warning', async () => {
+      const { processFilesForBatchIngest } = await import('../../src/services/cleaner/fileCleanerEngine');
+      const epsFile = new File(['vector-content'], 'alpha_floral_ornament.eps', { type: 'application/postscript' });
+      const jpgFile = new File(['preview-content'], 'alpha_floral_ornament.jpg', { type: 'image/jpeg' });
+      const standalonePhoto = new File(['photo-content'], 'sunset_over_mountains.jpg', { type: 'image/jpeg' });
+      const nextVector = new File(['vector-content-2'], 'geometric_mandala_pattern.eps', { type: 'application/postscript' });
+
+      const results = processFilesForBatchIngest(
+        [epsFile, jpgFile, standalonePhoto, nextVector],
+        { sortOrder: 'alphabetical', maxItemsPerBatch: 100, assetOrigin: 'real' }
+      );
+
+      expect(results).toHaveLength(4);
+
+      // 1. Paired EPS (alphabetically first: 'alpha')
+      const pairedEps = results.find((r) => r.originalName === 'alpha_floral_ornament.eps')!;
+      expect(pairedEps).toBeDefined();
+      expect(pairedEps.subFolder).toBe('Vectors');
+      expect(pairedEps.batchFolder).toBe('B01');
+      expect(pairedEps.batchIndex).toBe(1);
+      expect(pairedEps.cleanedName).toBe('B01_001__alpha_floral_ornament.eps');
+      expect(pairedEps.relativePath).toBe('Real/Vectors/B01/B01_001__alpha_floral_ornament.eps');
+      expect(pairedEps.isDuplicate).toBe(false);
+
+      // 2. Paired JPG companion
+      const pairedJpg = results.find((r) => r.originalName === 'alpha_floral_ornament.jpg')!;
+      expect(pairedJpg).toBeDefined();
+      expect(pairedJpg.subFolder).toBe('Vectors');
+      expect(pairedJpg.batchFolder).toBe('B01');
+      expect(pairedJpg.batchIndex).toBe(1); // Same index as EPS!
+      expect(pairedJpg.cleanedName).toBe('B01_001__alpha_floral_ornament.jpg');
+      expect(pairedJpg.relativePath).toBe('Real/Vectors/B01/B01_001__alpha_floral_ornament.jpg');
+      expect(pairedJpg.isDuplicate).toBe(false); // Never false-flagged as duplicate!
+
+      // 3. Next Vector ('geometric') advances sequence once from 1 -> 2
+      const secondVector = results.find((r) => r.originalName === 'geometric_mandala_pattern.eps')!;
+      expect(secondVector.subFolder).toBe('Vectors');
+      expect(secondVector.batchIndex).toBe(2);
+      expect(secondVector.cleanedName).toBe('B01_002__geometric_mandala_pattern.eps');
+
+      // 4. Standalone JPG routes to Photos
+      const photo = results.find((r) => r.originalName === 'sunset_over_mountains.jpg')!;
+      expect(photo.subFolder).toBe('Photos');
+      expect(photo.cleanedName).toBe('B01_001__sunset_over_mountains.jpg');
+      expect(photo.relativePath).toBe('Real/Photos/B01/B01_001__sunset_over_mountains.jpg');
+    });
+
+    it('prevents double queueing in BatchQueueService when paired EPS and JPG are added', async () => {
+      const { vi } = await import('vitest');
+      const mediaExtractorModule = await import('../../src/utils/mediaExtractor');
+      const { BatchQueueService } = await import('../../src/services/queue/BatchQueueService');
+      const { formatVectorFilenameForPlatform } = await import('../../src/services/rules/platformTransformers');
+
+      const extractSpy = vi.spyOn(mediaExtractorModule, 'extractMediaInfo').mockImplementation(async (file: File, companion?: File) => {
+        const isVector = file.name.endsWith('.eps');
+        return {
+          mediaType: isVector ? 'vector' : 'image',
+          thumbnailBase64: 'mockthumb',
+          thumbnailDataUrl: 'data:image/jpeg;base64,mockthumb',
+          originalSizeBytes: file.size,
+          compressedSizeBytes: 1024,
+          hasRealPreview: true,
+          width: 2000,
+          height: 2000,
+        };
+      });
+      
+      const service = BatchQueueService.getInstance();
+      service.clear();
+
+      const epsFile = new File(['eps-data'], 'B01_001__vintage_floral_ornament.eps', { type: 'application/postscript' });
+      const jpgFile = new File(['jpg-preview'], 'B01_001__vintage_floral_ornament.jpg', { type: 'image/jpeg' });
+      const photoFile = new File(['photo-data'], 'B01_001__sunset_over_mountains.jpg', { type: 'image/jpeg' });
+
+      await service.addFiles([epsFile, jpgFile, photoFile]);
+      extractSpy.mockRestore();
+
+      const state = service.getState();
+      // Should have only 2 items: 1 vector item + 1 standalone photo (the companion JPG is NOT queued independently)
+      expect(state.items).toHaveLength(2);
+
+      const vectorItem = state.items.find((i) => i.filename.endsWith('.eps'))!;
+      expect(vectorItem).toBeDefined();
+      expect(vectorItem.filename).toBe('B01_001__vintage_floral_ornament.eps');
+      expect(vectorItem.mediaType).toBe('vector');
+
+      // Verify Shutterstock CSV has only .eps, no .jpg
+      const shutterstockRow = formatVectorFilenameForPlatform(vectorItem.filename, vectorItem.mediaType, 'shutterstock');
+      expect(shutterstockRow).toBe('B01_001__vintage_floral_ornament.eps');
+
+      // Verify Adobe Stock CSV has .eps
+      const adobeRow = formatVectorFilenameForPlatform(vectorItem.filename, vectorItem.mediaType, 'adobe');
+      expect(adobeRow).toBe('B01_001__vintage_floral_ornament.eps');
+
+      // Verify Freepik CSV has companion .jpg
+      const freepikRow = formatVectorFilenameForPlatform(vectorItem.filename, vectorItem.mediaType, 'freepik');
+      expect(freepikRow).toBe('B01_001__vintage_floral_ornament.jpg');
+
+      service.clear();
+    });
   });
 });

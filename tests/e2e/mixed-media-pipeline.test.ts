@@ -245,13 +245,14 @@ describe('End-to-End (E2E) Mixed Media Resilient Pipeline', () => {
     });
 
     // Enqueue valid files in Metadata Studio
+    // 10 JPGs + 5 MP4s + 3 Vector assets (3 EPS + 3 companion JPGs linked, companion JPGs are not double-queued) = 18 unique queue items
     await queueService.addFiles(validCleanedFiles);
     const queueState = queueService.getState();
-    expect(queueState.totalCount).toBe(21);
+    expect(queueState.totalCount).toBe(18);
 
     // Verify all items are persisted to IndexedDB
     const persistedRecords = await db.masterRecords.toArray();
-    expect(persistedRecords).toHaveLength(21);
+    expect(persistedRecords).toHaveLength(18);
 
     // Verify sequence preservation in filenames
     const dbFilenames = persistedRecords.map((r) => r.filename);
