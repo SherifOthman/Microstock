@@ -144,6 +144,7 @@ export const FileCleanerView: React.FC<FileCleanerViewProps> = ({ onSendToStudio
         setSearchFilter={c.setSearchFilter}
         isProcessing={c.isProcessing}
         isBatchSaved={c.isBatchSaved}
+        lastProcessedFilesCount={c.lastProcessedFiles.length}
         masterDirectory={c.masterDirectory}
         blockingErrorCount={c.blockingErrorCount}
         totalDuplicateCount={c.totalDuplicateCount}

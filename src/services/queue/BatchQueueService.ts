@@ -1,10 +1,10 @@
 import { BatchRecord, MasterMetadataRecord, MediaType, ProviderType } from '../../types';
-import { db } from '../../db';
+import { db, getAppSettings } from '../../db';
 import { extractMediaInfo } from '../../utils/mediaExtractor';
 import { terminateEpsWorker } from '../eps/epsEngine';
 import { keyRingScheduler } from '../scheduler/KeyRingScheduler';
-import { getProviderAdapter } from '../providers';
-import { SYSTEM_VISION_PROMPT, buildVisionPrompt } from '../ai/masterPrompt';
+import { getProviderAdapter, localAiAdapter } from '../providers';
+import { SYSTEM_VISION_PROMPT, SYSTEM_LOCAL_VISION_PROMPT, buildVisionPrompt } from '../ai/masterPrompt';
 import { parseAndNormalizeAiMetadata, KeywordPhrasing } from '../ai/metadataParser';
 
 export interface QueueItem {
@@ -330,12 +330,13 @@ export class BatchQueueService {
           : true;
       const resolvedIsAi = typeof fileIsAi === 'boolean' ? fileIsAi : defaultStudioAi;
 
+      const fileNativePath = (file as any).__nativePath || (file as any).path || '';
       const initialDraft: MasterMetadataRecord = {
         id,
         batchId: this.currentBatchId,
         filename: file.name,
         fileSize: file.size,
-        thumbnailBase64: '',
+        thumbnailBase64: (file as any).__preRenderedDataUrl || (file as any).__thumbnailUrl || '',
         mediaType: sourceMediaType || 'image',
         isAiGenerated: resolvedIsAi,
         baseTitle: '',
@@ -344,6 +345,7 @@ export class BatchQueueService {
         categories: undefined,
         status: 'pending',
         createdAt,
+      nativePath: fileNativePath,
       };
       const item: QueueItem = {
         id,
@@ -357,6 +359,9 @@ export class BatchQueueService {
         createdAt,
         metadataRecord: initialDraft,
       };
+      if ((file as any).__thumbnailUrl) {
+        item.thumbnailDataUrl = (file as any).__thumbnailUrl;
+      }
       this.items.set(id, item);
     }
 
@@ -410,7 +415,8 @@ export class BatchQueueService {
           lastModified: item.file.lastModified || Date.now(),
         });
         if (nativePath) {
-          Object.defineProperty(shellFile, '__nativePath', { value: nativePath, configurable: true });
+          Object.defineProperty(shellFile, 'path', { value: nativePath, configurable: true, enumerable: true, writable: true });
+          Object.defineProperty(shellFile, '__nativePath', { value: nativePath, configurable: true, enumerable: true, writable: true });
         }
         if (sourceMediaType) {
           Object.defineProperty(shellFile, '__sourceMediaType', { value: sourceMediaType, configurable: true });
@@ -455,7 +461,7 @@ export class BatchQueueService {
                 fileSize: 0,
                 thumbnailBase64: '',
                 mediaType: item.mediaType || 'image',
-                isAiGenerated: true,
+                isAiGenerated: typeof item.isAiGenerated === 'boolean' ? item.isAiGenerated : (item.metadataRecord?.isAiGenerated ?? true),
                 baseTitle: '',
                 detailedDescription: '',
                 rankedKeywords: [],
@@ -463,6 +469,7 @@ export class BatchQueueService {
                 status: 'error',
                 errorMessage: errMsg,
                 createdAt: item.createdAt || Date.now(),
+                nativePath: (item.file as any)?.__nativePath || (item.file as any)?.path || item.metadataRecord?.nativePath || '',
               };
               item.metadataRecord = errRec;
               draftsToPersist.push(errRec);
@@ -515,13 +522,21 @@ export class BatchQueueService {
                         hasAudio: item.hasAudio,
                       }
                     : undefined,
-                isAiGenerated: true,
+                isAiGenerated:
+                  typeof item.isAiGenerated === 'boolean'
+                    ? item.isAiGenerated
+                    : (item.metadataRecord?.isAiGenerated ?? true),
                 baseTitle: item.metadataRecord?.baseTitle || '',
                 detailedDescription: item.metadataRecord?.detailedDescription || '',
                 rankedKeywords: item.metadataRecord?.rankedKeywords || [],
                 categories: item.metadataRecord?.categories,
                 status: 'pending',
                 errorMessage: undefined,
+                nativePath:
+                  (item.file as any)?.__nativePath ||
+                  (item.file as any)?.path ||
+                  item.metadataRecord?.nativePath ||
+                  '',
                 createdAt: item.createdAt || Date.now(),
               };
               item.metadataRecord = draftRec;
@@ -550,13 +565,21 @@ export class BatchQueueService {
                 fileSize: item.originalSizeBytes,
                 thumbnailBase64: '',
                 mediaType: inferredType,
-                isAiGenerated: true,
+                isAiGenerated:
+                  typeof item.isAiGenerated === 'boolean'
+                    ? item.isAiGenerated
+                    : (item.metadataRecord?.isAiGenerated ?? true),
                 baseTitle: item.metadataRecord?.baseTitle || '',
                 detailedDescription: item.metadataRecord?.detailedDescription || '',
                 rankedKeywords: item.metadataRecord?.rankedKeywords || [],
                 categories: item.metadataRecord?.categories,
                 status: 'pending',
                 errorMessage: undefined,
+                nativePath:
+                  (item.file as any)?.__nativePath ||
+                  (item.file as any)?.path ||
+                  item.metadataRecord?.nativePath ||
+                  '',
                 createdAt: item.createdAt || Date.now(),
               };
               item.metadataRecord = fallbackRec;
@@ -744,59 +767,33 @@ export class BatchQueueService {
       attempt++;
       let lease: any = null;
       const startTime = performance.now();
-      const WATCHDOG_MS = 22000;
-      let watchdogTimer: any;
       const abortController = new AbortController();
       this.activeAbortControllers.add(abortController);
+      let watchdogTimer: any;
 
       try {
         if (isCancelled()) return;
         await db.masterRecords.update(item.id, { status: 'processing' });
 
+        const appSettings = await getAppSettings();
+        const isLocalMode = appSettings.aiExecutionMode === 'local';
+        const localConfig = appSettings.localAiConfig || {
+          baseUrl: 'http://127.0.0.1:1234/v1',
+          modelId: 'default',
+          timeoutSeconds: 300,
+        };
+
+        const WATCHDOG_MS = isLocalMode
+          ? Math.max(300000, (localConfig.timeoutSeconds || 300) * 1000 + 10000)
+          : 25000;
+
+        let assignedProviderName = '';
+        let assignedModelName = '';
+        let assignedKeyLabelName = '';
+
         const processingTask = (async () => {
           if (isCancelled()) return;
-          // 1. Acquire key lease from KeyRingScheduler
-          // Exclude failed KEY IDs, and if a provider failed with high-demand/timeout/auth or failed >= 2 times on this item,
-          // also exclude that provider so retries immediately cascade to OpenRouter, Groq, Mistral, and Cloudflare!
-          const failedAttempts = (item.attemptHistory || []).filter((a) => a.status === 'failed');
-          const failedKeyIds = failedAttempts
-            .filter((a) => a.keyId)
-            .map((a) => a.keyId as string);
 
-          const providerFailCounts = new Map<string, number>();
-          const excludedProviders = new Set<ProviderType>();
-          for (const fa of failedAttempts) {
-            const pid = fa.provider as ProviderType;
-            if (!pid) continue;
-            const count = (providerFailCounts.get(pid) || 0) + 1;
-            providerFailCounts.set(pid, count);
-            const errLower = (fa.error || '').toLowerCase();
-            if (
-              count >= 2 ||
-              errLower.includes('high demand') ||
-              errLower.includes('overloaded') ||
-              errLower.includes('timed out') ||
-              errLower.includes('503') ||
-              errLower.includes('free tier is not available')
-            ) {
-              excludedProviders.add(pid);
-            }
-          }
-
-          lease = await keyRingScheduler.acquireKey(
-            undefined,
-            failedKeyIds,
-            Array.from(excludedProviders)
-          );
-          const { keyRecord, release } = lease;
-
-          item.assignedKeyLabel = keyRecord.label;
-          item.assignedProvider = keyRecord.providerId;
-          item.assignedModel = keyRecord.modelId;
-          this.notify();
-
-          // 2. Build prompt & invoke vision API with strict 20s AbortController timeout
-          const adapter = getProviderAdapter(keyRecord.providerId);
           const prompt = buildVisionPrompt(
             item.filename,
             userPrompt,
@@ -809,32 +806,104 @@ export class BatchQueueService {
             item.videoHeight
           );
 
-          let apiTimer: any;
-          const apiTimeoutPromise = new Promise<never>((_, reject) => {
-            apiTimer = setTimeout(() => {
-              const timeoutErr: any = new Error('AI Provider API call timed out after 20s — signal timed out');
-              timeoutErr.status = 408;
-              timeoutErr.isTimeout = true;
-              abortController.abort(timeoutErr);
-              reject(timeoutErr);
-            }, 20000);
-          });
-
           let rawAiText: string;
-          try {
-            rawAiText = await Promise.race([
-              adapter.analyzeImage(
-                keyRecord.key,
-                keyRecord.modelId,
-                item.thumbnailBase64!,
-                prompt,
-                SYSTEM_VISION_PROMPT,
-                abortController.signal
-              ),
-              apiTimeoutPromise,
-            ]);
-          } finally {
-            if (apiTimer) clearTimeout(apiTimer);
+
+          if (isLocalMode) {
+            // STRICT LOCAL ISOLATION:
+            // Complete bypass of KeyRingScheduler, sliding windows, and cloud failover.
+            assignedProviderName = 'LM Studio';
+            assignedModelName = localConfig.modelId || 'local-model';
+            assignedKeyLabelName = 'Local AI Server';
+
+            item.assignedKeyLabel = assignedKeyLabelName;
+            item.assignedProvider = 'local' as any;
+            item.assignedModel = assignedModelName;
+            this.notify();
+
+            const localTimeoutMs = (localConfig.timeoutSeconds || 300) * 1000;
+            rawAiText = await localAiAdapter.analyzeImage(
+              localConfig.baseUrl,
+              localConfig.modelId,
+              item.thumbnailBase64!,
+              prompt,
+              SYSTEM_LOCAL_VISION_PROMPT,
+              abortController.signal,
+              localTimeoutMs
+            );
+          } else {
+            // 1. Acquire key lease from KeyRingScheduler
+            // Exclude failed KEY IDs, and if a provider failed with high-demand/timeout/auth or failed >= 2 times on this item,
+            // also exclude that provider so retries immediately cascade to OpenRouter, Groq, Mistral, and Cloudflare!
+            const failedAttempts = (item.attemptHistory || []).filter((a) => a.status === 'failed');
+            const failedKeyIds = failedAttempts
+              .filter((a) => a.keyId)
+              .map((a) => a.keyId as string);
+
+            const providerFailCounts = new Map<string, number>();
+            const excludedProviders = new Set<ProviderType>();
+            for (const fa of failedAttempts) {
+              const pid = fa.provider as ProviderType;
+              if (!pid) continue;
+              const count = (providerFailCounts.get(pid) || 0) + 1;
+              providerFailCounts.set(pid, count);
+              const errLower = (fa.error || '').toLowerCase();
+              if (
+                count >= 2 ||
+                errLower.includes('high demand') ||
+                errLower.includes('overloaded') ||
+                errLower.includes('timed out') ||
+                errLower.includes('503') ||
+                errLower.includes('free tier is not available')
+              ) {
+                excludedProviders.add(pid);
+              }
+            }
+
+            lease = await keyRingScheduler.acquireKey(
+              undefined,
+              failedKeyIds,
+              Array.from(excludedProviders)
+            );
+            const { keyRecord } = lease;
+
+            assignedProviderName = keyRecord.providerId;
+            assignedModelName = keyRecord.modelId;
+            assignedKeyLabelName = keyRecord.label;
+
+            item.assignedKeyLabel = assignedKeyLabelName;
+            item.assignedProvider = keyRecord.providerId;
+            item.assignedModel = assignedModelName;
+            this.notify();
+
+            // 2. Build prompt & invoke vision API with strict 20s AbortController timeout
+            const adapter = getProviderAdapter(keyRecord.providerId);
+
+            let apiTimer: any;
+            const apiTimeoutPromise = new Promise<never>((_, reject) => {
+              apiTimer = setTimeout(() => {
+                const timeoutErr: any = new Error('AI Provider API call timed out after 20s — signal timed out');
+                timeoutErr.status = 408;
+                timeoutErr.isTimeout = true;
+                abortController.abort(timeoutErr);
+                reject(timeoutErr);
+              }, 20000);
+            });
+
+            try {
+              rawAiText = await Promise.race([
+                adapter.analyzeImage(
+                  keyRecord.key,
+                  keyRecord.modelId,
+                  item.thumbnailBase64!,
+                  prompt,
+                  SYSTEM_VISION_PROMPT,
+                  abortController.signal
+                ),
+                apiTimeoutPromise,
+              ]);
+            } finally {
+              if (apiTimer) clearTimeout(apiTimer);
+            }
           }
 
           const latencyMs = Math.round(performance.now() - startTime);
@@ -885,17 +954,17 @@ export class BatchQueueService {
 
           if (!item.attemptHistory) item.attemptHistory = [];
           item.attemptHistory.push({
-            provider: keyRecord.providerId,
-            model: keyRecord.modelId,
-            keyId: keyRecord.id,
+            provider: assignedProviderName,
+            model: assignedModelName,
+            keyId: lease?.keyRecord?.id,
             status: 'success',
           });
 
           const parsedPrompt = masterRecord.aiGenerationInfo?.prompt;
           masterRecord.aiGenerationInfo = {
             prompt: userPrompt || parsedPrompt || masterRecord.baseTitle,
-            model: defaultModelName || 'Google Nano Banana',
-            provider: keyRecord.providerId,
+            model: assignedModelName || defaultModelName || 'Google Nano Banana',
+            provider: assignedProviderName,
             latencyMs,
             attemptHistory: [...item.attemptHistory],
           };
@@ -908,15 +977,17 @@ export class BatchQueueService {
           this.notify(); // UI update: item completed
 
           if (isCancelled()) {
-            await release(false, new Error('Queue cancelled'));
+            if (lease) await lease.release(false, new Error('Queue cancelled'));
             return;
           }
 
           // Persist master record to IndexedDB
           await db.masterRecords.put(masterRecord);
 
-          // Release key lease as success
-          await release(true, undefined, latencyMs);
+          // Release key lease as success if cloud lease was used
+          if (lease) {
+            await lease.release(true, undefined, latencyMs);
+          }
 
           // Opportunistic retry: Give failed items another chance after several successes
           if (this.completedSinceLastRetry >= this.OPPORTUNISTIC_RETRY_THRESHOLD) {
@@ -958,11 +1029,15 @@ export class BatchQueueService {
             status: 'failed',
             error: err.message || String(err),
           });
-        }
-
-        if (lease) {
           // Release key lease with error (scheduler handles 429/503/timeout cooldowns and invalid status)
           await lease.release(false, err);
+        } else {
+          item.attemptHistory.push({
+            provider: 'LM Studio',
+            model: item.assignedModel || 'local-model',
+            status: 'failed',
+            error: err.message || String(err),
+          });
         }
 
         // If all keys are currently cooling down / timed out in acquireKey, don't spin 3 times on the same item

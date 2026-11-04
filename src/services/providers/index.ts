@@ -5,6 +5,7 @@ import { OpenRouterAdapter } from './openrouter';
 import { GroqAdapter } from './groq';
 import { MistralAdapter } from './mistral';
 import { CloudflareAdapter } from './cloudflare';
+import { localAiAdapter } from './localAi';
 
 export * from './types';
 export * from './gemini';
@@ -12,6 +13,7 @@ export * from './openrouter';
 export * from './groq';
 export * from './mistral';
 export * from './cloudflare';
+export * from './localAi';
 
 const adapters: Record<ProviderType, IVisionProvider> = {
   gemini: new GeminiAdapter(),

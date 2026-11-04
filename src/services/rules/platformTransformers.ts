@@ -211,20 +211,38 @@ export function formatVectorFilenameForPlatform(
   }
 }
 
+/**
+ * Formats filename strictly for Adobe Stock CSV ingestion:
+ * - Vectors: Strictly forced to `${baseWithoutExt}.eps`
+ * - Non-vectors (photos/videos): Exact raw filename preserved byte-for-byte
+ *   (bypasses diacritic stripping to prevent Adobe upload mismatches)
+ */
+export function formatAdobeFilename(filename: string, mediaType?: string): string {
+  if (!filename) return '';
+  const rawBase = filename.trim().split(/[\\/]/).pop() || '';
+  const isVector = mediaType === 'vector' || /\.(eps|ai|svg)$/i.test(rawBase);
+  if (isVector) {
+    const baseWithoutExt = rawBase.replace(/\.[^/.]+$/, '');
+    return `${baseWithoutExt}.eps`;
+  }
+  return rawBase;
+}
+
 // 1. Adobe Stock Transformer
 export function transformForAdobeStock(records: MasterMetadataRecord[]): PlatformExportRow[] {
   return records.map((rec) => {
     const sanitized = sanitizeNonAiText(rec.baseTitle ?? '');
     // Semantic truncate at 200 chars (zero broken words)
     const cleanTitle = smartTruncate(sanitized, 200, false);
-    const cleanKw = sanitizeKeywords(rec.rankedKeywords ?? []).slice(0, 49);
+    // Adobe SEO Rule: Strict 25-keyword cap to prioritize highest semantic weight
+    const cleanKw = sanitizeKeywords(rec.rankedKeywords ?? []).slice(0, 25);
 
     // If media is vector (EPS), default to Category 8 (Graphic Resources) if not explicitly set
     const isVector = rec.mediaType === 'vector' || (rec.filename && /\.(eps|ai|svg)$/i.test(rec.filename));
     const defaultCat = isVector ? 8 : (rec.categories?.adobeCategoryId || 8);
 
     return {
-      Filename: formatVectorFilenameForPlatform(rec.filename ?? '', rec.mediaType, 'adobe'),
+      Filename: formatAdobeFilename(rec.filename ?? '', rec.mediaType),
       Title: cleanTitle,
       Keywords: cleanKw.join(', '),
       Category: rec.categories?.adobeCategoryId || defaultCat,

@@ -3,6 +3,10 @@ import {
   parseAndNormalizeAiMetadata,
 } from '../../src/services/ai/metadataParser';
 import {
+  SYSTEM_VISION_PROMPT,
+  buildVisionPrompt,
+} from '../../src/services/ai/masterPrompt';
+import {
   filterResolutionKeywords,
   deGlueCompoundWord,
   enforceKeywordLimit,
@@ -253,6 +257,63 @@ describe('Tier 1 Unit: Metadata Guardrails & Microstock Validation', () => {
       expect(ADOBE_CATEGORIES[16]).toBe('Science');
       expect(ADOBE_CATEGORIES[19]).toBe('Technology');
       expect(ADOBE_CATEGORIES[20]).toBe('Transport');
+    });
+  });
+  describe('Microstock Guidelines for Both Titles and Keywords (Vecteezy & Shutterstock Compliance)', () => {
+    it('SYSTEM_VISION_PROMPT mandates rules for BOTH Titles and Keywords with all 5 constraints', () => {
+      // Mandated for both titles and keywords
+      expect(SYSTEM_VISION_PROMPT).toContain('MANDATORY FOR BOTH TITLES AND KEYWORDS');
+
+      // 1. NO ASSET TYPE REDUNDANCY: file format and medium words
+      expect(SYSTEM_VISION_PROMPT).toContain('NO ASSET TYPE REDUNDANCY (FOR BOTH TITLES AND KEYWORDS)');
+      expect(SYSTEM_VISION_PROMPT).toContain('"vector", "eps", "illustration", "drawing", "clipart", "photo", "picture", "image", "jpg", "video", "footage", "clip", "mp4", "motion", "concept video", "commercial video"');
+
+      // 2. NO TRADEMARKS
+      expect(SYSTEM_VISION_PROMPT).toContain('NO TRADEMARKS (FOR BOTH TITLES AND KEYWORDS)');
+      expect(SYSTEM_VISION_PROMPT).toContain('iPhone, Apple, Windows, Nike');
+
+      // 3. NO CAMERA/TECH SPECS
+      expect(SYSTEM_VISION_PROMPT).toContain('NO CAMERA SPECS / NO TECH SPECS (FOR BOTH TITLES AND KEYWORDS)');
+      expect(SYSTEM_VISION_PROMPT).toContain('"4k", "8k", "60fps", "30fps", "1080p"');
+
+      // 4. TITLES: Descriptive, natural, without prohibited terms
+      expect(SYSTEM_VISION_PROMPT).toContain('TITLES must be highly descriptive, natural, commercial, and accurately describe the exact subject matter without using prohibited terms');
+
+      // 5. KEYWORDS: Prevent repetitive variations of the same root word
+      expect(SYSTEM_VISION_PROMPT).toContain('Prevent repetitive variations of the same root word');
+      expect(SYSTEM_VISION_PROMPT).toContain('Who, What, Where, When, Why');
+    });
+
+    it('buildVisionPrompt for video enforces strict Vecteezy & Shutterstock rules for titles and keywords', () => {
+      const prompt = buildVisionPrompt('drone_flight.mp4', '', 'video');
+      expect(prompt).toContain('STRICT VECTEEZY & SHUTTERSTOCK COMPLIANCE (FOR BOTH TITLES AND KEYWORDS)');
+      expect(prompt).toContain('NO ASSET TYPE REDUNDANCY');
+      expect(prompt).toContain('"video", "footage", "clip", "mp4", "motion", "concept video", "commercial video"');
+      expect(prompt).toContain('NO CAMERA/TECH SPECS');
+      expect(prompt).toContain('TITLES: Must be highly descriptive, natural, and accurately describe the exact subject matter without using prohibited terms');
+      expect(prompt).toContain('KEYWORDS: Prevent repetitive variations of the same root word');
+    });
+
+    it('buildVisionPrompt for vector enforces strict Vecteezy & Shutterstock rules for titles and keywords', () => {
+      const prompt = buildVisionPrompt('business_icon.eps', '', 'vector');
+      expect(prompt).toContain('STRICT VECTEEZY & SHUTTERSTOCK COMPLIANCE (FOR BOTH TITLES AND KEYWORDS)');
+      expect(prompt).toContain('NO ASSET TYPE REDUNDANCY');
+      expect(prompt).toContain('"vector", "eps", "illustration", "drawing", "clipart", "photo", "picture", "image", "jpg"');
+      expect(prompt).toContain('NO TRADEMARKS');
+      expect(prompt).toContain('NO CAMERA/TECH SPECS');
+      expect(prompt).toContain('TITLES: Must be highly descriptive, natural, and accurately describe the exact subject matter without using prohibited terms');
+      expect(prompt).toContain('KEYWORDS: Prevent repetitive variations of the same root word');
+    });
+
+    it('buildVisionPrompt for photo enforces strict Vecteezy & Shutterstock rules for titles and keywords', () => {
+      const prompt = buildVisionPrompt('coffee_mug.jpg', '', 'image');
+      expect(prompt).toContain('STRICT VECTEEZY & SHUTTERSTOCK COMPLIANCE (FOR BOTH TITLES AND KEYWORDS)');
+      expect(prompt).toContain('NO ASSET TYPE REDUNDANCY');
+      expect(prompt).toContain('"photo", "picture", "image", "jpg", "photograph", "video", "clip"');
+      expect(prompt).toContain('NO CAMERA/TECH SPECS');
+      expect(prompt).toContain('NO TRADEMARKS');
+      expect(prompt).toContain('TITLES: Must be highly descriptive, natural, and accurately describe the exact subject matter without using prohibited terms');
+      expect(prompt).toContain('KEYWORDS: Prevent repetitive variations of the same root word');
     });
   });
 });

@@ -75,10 +75,10 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
 }) => {
   const activeT = t || {};
   return (
-    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-2.5 bg-card rounded-xl border border-border">
+    <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 p-2.5 bg-card rounded-xl border border-border">
       {/* Left: Search Filter Input & Dynamic Media Type Filter */}
-      <div className="flex items-center gap-2 flex-1 min-w-0 flex-wrap">
-        <div className="relative flex-1 min-w-[180px] max-w-md">
+      <div className="flex items-center gap-2 flex-wrap min-w-0">
+        <div className="relative w-full sm:w-64 md:w-72 shrink-0">
           <Search className="w-3.5 h-3.5 absolute start-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
           <Input
             value={searchQuery}
@@ -99,7 +99,7 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
 
         {/* Media Type Filter Pills (Appears ONLY when queue contains > 1 media type) */}
         {distinctMediaTypesCount > 1 && (
-          <div className="flex items-center gap-1 p-0.5 rounded-lg bg-secondary/80 border border-border text-xs shrink-0">
+          <div className="flex items-center gap-1 p-0.5 rounded-lg bg-secondary/80 border border-border text-xs shrink-0 flex-wrap">
             <button
               type="button"
               onClick={() => onMediaTypeFilterChange?.('all')}
@@ -165,7 +165,7 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
       </div>
 
       {/* Right: Queue & Batch Actions */}
-      <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap justify-between sm:justify-end min-w-0">
+      <div className="flex items-center gap-1.5 flex-wrap justify-start xl:justify-end shrink-0">
         {isResizing ? (
           <Tooltip
             content={
@@ -174,18 +174,17 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
                 : 'Please wait for previews and resolutions to finish preparing before generating metadata'
             }
           >
-            <div className="w-full sm:w-auto">
-              <Button
+            <Button
                 size="sm"
                 disabled
-                className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center opacity-65 cursor-not-allowed bg-secondary text-primary border border-border tabular-nums"
+                className="gap-1.5 text-xs font-semibold shrink-0 cursor-not-allowed bg-secondary text-primary border border-border tabular-nums"
               >
                 <Loader2 className="w-3.5 h-3.5 animate-spin text-primary shrink-0" />
                 <span className="truncate">
                   {language === 'ar' ? 'جاري تجهيز المعاينات...' : 'Preparing Previews...'}
                 </span>
               </Button>
-            </div>
+            
           </Tooltip>
         ) : isRunning || isPaused || !hasHealthyKeys || brandNewPendingCount === 0 ? (
           <Tooltip
@@ -206,7 +205,7 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
             }
           >
             <div
-              className="w-full sm:w-auto"
+              className="shrink-0"
               onClick={() => {
                 if (!isRunning && !hasHealthyKeys) onKeyAlertShake?.();
               }}
@@ -214,7 +213,7 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
               <Button
                 size="sm"
                 disabled
-                className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center opacity-40 cursor-not-allowed bg-secondary text-muted-foreground border border-border tabular-nums"
+                className="gap-1.5 text-xs font-semibold shrink-0 cursor-not-allowed bg-secondary text-muted-foreground border border-border tabular-nums"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
                 <span className="truncate">
@@ -230,7 +229,7 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
           <Button
             size="sm"
             onClick={onStartQueue}
-            className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center bg-primary hover:bg-primary/90 text-primary-foreground shadow-xs cursor-pointer tabular-nums"
+            className="gap-1.5 text-xs font-semibold shrink-0 bg-primary hover:bg-primary/90 text-primary-foreground shadow-xs cursor-pointer tabular-nums"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
             <span className="truncate">
@@ -247,7 +246,7 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
             size="sm"
             variant="secondary"
             onClick={onPauseQueue}
-            className="gap-1.5 text-xs w-full sm:w-auto justify-center cursor-pointer"
+            className="gap-1.5 text-xs font-semibold shrink-0 cursor-pointer"
           >
             <Pause className="w-3.5 h-3.5" />
             <span>{activeT.pause || 'Pause'}</span>
@@ -259,7 +258,7 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
             size="sm"
             variant="default"
             onClick={onResumeQueue}
-            className="gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center bg-primary hover:bg-primary/90 text-primary-foreground cursor-pointer"
+            className="gap-1.5 text-xs font-semibold shrink-0 bg-primary hover:bg-primary/90 text-primary-foreground cursor-pointer"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
             <span>{activeT.resume || 'Resume'}</span>
@@ -273,7 +272,7 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
             variant="destructive"
             disabled={isRunning}
             onClick={onRetryFailed}
-            className={`gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center tabular-nums ${
+            className={`gap-1.5 text-xs font-semibold shrink-0 tabular-nums ${
               isRunning ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:opacity-95'
             }`}
           >
@@ -298,7 +297,7 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
               variant="outline"
               disabled={isRunning || !hasHealthyKeys}
               onClick={onRegenerateAll}
-              className={`gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center transition-all tabular-nums ${
+              className={`gap-1.5 text-xs font-semibold shrink-0 transition-all tabular-nums ${
                 isRunning || !hasHealthyKeys
                   ? 'opacity-40 cursor-not-allowed border-border'
                   : 'cursor-pointer hover:bg-secondary text-foreground border-border'
@@ -324,7 +323,7 @@ export const StudioToolbar: React.FC<StudioToolbarProps> = ({
             onExportCsvs();
           }}
           disabled={completedCount === 0 || isRunning}
-          className={`gap-1.5 text-xs font-semibold w-full sm:w-auto justify-center transition-all tabular-nums ${
+          className={`gap-1.5 text-xs font-semibold shrink-0 transition-all tabular-nums ${
             completedCount > 0 && brandNewPendingCount === 0 && failedCount === 0 && !isRunning
               ? 'bg-primary hover:bg-primary/90 text-primary-foreground cursor-pointer'
               : completedCount > 0 && !isRunning

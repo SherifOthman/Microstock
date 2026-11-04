@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useSqliteQuery, getAiExecutionMode } from '../../db';
 import { SupportedPlatform } from '../../types';
 import { PLATFORMS_CONFIG } from '../../constants/platforms';
 import { useLanguage } from '../../context/LanguageContext';
@@ -66,7 +67,7 @@ export interface MarketplaceSidebarProps {
 }
 
 const PLATFORM_LIMIT_SUMMARY: Record<string, { en: string; ar: string }> = {
-  adobe: { en: '199c · 49 tags', ar: '199 حرف · 49 كلمة' },
+  adobe: { en: '199c · 25 tags (SEO)', ar: '199 حرف · 25 كلمة (SEO)' },
   shutterstock: { en: '200c · 50 tags', ar: '200 حرف · 50 كلمة' },
   freepik: { en: '100c · 50 tags', ar: '100 حرف · 50 كلمة' },
   vecteezy: { en: '199c · 49 tags', ar: '199 حرف · 49 كلمة' },
@@ -76,6 +77,7 @@ const PLATFORM_LIMIT_SUMMARY: Record<string, { en: string; ar: string }> = {
 
 export const MarketplaceSidebar: React.FC<MarketplaceSidebarProps> = (props) => {
   const { t, language } = useLanguage();
+  const aiMode = useSqliteQuery(() => getAiExecutionMode(), [], "cloud");
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [isDesktopCollapsed, setIsDesktopCollapsed] = useState<boolean>(() => {
     return localStorage.getItem('stock_studio_inspector_collapsed') === 'true';
@@ -321,7 +323,9 @@ export const MarketplaceSidebar: React.FC<MarketplaceSidebarProps> = (props) => 
             <div>
               <span className="font-semibold text-foreground block">{t.apiKeysWidget}</span>
               <span className="text-[11px] text-muted-foreground font-mono tabular-nums">
-                {props.healthyKeysCount > 0
+                {aiMode === 'local'
+                  ? (language === 'ar' ? 'خادم محلي (LM Studio)' : 'Local AI (LM Studio)')
+                  : props.healthyKeysCount > 0
                   ? t.readyRpm
                       .replace('{count}', String(props.healthyKeysCount))
                       .replace('{rpm}', String(props.combinedRpm))

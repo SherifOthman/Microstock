@@ -35,6 +35,7 @@ export interface UnifiedAssetRow {
   error?: string;
   createdAt: number;
   isRetry?: boolean;
+  nativePath?: string;
 }
 
 export interface AssetCardProps {

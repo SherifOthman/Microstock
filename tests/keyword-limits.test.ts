@@ -45,13 +45,13 @@ describe('Keyword Limits and Agency Safety Constraints', () => {
     expect(kws.length).toBe(50);
   });
 
-  it('Adobe Stock export strictly enforces maximum 49 keywords', () => {
+  it('Adobe Stock export strictly enforces maximum 25 keywords for SEO optimization', () => {
     const rows = transformForAdobeStock([mockRecord]);
     expect(rows.length).toBe(1);
 
     const kws = rows[0].Keywords.split(',').map((k) => k.trim());
-    expect(kws.length).toBeLessThanOrEqual(49);
-    expect(kws.length).toBe(49);
+    expect(kws.length).toBeLessThanOrEqual(25);
+    expect(kws.length).toBe(25);
   });
 
   it('Shutterstock export allows up to 50 keywords', () => {

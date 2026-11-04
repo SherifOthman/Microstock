@@ -1,21 +1,42 @@
 export const SYSTEM_VISION_PROMPT = `You are an Elite Microstock SEO Specialist.
-Analyze the provided stock image and return a strictly valid JSON object containing optimized metadata designed to satisfy multiple stock agencies (Adobe Stock, Freepik, Shutterstock, Vecteezy, and Dreamstime) in a single pass.
+Analyze the provided stock asset and return a strictly valid JSON object containing optimized metadata designed to satisfy multiple stock agencies (Adobe Stock, Freepik, Shutterstock, Vecteezy, and Dreamstime) in a single pass.
 
-UNIVERSAL SAFE-ZONE GUIDELINES:
-1. "base_title":
+CORE MICROSTOCK GUIDELINES (MANDATORY FOR BOTH TITLES AND KEYWORDS):
+Both Vecteezy and Shutterstock strictly prohibit technical specs, brand names, and file format descriptions in titles and keywords, leading to warnings or rejections. You must enforce these explicit negative constraints across ALL metadata fields ("base_title", "detailed_description", and "ranked_keywords"):
+
+1. NO ASSET TYPE REDUNDANCY (FOR BOTH TITLES AND KEYWORDS):
+   - The AI must NEVER include words that describe the file format or medium.
+   - NEVER use: "vector", "eps", "illustration", "drawing", "clipart", "photo", "picture", "image", "jpg", "video", "footage", "clip", "mp4", "motion", "concept video", "commercial video".
+   - Breakdown by media type:
+     * For videos: NEVER use "video", "footage", "clip", "mp4", "motion", "concept video", "commercial video".
+     * For vectors: NEVER use "vector", "eps", "illustration", "drawing", "clipart".
+     * For photos/images: NEVER use "photo", "picture", "image", "jpg", "photograph".
+   - Rationale: Stock agencies automatically detect and index media types; redundant format descriptions trigger review warnings, rejections, and Shutterstock "Invalid keywords removed" penalties.
+
+2. NO TRADEMARKS (FOR BOTH TITLES AND KEYWORDS):
+   - Absolutely NO brand names, trademarks, company names, or registered model names (e.g., iPhone, Apple, Windows, Nike, Sony, Canon).
+   - Always use generic terms (e.g., "smartphone", "generic device", "athletic shoes", "operating system").
+
+3. NO CAMERA SPECS / NO TECH SPECS (FOR BOTH TITLES AND KEYWORDS):
+   - Do NOT include technical metadata or camera specs (e.g., "4k", "8k", "60fps", "30fps", "1080p", "Canon", "Sony", "Nikon", "DSLR").
+   - Container resolution, frame rate, and technical properties are indexed automatically by microstock platforms from file headers.
+
+4. "base_title":
    - 60 to 95 characters (Universal Safe Zone: fits Vecteezy's 100-char max and Adobe's 200-char max naturally).
-   - Concise, factual, commercial, descriptive.
-   - Do NOT include subjective words ("best", "amazing", "beautiful", "stunning").
+   - TITLES must be highly descriptive, natural, commercial, and accurately describe the exact subject matter without using prohibited terms.
+   - Do NOT include file format/medium descriptions, brand names, technical camera specs, or subjective words ("best", "amazing", "beautiful", "stunning").
    - Do NOT include the words "AI", "Generative AI", or model names.
 
-2. "detailed_description":
+5. "detailed_description":
    - 120 to 200 characters (Universal Safe Zone: fits Shutterstock's 200-char ceiling while satisfying Dreamstime).
    - MUST be formulated as a complete, grammatically sound sentence ending with a period.
    - MUST be strictly longer in character count than "base_title".
-   - Factually describe the visual subject, setting, lighting, perspective, and composition.
+   - Factually describe the visual subject, setting, lighting, perspective, and composition without prohibited terms.
 
-3. "ranked_keywords":
+6. "ranked_keywords":
    - Array of exactly 45 to 49 relevant English keywords/tags STRICTLY ORDERED by commercial search priority.
+   - KEYWORDS: Prevent repetitive variations of the same root word (e.g., never output both "tech product" and "technology product"). Keep it strictly focused on the "Who, What, Where, When, Why" and conceptual themes.
+   - NO DUPLICATES / SPAM: Never repeat repetitive variations of the same root word.
    - Smart Microstock Mix (1 to 2 Words per Tag):
      * POSITIONS #1 to #10 (Top SEO Priority):
        - Positions #1 to #7: Core single-word primary subjects (high-volume search terms, e.g., "bench", "lake", "forest", "sunset", "water", "landscape", "winter")
@@ -29,7 +50,7 @@ UNIVERSAL SAFE-ZONE GUIDELINES:
      * No Root Word Stuffing in Top 10: Never repeat the same root word (e.g., "winter" or "lake") more than twice inside the first 10 tags.
    - STRICT RULE: Maximum 2 words per tag. NEVER glue or concatenate multiple words together without a space (e.g., NEVER output "homegym", "fitnessequipment", "recoverytool", "stretchingtool"). Always put a normal space between two words in a compound tag.
    - Include specific synonyms, visual styles, concepts, and copy space attributes.
-   - Do NOT include generic filler words, trademarked brands, or the words "AI" / "Generative AI".
+   - Do NOT include generic filler words, trademarked brands, prohibited medium/format terms, camera specs, or the words "AI" / "Generative AI".
 
 4. "category_adobe":
    - Integer 1 to 21 matching Adobe Stock's official categories:
@@ -82,6 +103,28 @@ Example:
   "dreamstime_category_2": "Industries -> Power and energy",
   "suggested_prompt": "aerial photograph of modern photovoltaic solar panel installation on rooftop, sunrise golden hour, hyper-detailed commercial photo"
 }`;
+
+export const SYSTEM_LOCAL_VISION_PROMPT = `You are an Elite Microstock SEO Specialist.
+Analyze the provided stock asset and output a strictly valid JSON object.
+
+OUTPUT JSON FORMAT (ONLY valid raw JSON, no markdown fences, no chain-of-thought, no reasoning):
+{
+  "base_title": "Descriptive title 60 to 95 characters describing subject matter",
+  "detailed_description": "Complete sentence 120 to 200 characters factually describing visual subject, lighting, perspective, and setting.",
+  "ranked_keywords": ["keyword1", "keyword2", "... exhaustive list of 45 to 49 unique commercial tags ordered by importance"],
+  "category_adobe": 19,
+  "category_shutterstock": ["Technology", "Industrial"],
+  "dreamstime_category_1": "Technology -> Computers"
+}
+
+STRICT MICROSTOCK GUIDELINES (MANDATORY FOR BOTH TITLES AND KEYWORDS):
+1. NO ASSET TYPE REDUNDANCY: NEVER include words that describe the file format or medium in titles or keywords.
+   Prohibited: "vector", "eps", "illustration", "drawing", "clipart", "photo", "picture", "image", "jpg", "video", "footage", "clip", "mp4", "motion", "concept video", "commercial video".
+2. NO TRADEMARKS: Absolutely NO brand names (iPhone, Apple, Windows, Nike, Sony, Canon). Use generic terms (smartphone, generic device, athletic shoes).
+3. NO CAMERA/TECH SPECS: Do not include technical camera metadata or resolution specs ("4k", "8k", "60fps", "30fps", "1080p", "Canon", "Sony", "Nikon", "DSLR").
+4. "base_title": 60 to 95 characters, highly descriptive, natural, commercial, without subjective puffery ("best", "amazing") or "AI".
+5. "ranked_keywords": Act as a highly prolific SEO expert and generate an exhaustive list of 45 to 49 UNIQUE, highly relevant English keywords (1 to 2 words per tag). Aggressively brainstorm conceptual themes, colors, moods, lighting, synonyms, setting, and composition terms to consistently reach the 45+ target. Never stop early at 25-30 keywords. Prevent repetitive variations of the same root word.
+6. Skip chain-of-thought and output ONLY the raw JSON object immediately.`;
 
 const GENERIC_AI_BOILERPLATE = new Set([
   'create',
@@ -235,8 +278,8 @@ export function buildVisionPrompt(
     prompt += '\nCRITICAL KEYWORD REQUIREMENT: Output concise single words or 1-2 word tags. Maximum 2 words per tag. NEVER glue or concatenate multiple words together without a space (e.g., NEVER output "homegym", "fitnessequipment", "recoverytool"). Always put a normal space between words in compound tags.';
   } else if (keywordPhrasing === 'double') {
     prompt += isVectorAsset
-      ? '\nCRITICAL KEYWORD REQUIREMENT: Output 2-word compound phrases where appropriate (e.g. "vector illustration", "graphic design", "flat icon", "scalable artwork"). Maximum 2 words per tag. NEVER glue words together without spaces.'
-      : '\nCRITICAL KEYWORD REQUIREMENT: Output 2-word compound phrases where appropriate (e.g. "copper metal", "brushed texture", "macro photograph", "metallic surface"). Maximum 2 words per tag. NEVER glue words together without spaces.';
+      ? '\nCRITICAL KEYWORD REQUIREMENT: Output 2-word compound phrases where appropriate (e.g. "flat icon", "graphic symbol", "clean badge", "scalable design"). Maximum 2 words per tag. NEVER glue words together without spaces.'
+      : '\nCRITICAL KEYWORD REQUIREMENT: Output 2-word compound phrases where appropriate (e.g. "copper metal", "brushed texture", "wooden surface", "metallic finish"). Maximum 2 words per tag. NEVER glue words together without spaces.';
   } else {
     prompt += '\nCRITICAL KEYWORD REQUIREMENT: Smart Microstock Mix (1 to 2 Words per Tag). Generate 45 to 49 tags in "ranked_keywords" STRICTLY ORDERED by commercial search priority.';
     prompt += '\nPOSITIONS #1 to #10 (Top SEO Priority): Positions #1 to #7 MUST be high-volume single-word primary subjects (e.g., "bench", "lake", "forest", "sunset", "water", "landscape", "winter"). Positions #8 to #10 can be strong 2-word compound phrases (e.g., "frozen lake", "wooden bench", "winter landscape").';
@@ -272,7 +315,7 @@ export function buildVisionPrompt(
 
     const dimStr = videoWidth && videoHeight ? `${videoWidth}x${videoHeight}` : (videoResolution || 'standard video');
 
-    prompt += '\nCRITICAL MEDIA TYPE: VIDEO FOOTAGE. The input image is a 4-frame chronological storyboard (F1, F2, F3, F4) of a stock video clip. Analyze both visual subject and temporal motion progression. Prioritize the core SUBJECT, ACTION, ENVIRONMENT, and CONCEPT in the Top 10 keywords. NEVER waste Top 10 keyword positions on technical words like "video clip", "clip", "footage", or "1080p". Place general video/motion tags in secondary positions (#25-#45). NEVER include photography/static terms (still life, photo, photograph, illustration, picture).';
+    prompt += '\nCRITICAL MEDIA TYPE: VIDEO FOOTAGE. The input image is a 4-frame chronological storyboard (F1, F2, F3, F4) of a stock video clip. Analyze both visual subject and temporal motion progression.\nSTRICT VECTEEZY & SHUTTERSTOCK COMPLIANCE (FOR BOTH TITLES AND KEYWORDS):\n- NO ASSET TYPE REDUNDANCY: The AI must NEVER include words that describe the file format or medium in titles or keywords ("video", "footage", "clip", "mp4", "motion", "concept video", "commercial video"). Stock agencies automatically index video formats; redundant format words trigger Vecteezy/Shutterstock warnings and rejections.\n- NO CAMERA/TECH SPECS: NEVER include technical metadata or camera specs ("4k", "8k", "60fps", "30fps", "24fps", "1080p", "hd", "uhd", "fhd", "canon", "sony", "nikon", "dslr").\n- NO STATIC/PHOTO TERMS: NEVER include photography/static terms ("photo", "photograph", "picture", "image", "jpg", "illustration", "drawing", "still life").\n- NO TRADEMARKS: Absolutely no brand names (e.g., iPhone, Apple, Windows, Nike); use generic terms (smartphone, generic device, athletic shoes).\n- TITLES: Must be highly descriptive, natural, and accurately describe the exact subject matter without using prohibited terms.\n- KEYWORDS: Prevent repetitive variations of the same root word. Keep it strictly focused on the "Who, What, Where, When, Why", action, environment, lighting, mood, and conceptual themes.';
     prompt += '\nSHUTTERSTOCK VIDEO CATEGORIES: Choose strictly from the 19 valid Shutterstock Video categories (Animals/Wildlife, Arts, Backgrounds/Textures, Buildings/Landmarks, Business/Finance, Education, Food and drink, Healthcare/Medical, Holidays, Industrial, Nature, Objects, People, Religion, Science, Signs/Symbols, Sports/Recreation, Technology, Transportation). DO NOT output Abstract, Beauty/Fashion, Celebrities, Interiors, Miscellaneous, Parks/Outdoor, or Vintage for video.';
 
     if (is4K) {
@@ -285,19 +328,34 @@ DO NOT spam technical resolution numbers ("1080p", "720p", "fhd") in keywords si
     }
   } else if (isVectorAsset) {
     prompt += `\nCRITICAL NOTE: The attached image is a rasterized preview of a Vector/EPS illustration. You MUST generate keywords appropriate for vector graphics and illustrations. Do NOT use words like 'photo', 'camera', or 'photography'.`;
+    prompt += `\nSTRICT VECTEEZY & SHUTTERSTOCK COMPLIANCE (FOR BOTH TITLES AND KEYWORDS):
+- NO ASSET TYPE REDUNDANCY: The AI must NEVER include words that describe the file format or medium in titles or keywords ("vector", "eps", "illustration", "drawing", "clipart", "photo", "picture", "image", "jpg"). Redundant format words cause warnings or rejections on Vecteezy and Shutterstock.
+- NO TRADEMARKS: Absolutely no brand names (e.g., iPhone, Apple, Windows, Nike); use generic terms (smartphone, generic device, athletic shoes).
+- NO CAMERA/TECH SPECS: Do not include technical metadata (e.g., 4k, 8k, 60fps, 1080p, Canon, Sony).
+- NO CAMERA/PHOTO TERMS: Do NOT use words like 'photo', 'camera', 'photography', 'dslr', 'lens', 'bokeh', 'shutter'.
+- TITLES: Must be highly descriptive, natural, and accurately describe the exact subject matter without using prohibited terms (NEVER use "vector", "illustration", "drawing", or "clipart" in titles).
+- KEYWORDS: Prevent repetitive variations of the same root word. Keep it strictly focused on the "Who, What, Where, When, Why", visual subject matter, elements, themes, and conceptual themes (e.g., "icon", "symbol", "sign", "silhouette", "outline", "badge", "label", "modern", "minimalist", "isolated").`;
     if (hasRealPreview === false) {
       prompt += `\n🚨 CRITICAL VECTOR SUBJECT OVERRIDE:
 The vector artwork file is named "${filename || 'vector.eps'}" depicting the subject: "${identifiedSubject}".
 The attached image is a generic placeholder badge with NO actual artwork. You MUST COMPLETELY IGNORE the badge visual, dark background, and the words "EPS 10 VECTOR".
 Generate ALL metadata, title, description, and 45-49 keywords specifically for a commercial stock vector illustration of: "${identifiedSubject}".
-- Base Title: Commercial descriptive title for a "${identifiedSubject}" vector illustration (e.g. "${identifiedSubject} Vector Icon Isolated on White Background").
+- Base Title: Highly descriptive, natural commercial title accurately describing "${identifiedSubject}" without prohibited terms (e.g. "${identifiedSubject} Icon Isolated on White Background" - NEVER use "vector", "illustration", or "drawing").
 - Detailed Description: Full sentence describing a professional vector graphic of "${identifiedSubject}".
-- Ranked Keywords: 45 to 49 commercial tags focusing on "${identifiedSubject}" (synonyms, uses, category terms, equipment, design, icon, symbol, clipart, vector, graphic, flat, isolated).
+- Ranked Keywords: 45 to 49 commercial tags focusing strictly on "${identifiedSubject}" (synonyms, uses, category terms, equipment, design, icon, symbol, flat, isolated). NEVER use redundant format words ("vector", "eps", "illustration", "drawing", "clipart").
 - NEVER generate generic abstract background patterns, geometric shapes, or describe the placeholder badge! Focus 100% on "${identifiedSubject}".
-- FORBIDDEN KEYWORDS (unless in filename): Do NOT output "abstract", "geometric", "shapes", "minimalist", "pattern", "modern art", "creative shape", "technology", "futuristic", "texture", "photo", "camera", or "photography". Every single keyword must relate directly to "${identifiedSubject}".`;
+- FORBIDDEN KEYWORDS (unless in filename): Do NOT output "abstract", "geometric", "shapes", "minimalist", "pattern", "modern art", "creative shape", "technology", "futuristic", "texture", "photo", "camera", "photography", "vector", "eps", "illustration", "drawing", or "clipart". Every single keyword must relate directly to "${identifiedSubject}".`;
     } else {
-      prompt += `\nCRITICAL MEDIA TYPE: VECTOR EPS ILLUSTRATION. This is a scalable vector graphic illustration${identifiedSubject ? ` depicting: "${identifiedSubject}"` : ''}. Analyze the actual ARTWORK CONTENT and visual elements shown (characters, objects, scenes, colors, style, composition). Describe what the illustration depicts, not just that it is a vector. Include vector-specific terms (vector, illustration, graphic, design, template, editable, scalable, flat, clip art, icon) alongside the SPECIFIC SUBJECT MATTER "${identifiedSubject}". NEVER include camera/photo terms (photo, photography, photograph, camera, dslr, shot, depth of field, bokeh, lens, shutter).`;
+      prompt += `\nCRITICAL MEDIA TYPE: VECTOR EPS ILLUSTRATION. This is a scalable vector graphic illustration${identifiedSubject ? ` depicting: "${identifiedSubject}"` : ''}. Analyze the actual ARTWORK CONTENT and visual elements shown (characters, objects, scenes, colors, style, composition). Describe what the illustration depicts, not just that it is a vector. Focus on the SPECIFIC SUBJECT MATTER "${identifiedSubject}" and design concepts (design, template, scalable, flat, icon, symbol, isolated). NEVER include redundant asset-type words ("vector", "eps", "illustration", "drawing", "clipart"). NEVER include camera/photo terms (photo, photography, photograph, camera, dslr, shot, depth of field, bokeh, lens, shutter).`;
     }
+  } else {
+    prompt += '\nCRITICAL MEDIA TYPE: STILL PHOTO / IMAGE.';
+    prompt += '\nSTRICT VECTEEZY & SHUTTERSTOCK COMPLIANCE (FOR BOTH TITLES AND KEYWORDS):';
+    prompt += '\n- NO ASSET TYPE REDUNDANCY: The AI must NEVER include words that describe the file format or medium in titles or keywords ("photo", "picture", "image", "jpg", "photograph", "video", "clip"). Stock platforms automatically categorize media types.';
+    prompt += '\n- NO TRADEMARKS: Absolutely no brand names (e.g., iPhone, Apple, Windows, Nike); use generic terms (smartphone, generic device, athletic shoes).';
+    prompt += '\n- NO CAMERA/TECH SPECS: Do not include technical camera metadata or brand names ("4k", "8k", "60fps", "1080p", "canon", "sony", "nikon", "dslr"). Focus on commercial lighting, mood, and composition ("macro", "close-up", "studio lighting", "golden hour").';
+    prompt += '\n- TITLES: Must be highly descriptive, natural, and accurately describe the exact subject matter without using prohibited terms.';
+    prompt += '\n- KEYWORDS: Prevent repetitive variations of the same root word (never output both "tech product" and "technology product"). Keep it strictly focused on the "Who, What, Where, When, Why" and conceptual themes.';
   }
 
   if (identifiedSubject) {

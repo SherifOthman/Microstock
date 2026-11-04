@@ -85,6 +85,7 @@ export function useUnifiedAssets(
         error: item.error,
         createdAt: item.createdAt || Date.now(),
         isRetry: item.isRetry,
+      nativePath: (item.file as any)?.__nativePath || (item.file as any)?.path || item.metadataRecord?.nativePath,
       });
     });
 
@@ -136,6 +137,7 @@ export function useUnifiedAssets(
           error: rec.errorMessage,
           createdAt: rec.createdAt || Date.now(),
           isRetry: recIsRetry,
+        nativePath: rec.nativePath,
         });
       }
     });

@@ -195,7 +195,7 @@ export function parseAndNormalizeAiMetadata(
 
   if (isVectorMedia) {
     baseTitle = baseTitle
-      .replace(/\b(?:photograph|photography|photos|photo)\b/gi, 'Vector Illustration')
+      .replace(/\b(?:photograph|photography|photos|photo)\b/gi, 'Graphic')
       .replace(/\b(?:camera\s+shot|camera)\b/gi, 'Graphic')
       .replace(/\s+/g, ' ')
       .trim();
@@ -212,7 +212,7 @@ export function parseAndNormalizeAiMetadata(
   }
   if (isVectorMedia) {
     detailedDescription = detailedDescription
-      .replace(/\b(?:stock\s+photograph|stock\s+photo|photograph|photography|photos|photo)\b/gi, 'vector illustration')
+      .replace(/\b(?:stock\s+photograph|stock\s+photo|photograph|photography|photos|photo)\b/gi, 'graphic design')
       .replace(/\b(?:camera\s+shot|camera|dslr|bokeh|depth\s+of\s+field)\b/gi, 'graphic design')
       .replace(/\s+/g, ' ')
       .trim();
@@ -353,16 +353,16 @@ export function parseAndNormalizeAiMetadata(
     // Only augment with vector fallback tags if AI already gave real keywords (finalKeywords >= 10)
     if (finalKeywords.length >= 10) {
       const vectorFallbackTags = [
-        'vector',
-        'illustration',
         'graphic',
         'design',
-        'clipart',
         'artwork',
-        'scalable',
-        'editable',
+        'symbol',
+        'icon',
+        'sign',
+        'modern',
+        'isolated',
         'flat design',
-        'vector graphic',
+        'element',
       ];
       for (const vTag of vectorFallbackTags) {
         if (finalKeywords.length >= 45) break;

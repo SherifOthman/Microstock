@@ -527,6 +527,21 @@ export async function extractMediaInfo(
     throw new Error(`Media file "${file?.name || 'unknown'}" is corrupted or empty (0 bytes)`);
   }
   const type = getMediaTypeFromFilename(file.name, file);
+
+  const preRendered = (file as any).__preRenderedDataUrl || (file as any).__thumbnailUrl;
+  if (preRendered && typeof preRendered === 'string' && preRendered.startsWith('data:image/')) {
+    const pureBase64 = preRendered.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
+    return {
+      mediaType: type,
+      thumbnailBase64: pureBase64,
+      thumbnailDataUrl: preRendered,
+      originalSizeBytes: file.size,
+      compressedSizeBytes: Math.round((pureBase64.length * 3) / 4),
+      width: (file as any).__preRenderedWidth || maxDim,
+      height: (file as any).__preRenderedHeight || maxDim,
+      hasRealPreview: true,
+    };
+  }
   if (type === 'video') {
     return await processVideoFile(file, maxDim, quality);
   }

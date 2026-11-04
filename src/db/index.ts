@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import {
+  AiExecutionMode,
   ApiKeyRecord,
   AppSettings,
   BatchRecord,
+  LocalAiConfig,
   MasterMetadataRecord,
   PlatformLimitConfig,
   ProviderType,
@@ -450,6 +452,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
     mistral: 'pixtral-12b-2409',
     cloudflare: '@cf/meta/llama-3.2-11b-vision-instruct',
   },
+  aiExecutionMode: 'cloud',
+  localAiConfig: {
+    baseUrl: 'http://127.0.0.1:1234/v1',
+    modelId: 'default',
+    timeoutSeconds: 300,
+  },
 };
 
 // Settings API
@@ -470,6 +478,29 @@ export async function saveAppSettings(settings: Partial<AppSettings>): Promise<A
   const current = await getAppSettings();
   const updated = { ...current, ...settings };
   await db.settings.put({ key: 'app_settings', value: updated });
+  return updated;
+}
+
+export async function getAiExecutionMode(): Promise<AiExecutionMode> {
+  const settings = await getAppSettings();
+  return settings.aiExecutionMode || 'cloud';
+}
+
+export async function setAiExecutionMode(mode: AiExecutionMode): Promise<void> {
+  await saveAppSettings({ aiExecutionMode: mode });
+  notifyDbChanged();
+}
+
+export async function getLocalAiConfig(): Promise<LocalAiConfig> {
+  const settings = await getAppSettings();
+  return settings.localAiConfig || DEFAULT_SETTINGS.localAiConfig!;
+}
+
+export async function saveLocalAiConfig(config: Partial<LocalAiConfig>): Promise<LocalAiConfig> {
+  const current = await getLocalAiConfig();
+  const updated: LocalAiConfig = { ...current, ...config };
+  await saveAppSettings({ localAiConfig: updated });
+  notifyDbChanged();
   return updated;
 }
 

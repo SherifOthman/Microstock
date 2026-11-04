@@ -84,6 +84,7 @@ export interface MasterMetadataRecord {
   };
   status: 'pending' | 'processing' | 'completed' | 'error';
   errorMessage?: string;
+  nativePath?: string;
   createdAt: number;
 }
 
@@ -144,6 +145,14 @@ export interface PlatformLimitConfig {
   description: string;
 }
 
+export type AiExecutionMode = 'cloud' | 'local';
+
+export interface LocalAiConfig {
+  baseUrl: string; // e.g. 'http://127.0.0.1:1234/v1'
+  modelId: string; // e.g. 'default' or detected loaded model
+  timeoutSeconds: number; // e.g. 300s
+}
+
 export interface AppSettings {
   routingStrategy: 'interleaved' | 'priority_tiered';
   providerPriority: ProviderType[];
@@ -156,6 +165,8 @@ export interface AppSettings {
   defaultAiModelName: string;
   platformLimits?: Record<SupportedPlatform, number>;
   providerModels?: Partial<Record<ProviderType, string>>;
+  aiExecutionMode?: AiExecutionMode;
+  localAiConfig?: LocalAiConfig;
 }
 
 export * from './renamer';

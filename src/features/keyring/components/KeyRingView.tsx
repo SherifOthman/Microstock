@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { ApiKeyRecord, ProviderType } from '../../../types';
+import { ApiKeyRecord, ProviderType, AiExecutionMode } from '../../../types';
+import { LocalAiSettingsPanel } from './LocalAiSettingsPanel';
 import { PROVIDERS_META, PROVIDER_ORDER, MODEL_DISPLAY_NAMES } from '../../../constants/providers';
 import { keyRingScheduler, RoutingStrategy } from '../../../services/scheduler/KeyRingScheduler';
-import { updateApiKey, removeApiKey } from '../../../db';
+import { updateApiKey, removeApiKey, getAiExecutionMode, setAiExecutionMode } from '../../../db';
 import { decryptSecret } from '../../../services/desktop/secureStorage';
 import { AddKeyDialog } from './AddKeyDialog';
 import { Button } from '../../../components/ui/button';
@@ -35,6 +36,8 @@ import {
   Shuffle,
   Info,
   GripVertical,
+  Cloud,
+  Server,
 } from 'lucide-react';
 import { ConfirmDialog } from '../../../components/ui/alert-dialog';
 import { useLanguage } from '../../../context/LanguageContext';
@@ -53,6 +56,23 @@ export const KeyRingView: React.FC = () => {
   const [routingMode, setRoutingMode] = useState<RoutingStrategy>(
     keyRingScheduler.getRoutingMode()
   );
+  const [aiMode, setAiMode] = useState<AiExecutionMode>('cloud');
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const mode = await getAiExecutionMode();
+      if (mounted) setAiMode(mode);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const handleModeChange = async (mode: AiExecutionMode) => {
+    setAiMode(mode);
+    await setAiExecutionMode(mode);
+  };
 
   useEffect(() => {
     const unsub = keyRingScheduler.subscribe((updated) => {
@@ -224,7 +244,43 @@ export const KeyRingView: React.FC = () => {
 
   return (
     <div className="space-y-4">
-      {/* Top Summary & Global Controls Bar */}
+      {/* Top Master Mode Switcher: Cloud vs Local */}
+      <div className="flex items-center p-1 bg-secondary/50 rounded-xl border border-border">
+        <Button
+          type="button"
+          variant={aiMode === 'cloud' ? 'default' : 'ghost'}
+          size="sm"
+          onClick={() => handleModeChange('cloud')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 h-9 rounded-lg text-xs font-bold transition cursor-pointer ${
+            aiMode === 'cloud'
+              ? 'shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <Cloud className="w-4 h-4" />
+          <span>{language === 'ar' ? 'مفاتيح السحابة (Cloud KeyRing)' : 'Cloud APIs (KeyRing)'}</span>
+        </Button>
+        <Button
+          type="button"
+          variant={aiMode === 'local' ? 'default' : 'ghost'}
+          size="sm"
+          onClick={() => handleModeChange('local')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 h-9 rounded-lg text-xs font-bold transition cursor-pointer ${
+            aiMode === 'local'
+              ? 'shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <Server className="w-4 h-4" />
+          <span>{language === 'ar' ? 'خادم الذكاء الاصطناعي المحلي (LM Studio)' : 'Local AI Server (LM Studio)'}</span>
+        </Button>
+      </div>
+
+      {aiMode === 'local' ? (
+        <LocalAiSettingsPanel />
+      ) : (
+        <>
+          {/* Top Summary & Global Controls Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-border">
         <div className="flex items-center gap-2">
           <Tooltip
@@ -307,13 +363,15 @@ export const KeyRingView: React.FC = () => {
           else if (pKeys.length > 0) dotColor = 'bg-destructive';
 
           return (
-            <button
+            <Button
               key={providerId}
               role="tab"
               type="button"
+              variant="ghost"
+              size="sm"
               aria-selected={isSelected}
               onClick={() => setActiveTab(providerId)}
-              className={`px-3 py-2 rounded-t-lg border-b-2 text-xs font-semibold flex items-center gap-2 transition cursor-pointer shrink-0 ${
+              className={`px-3 py-2 h-9 rounded-t-lg rounded-b-none border-b-2 text-xs font-semibold flex items-center gap-2 transition cursor-pointer shrink-0 ${
                 isSelected
                   ? 'border-primary text-foreground bg-secondary/60'
                   : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-secondary/30'
@@ -331,7 +389,7 @@ export const KeyRingView: React.FC = () => {
               >
                 {pKeys.length}
               </Badge>
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -618,6 +676,8 @@ export const KeyRingView: React.FC = () => {
         variant="destructive"
         onConfirm={handleDeleteConfirm}
       />
+        </>
+      )}
     </div>
   );
 };

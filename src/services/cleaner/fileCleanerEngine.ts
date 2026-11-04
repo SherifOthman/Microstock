@@ -1,3 +1,4 @@
+import { MasterMetadataRecord } from '../../types';
 import { isElectron } from '../desktop/desktopFs';
 import { sanitizeRenamerFilename } from '../../utils/renamerSanitizer';
 import { type SegregatedTrack, SEGREGATED_TRACKS, NEEDS_FIXING_FOLDER } from '../../constants/renamerRules';
@@ -416,17 +417,117 @@ export interface MediaSlotsMap {
 /**
  * Calculates next available slots across all 6 Real & AI media tracks independently
  */
+
+export interface ParsedBatchSequence {
+  batchNum: number;
+  sequence: number;
+}
+
+/**
+ * Extracts batch number and sequence index from filenames like:
+ * - B01_024__clean_slug.jpg     -> { batchNum: 1, sequence: 24 }
+ * - B01_024_AI__sunset.jpg      -> { batchNum: 1, sequence: 24 }
+ * - B02_AI_PH_005_mountain.jpg  -> { batchNum: 2, sequence: 5 }
+ * - B03_010.eps                 -> { batchNum: 3, sequence: 10 }
+ */
+export function parseBatchAndSequence(filename: string): ParsedBatchSequence | null {
+  if (!filename) return null;
+  const clean = filename.trim().split(/[\\/]/).pop() || '';
+  const match = clean.match(/^B(\d+)[-_](?:[A-Z0-9]+[-_])*?(\d+)(?:[^0-9]|$)/i);
+  if (match) {
+    const batchNum = parseInt(match[1], 10);
+    const sequence = parseInt(match[2], 10);
+    if (!isNaN(batchNum) && !isNaN(sequence)) {
+      return { batchNum, sequence };
+    }
+  }
+  return null;
+}
+
+/**
+ * Merges physical disk batch metadata with SQLite master records (MasterMetadataRecord).
+ * For any batch, highestIndex = Math.max(diskHighestIndex, dbHighestIndex).
+ * If a batch folder was deleted from disk entirely but exists in DB, it is preserved.
+ * Prevents catastrophic sequence counter resets when files are purged from disk after export.
+ */
+export function reconcileBatchesWithDb(
+  mediaBatches: Partial<MediaBatchesMap> = {},
+  dbRecords: MasterMetadataRecord[] = []
+): MediaBatchesMap {
+  const reconciled: MediaBatchesMap = {
+    Photos: (mediaBatches.Photos || []).map((b) => ({ ...b })),
+    Videos: (mediaBatches.Videos || []).map((b) => ({ ...b })),
+    Vectors: (mediaBatches.Vectors || []).map((b) => ({ ...b })),
+    AI_Photos: (mediaBatches.AI_Photos || []).map((b) => ({ ...b })),
+    AI_Videos: (mediaBatches.AI_Videos || []).map((b) => ({ ...b })),
+    AI_Vectors: (mediaBatches.AI_Vectors || []).map((b) => ({ ...b })),
+  };
+
+  if (!dbRecords || dbRecords.length === 0) {
+    return reconciled;
+  }
+
+  for (const rec of dbRecords) {
+    if (!rec.filename) continue;
+    const parsed = parseBatchAndSequence(rec.filename);
+    if (!parsed) continue;
+
+    // Resolve structural track
+    const isVector = rec.mediaType === 'vector' || /\.(eps|ai|svg)$/i.test(rec.filename);
+    const isVideo = rec.mediaType === 'video' || /\.(mp4|mov|mkv|webm)$/i.test(rec.filename);
+
+    let track: SubFolderTrack;
+    if (isVector) track = rec.isAiGenerated ? 'AI_Vectors' : 'Vectors';
+    else if (isVideo) track = rec.isAiGenerated ? 'AI_Videos' : 'Videos';
+    else track = rec.isAiGenerated ? 'AI_Photos' : 'Photos';
+
+    const batchList = reconciled[track] || [];
+    let batchInfo = batchList.find((b) => b.number === parsed.batchNum);
+
+    if (!batchInfo) {
+      batchInfo = {
+        name: `B${String(parsed.batchNum).padStart(2, '0')}`,
+        number: parsed.batchNum,
+        path: '',
+        fileCount: 0,
+        highestIndex: parsed.sequence,
+        lastFileName: rec.filename,
+      };
+      batchList.push(batchInfo);
+    } else {
+      if (parsed.sequence > batchInfo.highestIndex) {
+        batchInfo.highestIndex = parsed.sequence;
+        batchInfo.lastFileName = rec.filename;
+      }
+    }
+  }
+
+  for (const key of Object.keys(reconciled) as (keyof MediaBatchesMap)[]) {
+    const list = reconciled[key];
+    if (list && Array.isArray(list)) {
+      list.sort((a, b) => a.number - b.number);
+    }
+  }
+
+  return reconciled;
+}
+
 export function calculateAllMediaSlots(
   mediaBatches: Partial<MediaBatchesMap> = {},
-  maxItemsPerBatch = 100
+  maxItemsPerBatch = 100,
+  dbRecords?: MasterMetadataRecord[]
 ): MediaSlotsMap {
+  const reconciled = dbRecords && dbRecords.length > 0
+    ? reconcileBatchesWithDb(mediaBatches, dbRecords)
+    : mediaBatches;
+
   return {
-    Photos: calculateNextAvailableSlot(mediaBatches.Photos || [], maxItemsPerBatch),
-    Videos: calculateNextAvailableSlot(mediaBatches.Videos || [], maxItemsPerBatch),
-    Vectors: calculateNextAvailableSlot(mediaBatches.Vectors || [], maxItemsPerBatch),
-    AI_Photos: calculateNextAvailableSlot(mediaBatches.AI_Photos || [], maxItemsPerBatch),
-    AI_Videos: calculateNextAvailableSlot(mediaBatches.AI_Videos || [], maxItemsPerBatch),
-    AI_Vectors: calculateNextAvailableSlot(mediaBatches.AI_Vectors || [], maxItemsPerBatch),
+    Photos: calculateNextAvailableSlot(reconciled.Photos || [], maxItemsPerBatch),
+    Videos: calculateNextAvailableSlot(reconciled.Videos || [], maxItemsPerBatch),
+    Vectors: calculateNextAvailableSlot(reconciled.Vectors || [], maxItemsPerBatch),
+    AI_Photos: calculateNextAvailableSlot(reconciled.AI_Photos || [], maxItemsPerBatch),
+    AI_Videos: calculateNextAvailableSlot(reconciled.AI_Videos || [], maxItemsPerBatch),
+    AI_Vectors: calculateNextAvailableSlot(reconciled.AI_Vectors || [], maxItemsPerBatch),
   };
 }
 

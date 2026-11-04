@@ -39,6 +39,7 @@ export interface CleanerFileTableProps {
   setSearchFilter: (q: string) => void;
   isProcessing: boolean;
   isBatchSaved?: boolean;
+  lastProcessedFilesCount?: number;
   masterDirectory: string;
   blockingErrorCount: number;
   totalDuplicateCount: number;
@@ -66,6 +67,7 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
   setSearchFilter,
   isProcessing,
   isBatchSaved = false,
+  lastProcessedFilesCount,
   masterDirectory,
   blockingErrorCount,
   totalDuplicateCount,
@@ -315,14 +317,14 @@ export const CleanerFileTable: React.FC<CleanerFileTableProps> = React.memo(({
                   variant="secondary"
                   size="sm"
                   onClick={onSendToStudio}
-                  disabled={!isBatchSaved || isProcessing || cleanedItems.length === 0 || blockingErrorCount > 0}
+                  disabled={!isBatchSaved || isProcessing || (cleanedItems.length === 0 && (!lastProcessedFilesCount || lastProcessedFilesCount === 0)) || blockingErrorCount > 0}
                   className="gap-1.5 text-xs font-semibold text-primary hover:text-primary/80 cursor-pointer"
                 >
                   <Wand2 className="w-3.5 h-3.5" />
                   <span>
                     {language === 'ar'
-                      ? `إرسال إلى استوديو Metadata (${cleanedItems.length})`
-                      : `Send to Metadata Studio (${cleanedItems.length})`}
+                      ? `إرسال إلى استوديو Metadata (${cleanedItems.length || lastProcessedFilesCount || 0})`
+                      : `Send to Metadata Studio (${cleanedItems.length || lastProcessedFilesCount || 0})`}
                   </span>
                 </Button>
               </span>

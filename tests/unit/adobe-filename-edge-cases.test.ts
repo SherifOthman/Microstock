@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   sanitizeExportFilename,
   sanitizeForVecteezyWeb,
+  formatAdobeFilename,
   transformForAdobeStock,
   transformForFreepik,
   transformForDreamstime,
@@ -56,7 +57,7 @@ describe('Microstock Platform CSV Rules & Filename Edge Cases (platformTransform
     });
   });
 
-  describe('Adobe Stock CRLF (\r\n) Line Ending & 49-Keyword Ceiling', () => {
+  describe('Adobe Stock CRLF (\r\n) Line Ending & 25-Keyword SEO Ceiling', () => {
     const mockRecord: MasterMetadataRecord = {
       id: 'rec-1',
       filename: 'autumn_forest_lake.jpg',
@@ -72,13 +73,25 @@ describe('Microstock Platform CSV Rules & Filename Edge Cases (platformTransform
       status: 'completed',
     };
 
-    it('strictly caps Adobe Stock keywords at 49', () => {
+    it('strictly caps Adobe Stock keywords at 25 for SEO ranking', () => {
       const rows = transformForAdobeStock([mockRecord]);
       expect(rows).toHaveLength(1);
       const keywords = String(rows[0].Keywords).split(', ');
-      expect(keywords.length).toBe(49);
+      expect(keywords.length).toBe(25);
       expect(keywords[0]).toBe('keyword1');
-      expect(keywords[48]).toBe('keyword49');
+      expect(keywords[24]).toBe('keyword25');
+    });
+
+    it('formatAdobeFilename preserves exact disk filename byte-for-byte', () => {
+      expect(formatAdobeFilename('Açaí_bowl_with_toppings.jpg', 'image')).toBe('Açaí_bowl_with_toppings.jpg');
+      expect(formatAdobeFilename('München_café.png', 'image')).toBe('München_café.png');
+      expect(formatAdobeFilename('C:\\path\\to\\B01_005__chalet.jpg', 'image')).toBe('B01_005__chalet.jpg');
+    });
+
+    it('formatAdobeFilename forces .eps extension for vector mediaType', () => {
+      expect(formatAdobeFilename('B01_001__artwork.jpg', 'vector')).toBe('B01_001__artwork.eps');
+      expect(formatAdobeFilename('B01_001__artwork.eps', 'vector')).toBe('B01_001__artwork.eps');
+      expect(formatAdobeFilename('art_sample.ai', 'vector')).toBe('art_sample.eps');
     });
 
     it('generatePlatformCsv for Adobe Stock produces CRLF and trailing newline', () => {

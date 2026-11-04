@@ -1,4 +1,4 @@
-import { getDesktopSetting, setDesktopSetting } from "../../../db";
+import { db, subscribeToDbChanges, getDesktopSetting, setDesktopSetting } from "../../../db";
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   AssetOrigin,
@@ -11,6 +11,7 @@ import {
   SubFolderTrack,
   calculateAllMediaSlots,
   processFilesForBatchIngest,
+  reconcileBatchesWithDb,
   saveBatchFilesToMasterDirectory,
   validateMediaDimensions,
 } from '../../../services/cleaner/fileCleanerEngine';
@@ -37,7 +38,7 @@ export function buildRenamedFilesFromCleanedItems(items: CleanedFileItem[], mast
       if (isVector) {
         Object.defineProperty(renamedFile, '__sourceMediaType', {
           value: 'vector',
-          enumerable: false,
+          enumerable: true,
           configurable: true,
         });
       }
@@ -47,12 +48,12 @@ export function buildRenamedFilesFromCleanedItems(items: CleanedFileItem[], mast
       const origin: AssetOrigin = isAi ? 'ai' : 'real';
       Object.defineProperty(renamedFile, '__isAiGenerated', {
         value: isAi,
-        enumerable: false,
+        enumerable: true,
         configurable: true,
       });
       Object.defineProperty(renamedFile, '__assetOrigin', {
         value: origin,
-        enumerable: false,
+        enumerable: true,
         configurable: true,
       });
 
@@ -63,10 +64,17 @@ export function buildRenamedFilesFromCleanedItems(items: CleanedFileItem[], mast
         : item.nativePath || (item.file as any).__nativePath || (item.file as any).path || '';
 
       if (resolvedPath) {
+        Object.defineProperty(renamedFile, 'path', {
+          value: resolvedPath,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
         Object.defineProperty(renamedFile, '__nativePath', {
           value: resolvedPath,
-          enumerable: false,
+          enumerable: true,
           configurable: true,
+          writable: true,
         });
       }
 
@@ -76,7 +84,40 @@ export function buildRenamedFilesFromCleanedItems(items: CleanedFileItem[], mast
         const companionJpgPath = `${cleanMaster}/${rootFolder}/${item.subFolder}/${item.batchFolder}/${companionBase}.jpg`;
         Object.defineProperty(renamedFile, '__companionJpgNativePath', {
           value: companionJpgPath,
-          enumerable: false,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+      }
+
+      // Pass along pre-rendered thumbnail and dimensions for instantaneous zero-latency preview
+      if (item.thumbnailUrl) {
+        Object.defineProperty(renamedFile, '__thumbnailUrl', {
+          value: item.thumbnailUrl,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        if (item.thumbnailUrl.startsWith('data:image/')) {
+          Object.defineProperty(renamedFile, '__preRenderedDataUrl', {
+            value: item.thumbnailUrl,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+        }
+      }
+      if (item.validation?.width) {
+        Object.defineProperty(renamedFile, '__preRenderedWidth', {
+          value: item.validation.width,
+          enumerable: true,
+          configurable: true,
+        });
+      }
+      if (item.validation?.height) {
+        Object.defineProperty(renamedFile, '__preRenderedHeight', {
+          value: item.validation.height,
+          enumerable: true,
           configurable: true,
         });
       }
@@ -192,12 +233,17 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
     try {
       const res = await window.electronAPI.scanMasterDirectory(dirPath);
       if (res.success) {
-        if (res.mediaBatches) {
-          setMediaBatches({
-            ...EMPTY_MEDIA_BATCHES,
-            ...res.mediaBatches,
-          });
+        let scannedMedia: MediaBatchesMap = {
+          ...EMPTY_MEDIA_BATCHES,
+          ...(res.mediaBatches || {}),
+        };
+        try {
+          const dbRecords = await db.masterRecords.toArray();
+          scannedMedia = reconcileBatchesWithDb(scannedMedia, dbRecords);
+        } catch (dbErr) {
+          console.warn('[FileCleaner] Failed to reconcile with DB records:', dbErr);
         }
+        setMediaBatches(scannedMedia);
         if (res.batches) {
           setExistingBatches(res.batches);
         }
@@ -219,6 +265,16 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
     if (masterDirectory) {
       scanMasterDirectory(masterDirectory);
     }
+  }, [masterDirectory, scanMasterDirectory]);
+
+  // Re-reconcile high-water marks when SQLite database records change
+  useEffect(() => {
+    const unsub = subscribeToDbChanges(() => {
+      if (masterDirectory) {
+        scanMasterDirectory(masterDirectory);
+      }
+    });
+    return () => unsub();
   }, [masterDirectory, scanMasterDirectory]);
 
   // Handle User choosing the Master Destination Directory
