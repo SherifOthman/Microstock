@@ -79,9 +79,11 @@ export function generatePlatformCsv(
 
     case 'freepik': {
       // Magnific (Freepik) strictly supports only photos and vector artwork (no video support)
-      const nonVideoRecords = completedRecords.filter(
-        (r) => r.mediaType !== 'video' && !r.videoMeta && !/\.(mp4|mov|webm|avi|mkv|m4v|flv|wmv)$/i.test(r.filename ?? '')
-      );
+      const isVideoRec = (r: MasterMetadataRecord) =>
+        r.mediaType === 'video' ||
+        Boolean(r.videoMeta?.durationSeconds || r.videoMeta?.resolution) ||
+        /\.(mp4|mov|webm|avi|mkv|m4v|flv|wmv)$/i.test(r.filename ?? '');
+      const nonVideoRecords = completedRecords.filter((r) => !isVideoRec(r));
       if (nonVideoRecords.length === 0 && completedRecords.length > 0) {
         isBlocked = true;
         blockedReason = 'Magnific does not support video files. All assets in this batch are videos.';

@@ -280,7 +280,7 @@ export function transformForFreepik(
   // Magnific (Freepik) strictly does NOT support videos — filter out all video assets to prevent portal rejection
   const eligibleRecords = records.filter((rec) => {
     if (rec.mediaType === 'video') return false;
-    if (rec.videoMeta) return false;
+    if (rec.videoMeta?.durationSeconds || rec.videoMeta?.resolution) return false;
     if (rec.filename && /\.(mp4|mov|webm|avi|mkv|m4v|flv|wmv)$/i.test(rec.filename)) return false;
     return true;
   });
