@@ -330,5 +330,62 @@ describe('Tier 1 Unit: 6-Way Track Segregation & Vector Pairing', () => {
 
       service.clear();
     });
+
+    it('guarantees 100% path parity between saveBatchFilesToMasterDirectory and buildRenamedFilesFromCleanedItems', async () => {
+      const { processFilesForBatchIngest, saveBatchFilesToMasterDirectory } = await import('../../src/services/cleaner/fileCleanerEngine');
+      const { buildRenamedFilesFromCleanedItems } = await import('../../src/features/cleaner/hooks/useFileCleaner');
+
+      const epsFile = new File(['vector-content'], 'vintage_floral.eps', { type: 'application/postscript' });
+      const jpgFile = new File(['preview-content'], 'vintage_floral.jpg', { type: 'image/jpeg' });
+      const photoFile = new File(['photo-content'], 'mountain_view.jpg', { type: 'image/jpeg' });
+
+      // 1. Process files
+      const cleanedItems = processFilesForBatchIngest(
+        [epsFile, jpgFile, photoFile],
+        { sortOrder: 'alphabetical', maxItemsPerBatch: 100, assetOrigin: 'real' }
+      );
+
+      // 2. Mock Electron saveBatchFiles IPC to capture saved relativePaths
+      const savedRelativePaths: string[] = [];
+      (window as any).electronAPI = {
+        saveBatchFiles: async (masterDir: string, files: Array<{ relativePath: string; buffer: ArrayBuffer }>) => {
+          for (const f of files) {
+            savedRelativePaths.push(f.relativePath);
+          }
+          return { success: true, savedCount: files.length };
+        },
+      };
+
+      const masterDir = 'C:/Users/artist/Desktop/MasterStock';
+      const saveRes = await saveBatchFilesToMasterDirectory(masterDir, cleanedItems);
+      expect(saveRes.success).toBe(true);
+      expect(savedRelativePaths).toHaveLength(3);
+
+      // Verify all saved paths start with Real/ root folder
+      for (const p of savedRelativePaths) {
+        expect(p.startsWith('Real/')).toBe(true);
+      }
+
+      // 3. Build handoff files for Studio
+      const handoffFiles = buildRenamedFilesFromCleanedItems(cleanedItems, masterDir);
+      expect(handoffFiles).toHaveLength(3);
+
+      // 4. Verify that each handoff file's nativePath exactly matches masterDir + savedRelativePath
+      for (let i = 0; i < handoffFiles.length; i++) {
+        const hf = handoffFiles[i];
+        const nativePath = (hf as any).__nativePath;
+        const expectedPath = `${masterDir}/${savedRelativePaths[i]}`;
+        expect(nativePath).toBe(expectedPath);
+      }
+
+      // 5. Verify vector EPS has companion JPG native path linked
+      const epsHandoff = handoffFiles.find((f) => f.name.endsWith('.eps'))!;
+      expect(epsHandoff).toBeDefined();
+      expect((epsHandoff as any).__companionJpgNativePath).toBe(
+        `${masterDir}/Real/Vectors/B01/B01_001__vintage_floral.jpg`
+      );
+
+      delete (window as any).electronAPI;
+    });
   });
 });

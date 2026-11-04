@@ -991,8 +991,9 @@ export async function saveBatchFilesToMasterDirectory(
       chunk.map(async (item) => {
         const buffer = await item.file.arrayBuffer();
         const finalName = (item.customName || item.cleanedName).trim();
-        // Media-First Hierarchy: [Media Type] / [Batch] / [FinalName]
-        const relativePath = `${item.subFolder}/${item.batchFolder}/${finalName}`;
+        // Media-First Dual-Root Hierarchy: Master / [Real | AI] / [Photos | Videos | Vectors] / [Batch] / [FinalName]
+        const rootFolder = item.assetOrigin === 'ai' ? 'AI' : 'Real';
+        const relativePath = `${rootFolder}/${item.subFolder}/${item.batchFolder}/${finalName}`;
         return {
           relativePath,
           buffer,

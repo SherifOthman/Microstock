@@ -147,7 +147,26 @@ export function cmykToRgb(c: number, m: number, y: number, k: number): [number, 
 /**
  * Parses %%BoundingBox or %%HiResBoundingBox headers
  */
-export function parseEpsBoundingBox(headerText: string): EpsBoundingBox | null {
+export function parseEpsBoundingBox(input: string | ArrayBuffer | Uint8Array): EpsBoundingBox | null {
+  let headerText = '';
+  if (typeof input === 'string') {
+    headerText = input;
+  } else {
+    const u8 = input instanceof Uint8Array ? input : new Uint8Array(input);
+    if (u8.length >= 30 && u8[0] === 0xc5 && u8[1] === 0xd0 && u8[2] === 0xd3 && u8[3] === 0xc6) {
+      const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+      const psOffset = view.getUint32(4, true);
+      const psLen = Math.min(view.getUint32(8, true), 65536);
+      if (psOffset < u8.length) {
+        const slice = u8.subarray(psOffset, psOffset + psLen);
+        headerText = new TextDecoder('latin1').decode(slice);
+      }
+    }
+    if (!headerText) {
+      headerText = new TextDecoder('latin1').decode(u8.subarray(0, Math.min(u8.length, 65536)));
+    }
+  }
+
   // First try HiResBoundingBox
   const hiResMatch = headerText.match(/%%HiResBoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i);
   if (hiResMatch) {
@@ -822,15 +841,20 @@ export async function rasterizeEpsBufferDirect(
 
   // Compute target canvas dimensions based on exact aspect ratio
   const aspect = bb.width / bb.height;
-  let canvasWidth = targetLongestSide;
-  let canvasHeight = targetLongestSide;
+  const isExportMode = targetLongestSide > 2048;
+  const effectiveLongest = isExportMode
+    ? Math.max(5000, Math.min(8000, targetLongestSide))
+    : targetLongestSide;
+
+  let canvasWidth = effectiveLongest;
+  let canvasHeight = effectiveLongest;
 
   if (aspect >= 1) {
-    canvasWidth = targetLongestSide;
-    canvasHeight = Math.max(1, Math.round(targetLongestSide / aspect));
+    canvasWidth = effectiveLongest;
+    canvasHeight = Math.max(1, Math.round(effectiveLongest / aspect));
   } else {
-    canvasHeight = targetLongestSide;
-    canvasWidth = Math.max(1, Math.round(targetLongestSide * aspect));
+    canvasHeight = effectiveLongest;
+    canvasWidth = Math.max(1, Math.round(effectiveLongest * aspect));
   }
 
   const canvas = createUniversalCanvas(canvasWidth, canvasHeight);

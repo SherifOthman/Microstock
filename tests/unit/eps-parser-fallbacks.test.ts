@@ -193,4 +193,52 @@ describe('EPS 10 Vector Parser & Rendering Fallbacks (epsEngine.ts & mediaExtrac
       expect(info.thumbnailBase64.startsWith('blob:')).toBe(false);
     });
   });
+
+  describe('Resolution Clamping & Freepik Compliance (5000px–8000px Sweet Spot)', () => {
+    it('parses DOS binary EPS headers with 0xC5D0D3C6 magic signature and byte offsets', () => {
+      // Construct a 30-byte DOS binary header
+      const buf = new Uint8Array(256);
+      buf[0] = 0xc5; buf[1] = 0xd0; buf[2] = 0xd3; buf[3] = 0xc6;
+      // Byte 4-7: PostScript start offset (little-endian: 32)
+      buf[4] = 32; buf[5] = 0; buf[6] = 0; buf[7] = 0;
+      // PostScript text starting at byte 32
+      const psText = '%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 1200 800\n%%EndComments\n';
+      for (let i = 0; i < psText.length; i++) {
+        buf[32 + i] = psText.charCodeAt(i);
+      }
+
+      const bb = parseEpsBoundingBox(buf.buffer);
+      expect(bb).toBeDefined();
+      expect(bb?.width).toBe(1200);
+      expect(bb?.height).toBe(800);
+    });
+
+    it('clamps rasterized canvas dimensions to target 6000px while preserving 3:2 aspect ratio', async () => {
+      const { rasterizeEpsBufferDirect } = await import('../../src/services/eps/epsWorkerCore');
+      const epsText = '%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 3000 2000\n%%EndComments\n';
+      const buffer = new TextEncoder().encode(epsText).buffer;
+
+      const res = await rasterizeEpsBufferDirect(buffer, 'large_artboard.eps', 6000);
+      expect(res.width).toBe(6000);
+      expect(res.height).toBe(4000);
+      // Longest side is strictly between 5000px and 8000px
+      expect(Math.max(res.width, res.height)).toBeGreaterThanOrEqual(5000);
+      expect(Math.max(res.width, res.height)).toBeLessThanOrEqual(8000);
+      // Aspect ratio strictly equals 3:2 (1.5)
+      expect(res.width / res.height).toBeCloseTo(1.5, 2);
+    });
+
+    it('clamps vertical vector artboards to 6000px height while preserving 1:2 aspect ratio', async () => {
+      const { rasterizeEpsBufferDirect } = await import('../../src/services/eps/epsWorkerCore');
+      const epsText = '%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 1500 3000\n%%EndComments\n';
+      const buffer = new TextEncoder().encode(epsText).buffer;
+
+      const res = await rasterizeEpsBufferDirect(buffer, 'vertical_banner.eps', 6000);
+      expect(res.height).toBe(6000);
+      expect(res.width).toBe(3000);
+      expect(Math.max(res.width, res.height)).toBe(6000);
+      expect(res.height / res.width).toBeCloseTo(2.0, 2);
+    });
+  });
+
 });

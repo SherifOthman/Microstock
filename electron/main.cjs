@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, protocol, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -219,6 +219,9 @@ function registerStockflowProtocol() {
         if (rawPath && rawPath !== 'local') {
           filePath = rawPath;
         }
+      }
+      if (filePath) {
+        filePath = path.normalize(filePath);
       }
 
       if (!filePath || !fs.existsSync(filePath)) {
@@ -907,6 +910,62 @@ function setupIpcHandlers() {
     });
   }
 
+  // Helper to parse EPS BoundingBox in points from ASCII or DOS binary EPS headers
+  function parseEpsBoundingBox(filePath, fileBuffer) {
+    let widthPt = 800;
+    let heightPt = 600;
+    try {
+      let rawBuf = null;
+      if (filePath && fs.existsSync(filePath)) {
+        const fd = fs.openSync(filePath, 'r');
+        rawBuf = Buffer.alloc(131072); // 128KB
+        const bytesRead = fs.readSync(fd, rawBuf, 0, 131072, 0);
+        fs.closeSync(fd);
+        rawBuf = rawBuf.subarray(0, bytesRead);
+      } else if (fileBuffer) {
+        const sliceLen = Math.min(fileBuffer.length, 131072);
+        rawBuf = Buffer.from(fileBuffer.slice(0, sliceLen));
+      }
+
+      if (!rawBuf || rawBuf.length < 10) return { widthPt, heightPt, found: false };
+
+      let text = '';
+      // Check for DOS binary EPS header (magic signature 0xC5D0D3C6)
+      if (rawBuf.length >= 30 && rawBuf[0] === 0xc5 && rawBuf[1] === 0xd0 && rawBuf[2] === 0xd3 && rawBuf[3] === 0xc6) {
+        const psOffset = rawBuf.readUInt32LE(4);
+        if (filePath && fs.existsSync(filePath) && psOffset > 0) {
+          const fd = fs.openSync(filePath, 'r');
+          const psBuf = Buffer.alloc(65536);
+          const bytesRead = fs.readSync(fd, psBuf, 0, 65536, psOffset);
+          fs.closeSync(fd);
+          text = psBuf.toString('latin1', 0, bytesRead);
+        } else if (fileBuffer && psOffset < fileBuffer.length) {
+          text = Buffer.from(fileBuffer.slice(psOffset, psOffset + 65536)).toString('latin1');
+        }
+      }
+      if (!text) {
+        text = rawBuf.toString('latin1');
+      }
+
+      // Check %%HiResBoundingBox first, then %%BoundingBox
+      let bbMatch = text.match(/%%HiResBoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i);
+      if (!bbMatch) {
+        bbMatch = text.match(/%%BoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i);
+      }
+
+      if (bbMatch) {
+        const w = Math.abs(parseFloat(bbMatch[3]) - parseFloat(bbMatch[1]));
+        const h = Math.abs(parseFloat(bbMatch[4]) - parseFloat(bbMatch[2]));
+        if (w > 5 && h > 5) {
+          return { widthPt: w, heightPt: h, found: true };
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return { widthPt, heightPt, found: false };
+  }
+
   // IPC: High-Fidelity Native EPS to JPG Rasterization via Ghostscript (Non-Blocking Async Pool)
   ipcMain.handle('eps:rasterizeNative', async (event, payload) => {
     const { fileBuffer, filePath, fileName, maxDim, quality } = payload || {};
@@ -935,43 +994,26 @@ function setupIpcHandlers() {
       }
       const inputEpsPath = hasValidPath ? filePath : tempEps;
 
-      // Read EPS Bounding Box from header (first 64KB) to calculate optimal, balanced DPI
-      let widthPt = 800;
-      let heightPt = 600;
-      try {
-        let headerText = '';
-        if (hasValidPath) {
-          const fd = fs.openSync(filePath, 'r');
-          const buf = Buffer.alloc(65536);
-          const bytesRead = fs.readSync(fd, buf, 0, 65536, 0);
-          fs.closeSync(fd);
-          headerText = buf.toString('latin1', 0, bytesRead);
-        } else if (fileBuffer) {
-          const sliceLen = Math.min(fileBuffer.length, 65536);
-          headerText = Buffer.from(fileBuffer.slice(0, sliceLen)).toString('latin1');
-        }
-        const bbMatch = headerText.match(/%%(?:HiRes)?BoundingBox:\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)/i);
-        if (bbMatch) {
-          const w = Math.abs(parseFloat(bbMatch[3]) - parseFloat(bbMatch[1]));
-          const h = Math.abs(parseFloat(bbMatch[4]) - parseFloat(bbMatch[2]));
-          if (w > 10 && h > 10) {
-            widthPt = w;
-            heightPt = h;
-          }
-        }
-      } catch (bbErr) {
-        // fallback to standard 800x600 pt
-      }
-
+      // 1. Read EPS Bounding Box from header
+      const { widthPt, heightPt } = parseEpsBoundingBox(hasValidPath ? filePath : null, fileBuffer);
       const longestPt = Math.max(widthPt, heightPt, 50);
-      const desiredLongestPx = typeof maxDim === 'number' && maxDim > 0 ? maxDim : 2048;
 
-      // Calculate DPI so the longest side matches desiredLongestPx (72 pt = 1 inch in PostScript)
-      // Clamped between 72 DPI and 300 DPI to avoid 12,000px monster renders and prevent UI freezing
-      let targetDpi = Math.max(72, Math.min(300, Math.round((desiredLongestPx / longestPt) * 72)));
-      if (desiredLongestPx <= 1024) {
+      // 2. Determine target dimensions:
+      // - If maxDim <= 2048: Lightweight preview mode (Lightbox / downsampling)
+      // - If maxDim > 2048 or undefined: Full microstock export mode (target ~6,000px sweet spot)
+      const isExportMode = !maxDim || maxDim > 2048;
+      const desiredLongestPx = isExportMode ? 6000 : maxDim;
+
+      // Calculate target DPI so longest edge hits desiredLongestPx (72 pt = 1 inch)
+      let targetDpi = Math.max(72, Math.round((desiredLongestPx / longestPt) * 72));
+      if (isExportMode) {
+        targetDpi = Math.max(72, Math.min(450, targetDpi));
+      } else if (desiredLongestPx <= 1024) {
         targetDpi = Math.min(targetDpi, 96);
+      } else {
+        targetDpi = Math.min(targetDpi, 150);
       }
+
       const isThumbnailMode = desiredLongestPx <= 1024;
       const targetJpegQ =
         typeof quality === 'number' && quality > 0 && quality <= 1
@@ -1004,7 +1046,7 @@ function setupIpcHandlers() {
         return { success: false, error: errMsg };
       }
 
-      const jpgBuffer = await fs.promises.readFile(tempJpg);
+      let jpgBuffer = await fs.promises.readFile(tempJpg);
 
       // Read dimensions from SOF marker
       let width = 0;
@@ -1014,6 +1056,30 @@ function setupIpcHandlers() {
           height = jpgBuffer.readUInt16BE(i + 5);
           width = jpgBuffer.readUInt16BE(i + 7);
           break;
+        }
+      }
+
+      // 3. Absolute Constraint Safety Clamp for Export Mode:
+      // The longest side must strictly stay between 5,000px and 8,000px (target ~6,000px).
+      // Maintains 100% exact aspect ratio (never squishes or crops).
+      if (isExportMode && width > 0 && height > 0) {
+        const currentLongest = Math.max(width, height);
+        if (currentLongest > 8000 || currentLongest < 5000) {
+          try {
+            const img = nativeImage.createFromBuffer(jpgBuffer);
+            const imgSize = img.getSize();
+            if (imgSize.width > 0 && imgSize.height > 0) {
+              const scale = 6000 / Math.max(imgSize.width, imgSize.height);
+              const targetW = Math.round(imgSize.width * scale);
+              const targetH = Math.round(imgSize.height * scale);
+              const resizedImg = img.resize({ width: targetW, height: targetH, quality: 'best' });
+              jpgBuffer = resizedImg.toJPEG(Math.round(targetJpegQ));
+              width = targetW;
+              height = targetH;
+            }
+          } catch (resizeErr) {
+            console.warn('[Electron Main] nativeImage clamp error:', resizeErr);
+          }
         }
       }
 

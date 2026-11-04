@@ -52,8 +52,8 @@ export {
  */
 export async function rasterizeEpsFile(
   file: File | Blob,
-  targetLongestSide = 4000,
-  jpegQuality = 0.98
+  targetLongestSide = 6000,
+  jpegQuality = 0.95
 ): Promise<EpsRenderResult> {
   if (file.size === 0) {
     throw new Error(`EPS file "${(file as File).name || 'unknown'}" is corrupted or empty (0 bytes)`);

@@ -279,6 +279,17 @@ export function useEpsConverter(
         enumerable: false,
         configurable: true,
       });
+      if (item.result?.blob) {
+        const companionFile = new File([item.result.blob], item.outputJpgName, {
+          type: 'image/jpeg',
+          lastModified: Date.now(),
+        });
+        Object.defineProperty(vectorFile, '__companionJpg', {
+          value: companionFile,
+          enumerable: false,
+          configurable: true,
+        });
+      }
       if (item.result?.dataUrl && item.result.dataUrl.startsWith('data:image/') && item.result.dataUrl.length <= 120_000) {
         Object.defineProperty(vectorFile, '__preRenderedDataUrl', {
           value: item.result.dataUrl,

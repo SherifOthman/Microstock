@@ -28,12 +28,13 @@ export function buildRenamedFilesFromCleanedItems(items: CleanedFileItem[], mast
   return items
     .filter((i) => !i.validation?.isBlocking)
     .map((item) => {
-      const finalName = item.customName !== undefined ? item.customName : item.cleanedName;
+      const finalName = (item.customName !== undefined ? item.customName : item.cleanedName).trim();
       const renamedFile = new File([item.file], finalName, {
         type: item.file.type,
         lastModified: item.file.lastModified || Date.now(),
       });
-      if (item.subFolder === 'Vectors' || item.subFolder === 'AI_Vectors') {
+      const isVector = item.subFolder === 'Vectors' || item.subFolder === 'AI_Vectors';
+      if (isVector) {
         Object.defineProperty(renamedFile, '__sourceMediaType', {
           value: 'vector',
           enumerable: false,
@@ -54,9 +55,13 @@ export function buildRenamedFilesFromCleanedItems(items: CleanedFileItem[], mast
         enumerable: false,
         configurable: true,
       });
-      const resolvedPath = masterDir
-        ? `${masterDir.replace(/[\\/]+$/, '')}/${item.assetOrigin === 'ai' ? 'AI' : 'Real'}/${item.subFolder}/${item.batchFolder}/${finalName}`
+
+      const rootFolder = origin === 'ai' ? 'AI' : 'Real';
+      const cleanMaster = masterDir ? masterDir.replace(/[\\/]+$/, '') : '';
+      const resolvedPath = cleanMaster
+        ? `${cleanMaster}/${rootFolder}/${item.subFolder}/${item.batchFolder}/${finalName}`
         : item.nativePath || (item.file as any).__nativePath || (item.file as any).path || '';
+
       if (resolvedPath) {
         Object.defineProperty(renamedFile, '__nativePath', {
           value: resolvedPath,
@@ -64,6 +69,18 @@ export function buildRenamedFilesFromCleanedItems(items: CleanedFileItem[], mast
           configurable: true,
         });
       }
+
+      // If vector asset, link companion JPG path if available
+      if (isVector && cleanMaster) {
+        const companionBase = finalName.replace(/\.[^/.]+$/, '');
+        const companionJpgPath = `${cleanMaster}/${rootFolder}/${item.subFolder}/${item.batchFolder}/${companionBase}.jpg`;
+        Object.defineProperty(renamedFile, '__companionJpgNativePath', {
+          value: companionJpgPath,
+          enumerable: false,
+          configurable: true,
+        });
+      }
+
       return renamedFile;
     });
 }
