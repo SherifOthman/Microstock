@@ -23,6 +23,52 @@ export interface ResolvedHardwareProfileSpec {
 let cachedGpuDetection: { tier: 'integrated' | 'dedicated'; gpuName: string } | null = null;
 
 /**
+ * Cleans raw WebGL UNMASKED_RENDERER_WEBGL strings by stripping ANGLE wrappers,
+ * Direct3D/OpenGL suffixes, PCI ID hex codes in parentheses (e.g. (0x00009A49)),
+ * and duplicated leading vendor prefixes (e.g. "Intel, Intel(R)...").
+ */
+export function sanitizeGpuRendererString(rawRenderer: string): string {
+  if (!rawRenderer || !rawRenderer.trim()) {
+    return 'Integrated Graphics (Default)';
+  }
+
+  let cleaned = rawRenderer.trim();
+
+  // Strip ANGLE(...) wrapper if present
+  cleaned = cleaned.replace(/^(?:[^,]+,\s*)?ANGLE\s*\(/i, '');
+
+  // Strip Direct3D / D3D / OpenGL / Vulkan backend suffixes
+  cleaned = cleaned
+    .replace(/\s*Direct3D.*$/i, '')
+    .replace(/,\s*D3D\d+.*$/i, '')
+    .replace(/,\s*OpenGL.*$/i, '')
+    .replace(/,\s*Vulkan.*$/i, '');
+
+  // Strip PCI ID hex codes in parentheses, e.g. (0x00009A49) or unclosed (0x000...
+  cleaned = cleaned.replace(/\s*\(0x[0-9a-fA-F]+[^)]*\)?/g, '');
+
+  // Strip trailing closing parentheses left over from ANGLE(...)
+  cleaned = cleaned.replace(/\)+$/g, '').trim();
+
+  // Strip duplicated vendor prefix before a comma, e.g. "Intel, Intel(R)..." or "NVIDIA, NVIDIA GeForce..."
+  const commaMatch = cleaned.match(/^([A-Za-z0-9]+)\s*,\s*(.+)$/);
+  if (commaMatch) {
+    const [, vendorPrefix, rest] = commaMatch;
+    if (
+      rest.toLowerCase().startsWith(vendorPrefix.toLowerCase()) ||
+      /^(intel|nvidia|amd|ati|apple|qualcomm|mesa|microsoft)$/i.test(vendorPrefix)
+    ) {
+      cleaned = rest.trim();
+    }
+  }
+
+  // Collapse multiple spaces
+  cleaned = cleaned.replace(/\s{2,}/g, ' ').trim();
+
+  return cleaned || 'Integrated Graphics (Default)';
+}
+
+/**
  * Inspects WebGL renderer and navigator hardware telemetry once to determine whether
  * the host machine uses an integrated GPU (e.g. Intel Iris Xe / UHD) or a dedicated GPU (e.g. RTX / RX / Apple M).
  */
@@ -45,11 +91,7 @@ export function detectLocalHardwareTier(): { tier: 'integrated' | 'dedicated'; g
           : String(gl.getParameter(gl.RENDERER) || '');
 
         if (rawRenderer) {
-          gpuName = rawRenderer
-            .replace(/^ANGLE\s*\(/i, '')
-            .replace(/\s*Direct3D.*$/i, '')
-            .replace(/\)$/g, '')
-            .trim();
+          gpuName = sanitizeGpuRendererString(rawRenderer);
 
           const isDedicated = /nvidia|geforce|rtx|gtx|quadro|radeon\s+rx|radeon\s+pro|apple\s+m[1-9]|arc\s+a[57]\d{2}/i.test(
             rawRenderer

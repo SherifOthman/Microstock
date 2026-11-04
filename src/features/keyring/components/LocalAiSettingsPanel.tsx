@@ -29,6 +29,7 @@ import {
   localAiAdapter,
   LocalConnectionTestResult,
   resolveHardwareProfileSpec,
+  sanitizeGpuRendererString,
 } from '../../../services/providers/localAi';
 import { LocalAiConfig, LocalHardwareProfile } from '../../../types';
 
@@ -62,6 +63,8 @@ export const LocalAiSettingsPanel: React.FC = () => {
   }, []);
 
   const resolvedProfile = resolveHardwareProfileSpec(config.hardwareProfile || 'auto');
+  const isDedicatedTier = resolvedProfile.effectiveTier === 'dedicated';
+  const cleanGpuName = sanitizeGpuRendererString(resolvedProfile.detectedGpuName);
 
   const handleUrlChange = async (newUrl: string) => {
     const updated = { ...config, baseUrl: newUrl };
@@ -183,13 +186,13 @@ export const LocalAiSettingsPanel: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Configuration Card */}
+      {/* Main Configuration Card (Strict 2x2 Aligned Grid) */}
       <div className="p-3.5 rounded-xl border border-border bg-secondary/20 space-y-3.5">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
           {/* Base URL Input */}
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+            <div className="flex items-center justify-between h-4.5">
+              <label className="text-xs font-medium text-foreground flex items-center gap-1.5 truncate">
                 <span>{language === 'ar' ? 'عنوان الخادم (Base URL)' : 'Server Base URL'}</span>
                 <Tooltip
                   content={
@@ -198,7 +201,7 @@ export const LocalAiSettingsPanel: React.FC = () => {
                       : 'Default endpoint for LM Studio Local Server is http://127.0.0.1:1234/v1'
                   }
                 >
-                  <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                  <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help shrink-0" />
                 </Tooltip>
               </label>
 
@@ -221,7 +224,7 @@ export const LocalAiSettingsPanel: React.FC = () => {
                 value={config.baseUrl}
                 onChange={(e) => handleUrlChange(e.target.value)}
                 placeholder="http://127.0.0.1:1234/v1"
-                className="font-mono text-xs h-8.5 bg-background"
+                className="font-mono text-xs h-8.5 w-full bg-background"
               />
               {saveSuccess && (
                 <span className="text-[11px] text-emerald-500 font-mono shrink-0">
@@ -233,13 +236,13 @@ export const LocalAiSettingsPanel: React.FC = () => {
 
           {/* Model ID / Detected Model */}
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
-                <Cpu className="w-3.5 h-3.5 text-primary" />
+            <div className="flex items-center justify-between h-4.5">
+              <label className="text-xs font-medium text-foreground flex items-center gap-1.5 truncate">
+                <Cpu className="w-3.5 h-3.5 text-primary shrink-0" />
                 <span>{language === 'ar' ? 'معرّف النموذج (Model ID)' : 'Model Identifier'}</span>
               </label>
               {detectedModels.length > 0 && (
-                <span className="text-[10px] font-mono text-muted-foreground">
+                <span className="text-[10px] font-mono text-muted-foreground shrink-0">
                   {detectedModels.length} {language === 'ar' ? 'نماذج مكتشفة' : 'detected'}
                 </span>
               )}
@@ -268,23 +271,20 @@ export const LocalAiSettingsPanel: React.FC = () => {
                 value={config.modelId}
                 onChange={(e) => handleModelChange(e.target.value)}
                 placeholder="e.g. lfm3-vl-2b or default"
-                className="font-mono text-xs h-8.5 bg-background"
+                className="font-mono text-xs h-8.5 w-full bg-background"
               />
             )}
           </div>
         </div>
 
         {/* Auto-Scaling Hardware Profile & Timeout Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1 border-t border-border/60">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2 border-t border-border/60">
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
-                <Zap className="w-3.5 h-3.5 text-primary" />
-                <span>{language === 'ar' ? 'ملف الأداء التلقائي للجهاز' : 'Hardware Performance Profile'}</span>
+            <div className="flex items-center justify-between h-4.5">
+              <label className="text-xs font-medium text-foreground flex items-center gap-1.5 truncate">
+                <Zap className="w-3.5 h-3.5 text-primary shrink-0" />
+                <span>{language === 'ar' ? 'ملف الأداء' : 'Hardware Profile'}</span>
               </label>
-              <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0 h-4.5 bg-background">
-                {resolvedProfile.imageMaxDim}px · {Math.round(resolvedProfile.jpegQuality * 100)}% JPG
-              </Badge>
             </div>
 
             <Select
@@ -300,58 +300,62 @@ export const LocalAiSettingsPanel: React.FC = () => {
               <SelectContent>
                 <SelectItem value="auto">
                   {language === 'ar'
-                    ? `تلقائي (${resolvedProfile.effectiveTier === 'dedicated' ? 'كرت شاشة مستقل 512px' : 'كرت مدمج 384px'})`
-                    : `Auto-Detect (${resolvedProfile.effectiveTier === 'dedicated' ? 'Dedicated GPU · 512px' : 'Laptop iGPU · 384px'})`}
+                    ? `تلقائي (${isDedicatedTier ? 'كرت مستقل · 512px · 82% JPG' : 'كرت مدمج · 384px · 72% JPG'})`
+                    : `Auto-Detect (${isDedicatedTier ? 'Dedicated GPU · 512px · 82% JPG' : 'Integrated GPU · 384px · 72% JPG'})`}
                 </SelectItem>
                 <SelectItem value="integrated">
                   {language === 'ar'
-                    ? 'كفاءة (Laptop iGPU / Iris Xe — 384px لتسريع المعالجة)'
-                    : 'Efficiency (Laptop iGPU / Iris Xe — 384px Fast Prefill)'}
+                    ? 'وضع الكفاءة (Integrated GPU — 384px · 72% JPG)'
+                    : 'Integrated GPU (Efficiency Mode — 384px · 72% JPG)'}
                 </SelectItem>
                 <SelectItem value="dedicated">
                   {language === 'ar'
-                    ? 'أداء عالي (Dedicated GPU / RTX — 512px دقة كاملة)'
-                    : 'High-Spec PC (Dedicated GPU / RTX — 512px Full Detail)'}
+                    ? 'وضع الأداء العالي (Dedicated GPU — 512px · 82% JPG)'
+                    : 'Dedicated GPU (High-Spec Mode — 512px · 82% JPG)'}
                 </SelectItem>
               </SelectContent>
             </Select>
-            <p className="text-[10px] text-muted-foreground font-mono truncate" dir="ltr">
-              GPU: {resolvedProfile.detectedGpuName}
+            <p
+              data-testid="detected-gpu-subtitle"
+              className="text-[10px] text-muted-foreground font-mono truncate"
+              dir="ltr"
+            >
+              Detected: {cleanGpuName}
             </p>
           </div>
 
           {/* Timeout Seconds */}
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
-              <Layers className="w-3.5 h-3.5 text-primary" />
-              <span>{language === 'ar' ? 'مهلة المعالجة لكل ملف (ثانية)' : 'Inference Timeout (Seconds)'}</span>
-            </label>
-            <div className="flex items-center gap-2.5">
-              <Input
-                type="number"
-                dir="ltr"
-                min={15}
-                max={600}
-                value={config.timeoutSeconds || 300}
-                onChange={(e) => handleTimeoutChange(parseInt(e.target.value, 10) || 300)}
-                className="font-mono text-xs h-8.5 w-24 bg-background shrink-0"
-              />
-              <span className="text-[11px] text-muted-foreground leading-snug">
-                {language === 'ar'
-                  ? '300 ثانية (5 دقائق) موصى بها للمعالجة المحلية.'
-                  : 'Default 300s (5 min) prevents premature CPU/iGPU aborts.'}
-              </span>
+            <div className="flex items-center justify-between h-4.5">
+              <label className="text-xs font-medium text-foreground flex items-center gap-1.5 truncate">
+                <Layers className="w-3.5 h-3.5 text-primary shrink-0" />
+                <span>{language === 'ar' ? 'مهلة المعالجة (ثانية)' : 'Inference Timeout (Seconds)'}</span>
+              </label>
             </div>
+            <Input
+              type="number"
+              dir="ltr"
+              min={15}
+              max={600}
+              value={config.timeoutSeconds || 300}
+              onChange={(e) => handleTimeoutChange(parseInt(e.target.value, 10) || 300)}
+              className="font-mono text-xs h-8.5 w-full bg-background"
+            />
+            <p className="text-[10px] text-muted-foreground truncate">
+              {language === 'ar'
+                ? 'القيمة الافتراضية 300 ثانية تمنع الإلغاء المبكر للمعالجة'
+                : 'Default 300s prevents premature aborts'}
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Persistent LFM3-VL-2B LM Studio Tuning Checklist */}
+      {/* Dynamic LM Studio Tuning Checklist */}
       <div
         data-testid="lfm3-tuning-checklist"
         className="p-3.5 rounded-xl border border-primary/25 bg-primary/5 space-y-2.5"
       >
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Sliders className="w-3.5 h-3.5 text-primary shrink-0" />
             <span className="text-xs font-semibold text-foreground">
@@ -361,37 +365,85 @@ export const LocalAiSettingsPanel: React.FC = () => {
             </span>
           </div>
           <Badge variant="outline" className="text-[10px] font-mono bg-background border-primary/30 text-primary">
-            45–49 Keywords
+            {isDedicatedTier
+              ? language === 'ar'
+                ? 'وضع الأداء العالي (Dedicated GPU)'
+                : 'High-Spec Mode (Dedicated GPU)'
+              : language === 'ar'
+              ? 'وضع الكفاءة (Integrated GPU)'
+              : 'Efficiency Mode (Integrated GPU)'}
           </Badge>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 text-[11px]">
           <div className="p-2 rounded-lg bg-background/80 border border-border flex items-start gap-2">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+            <Sliders className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
             <div>
               <span className="font-semibold text-foreground block" dir="ltr">
-                Context Length: 4096
+                {isDedicatedTier ? 'Context Length: 8192' : 'Context Length: 4096'}
               </span>
               <span className="text-muted-foreground text-[10px]">
-                {language === 'ar' ? 'تبويب Load — يوفر ذاكرة RAM' : 'Load Tab — prevents 16GB RAM overflow'}
+                {isDedicatedTier
+                  ? language === 'ar'
+                    ? 'تبويب Load — مساحة سياق موسعة لكروت الشاشة المستقلة'
+                    : 'Load Tab — expanded context for dedicated VRAM'
+                  : language === 'ar'
+                  ? 'تبويب Load — يمنع امتلاء الذاكرة المشتركة'
+                  : 'Load Tab — prevents shared RAM overflow'}
               </span>
             </div>
           </div>
 
           <div className="p-2 rounded-lg bg-background/80 border border-border flex items-start gap-2">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+            <Sliders className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+            <div>
+              <span className="font-semibold text-foreground block" dir="ltr">
+                {isDedicatedTier ? 'Eval Batch Size: 2048 (Fast Prefill)' : 'Eval Batch Size: 512'}
+              </span>
+              <span className="text-muted-foreground text-[10px]">
+                {isDedicatedTier
+                  ? language === 'ar'
+                    ? 'تبويب Load — أقصى سرعة لقراءة الصور'
+                    : 'Load Tab — maximizes vision prefill speed'
+                  : language === 'ar'
+                  ? 'تبويب Load — يمنع تجمّد الكرت المدمج'
+                  : 'Load Tab — smoother prefill on integrated GPUs'}
+              </span>
+            </div>
+          </div>
+
+          <div className="p-2 rounded-lg bg-background/80 border border-border flex items-start gap-2">
+            <Sliders className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+            <div>
+              <span className="font-semibold text-foreground block" dir="ltr">
+                {isDedicatedTier ? 'Parallel: 1-2' : 'Parallel: 1'}
+              </span>
+              <span className="text-muted-foreground text-[10px]">
+                {isDedicatedTier
+                  ? language === 'ar'
+                    ? 'تبويب Server — يدعم معالجة متوازية سريعة'
+                    : 'Server Tab — supports high-throughput slots'
+                  : language === 'ar'
+                  ? 'تبويب Server — يوفر 75% من ذاكرة KV'
+                  : 'Server Tab — saves 75% KV cache memory'}
+              </span>
+            </div>
+          </div>
+
+          <div className="p-2 rounded-lg bg-background/80 border border-border flex items-start gap-2">
+            <Sliders className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
             <div>
               <span className="font-semibold text-foreground block" dir="ltr">
                 GPU Offload: Max (24)
               </span>
               <span className="text-muted-foreground text-[10px]">
-                {language === 'ar' ? 'تبويب Load — تسريع كامل للطبقات' : 'Load Tab — offloads all 24 layers'}
+                {language === 'ar' ? 'تبويب Load — تسريع كامل لجميع الطبقات' : 'Load Tab — offloads all 24 model layers'}
               </span>
             </div>
           </div>
 
           <div className="p-2 rounded-lg bg-background/80 border border-border flex items-start gap-2">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+            <Sliders className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
             <div>
               <span className="font-semibold text-foreground block" dir="ltr">
                 Enable Thinking: OFF
@@ -403,40 +455,38 @@ export const LocalAiSettingsPanel: React.FC = () => {
           </div>
 
           <div className="p-2 rounded-lg bg-background/80 border border-border flex items-start gap-2">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+            <Sliders className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
             <div>
               <span className="font-semibold text-foreground block" dir="ltr">
-                Temperature: 0.1
+                Flash Attention: ON
               </span>
               <span className="text-muted-foreground text-[10px]">
-                {language === 'ar' ? 'يُرسل تلقائياً مع Repeat Penalty 1.04' : 'Auto-sent with Repeat Penalty 1.04'}
+                {language === 'ar' ? 'تبويب Load — يقلل استهلاك ذاكرة الفيديو' : 'Load Tab — reduces vision KV memory footprint'}
               </span>
             </div>
           </div>
+        </div>
 
-          <div className="p-2 rounded-lg bg-background/80 border border-border flex items-start gap-2">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
-            <div>
-              <span className="font-semibold text-foreground block" dir="ltr">
-                Parallel (Concurrent): 1
-              </span>
-              <span className="text-muted-foreground text-[10px]">
-                {language === 'ar' ? 'بدلاً من 4 لتوفير 75% من ذاكرة KV' : 'Set to 1 (saves 75% KV cache vs 4)'}
-              </span>
-            </div>
+        {/* Specific Green Badge / Note for Auto-Injected StockFlow Parameters */}
+        <div
+          data-testid="auto-injected-sampling-note"
+          className="px-2.5 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex flex-wrap items-center justify-between gap-2 text-[11px]"
+        >
+          <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium">
+            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+            <span>
+              {language === 'ar'
+                ? 'يتم حقن إعدادات التوليد تلقائياً بواسطة StockFlow في كل طلب:'
+                : 'Injected automatically by StockFlow on every request:'}
+            </span>
           </div>
-
-          <div className="p-2 rounded-lg bg-background/80 border border-border flex items-start gap-2">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
-            <div>
-              <span className="font-semibold text-foreground block" dir="ltr">
-                Eval Batch Size: 512
-              </span>
-              <span className="text-muted-foreground text-[10px]">
-                {language === 'ar' ? 'أخف على Iris Xe من 2048' : 'Smoother on Iris Xe than 2048'}
-              </span>
-            </div>
-          </div>
+          <Badge
+            variant="outline"
+            dir="ltr"
+            className="text-[10px] font-mono bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400"
+          >
+            Temperature: 0.1 · Repeat Penalty: 1.04
+          </Badge>
         </div>
       </div>
 

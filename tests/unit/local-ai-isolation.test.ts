@@ -1,10 +1,30 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { LocalAiAdapter, localAiAdapter } from '../../src/services/providers/localAi';
+import { LocalAiAdapter, sanitizeGpuRendererString } from '../../src/services/providers/localAi';
 import { getAiExecutionMode, setAiExecutionMode, getLocalAiConfig, saveLocalAiConfig } from '../../src/db';
 
 describe('Local LM Studio Integration with Strict Isolation', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  describe('GPU String Sanitizer', () => {
+    it('strips duplicate vendor prefixes and PCI hex IDs from raw WebGL renderer strings', () => {
+      expect(
+        sanitizeGpuRendererString('Intel, Intel(R) Iris(R) Xe Graphics (0x00009A49)')
+      ).toBe('Intel(R) Iris(R) Xe Graphics');
+
+      expect(
+        sanitizeGpuRendererString(
+          'ANGLE (Intel, Intel(R) Iris(R) Xe Graphics (0x00009A49) Direct3D11 vs_5_0 ps_5_0, D3D11)'
+        )
+      ).toBe('Intel(R) Iris(R) Xe Graphics');
+
+      expect(
+        sanitizeGpuRendererString(
+          'ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 (0x00002786) Direct3D11 vs_5_0 ps_5_0, D3D11)'
+        )
+      ).toBe('NVIDIA GeForce RTX 4070');
+    });
   });
 
   describe('LocalAiAdapter Base URL & Prompt Formatting', () => {
