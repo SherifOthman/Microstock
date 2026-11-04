@@ -1,14 +1,21 @@
 import { useState, useEffect, useRef } from 'react';
 import {
+  AgencyTrackingRecord,
   AiExecutionMode,
   ApiKeyRecord,
   AppSettings,
+  BackupLogRecord,
   BatchRecord,
+  ExportBasketRecord,
   LocalAiConfig,
   MasterMetadataRecord,
   PlatformLimitConfig,
   ProviderType,
+  RejectionReasonRecord,
   SupportedPlatform,
+  TrackerAgencyStatus,
+  TrackerSummaryStats,
+  WorkspacePathsInfo,
 } from '../types';
 import { PROVIDERS_META } from '../constants/providers';
 import { encryptSecret, decryptSecret } from '../services/desktop/secureStorage';
@@ -105,15 +112,130 @@ export function useSqliteQuery<T>(
   return data;
 }
 
+const ALL_AGENCIES: SupportedPlatform[] = [
+  'adobe',
+  'freepik',
+  'shutterstock',
+  'vecteezy',
+  'dreamstime',
+  '123rf',
+];
+
+const DEFAULT_TEST_REJECTION_REASONS: RejectionReasonRecord[] = [
+  {
+    id: 'rej_tech_quality',
+    agencyId: 'all',
+    code: 'TECH_QUALITY',
+    title: 'Technical Quality / Artifacts',
+    description: 'Chromatic aberration, sensor noise, compression artifacts, or AI anatomy/blending flaws.',
+    severity: 'fixable',
+    usageCount: 0,
+    isActive: true,
+    createdAt: 1000,
+    updatedAt: 1000,
+  },
+  {
+    id: 'rej_similar_content',
+    agencyId: 'all',
+    code: 'SIMILAR_DUPLICATE',
+    title: 'Similar / Duplicate Submission',
+    description: 'Asset is too visually or conceptually similar to files already in queue or portfolio.',
+    severity: 'standard',
+    usageCount: 0,
+    isActive: true,
+    createdAt: 1000,
+    updatedAt: 1000,
+  },
+  {
+    id: 'rej_ip_trademark',
+    agencyId: 'all',
+    code: 'IP_TRADEMARK',
+    title: 'Intellectual Property / Trademark',
+    description: 'Contains recognizable brand logos, copyrighted designs, or protected architecture.',
+    severity: 'permanent_ban_risk',
+    usageCount: 0,
+    isActive: true,
+    createdAt: 1000,
+    updatedAt: 1000,
+  },
+  {
+    id: 'rej_missing_release',
+    agencyId: 'all',
+    code: 'MISSING_RELEASE',
+    title: 'Missing Model / Property Release',
+    description: 'Recognizable face or private property requires a signed release or Editorial flag.',
+    severity: 'fixable',
+    usageCount: 0,
+    isActive: true,
+    createdAt: 1000,
+    updatedAt: 1000,
+  },
+];
+
 // ============================================================================
 // In-Memory Fallback Store (Used when running Vitest unit tests outside Electron)
 // ============================================================================
 const testMemoryStore = {
   masterRecords: new Map<string, MasterMetadataRecord>(),
+  agencyTracking: new Map<string, AgencyTrackingRecord>(),
+  rejectionDictionary: new Map<string, RejectionReasonRecord>(
+    DEFAULT_TEST_REJECTION_REASONS.map((r) => [r.id, { ...r }])
+  ),
+  exportBaskets: new Map<string, ExportBasketRecord>(),
+  backupLogs: [] as BackupLogRecord[],
   apiKeys: new Map<string, ApiKeyRecord>(),
   batches: new Map<string, BatchRecord>(),
   settings: new Map<string, SettingItem>(),
 };
+
+function ensureTestAgencyTracking(assetId: string, now = Date.now()): Record<SupportedPlatform, AgencyTrackingRecord> {
+  const result = {} as Record<SupportedPlatform, AgencyTrackingRecord>;
+  for (const agencyId of ALL_AGENCIES) {
+    const key = `${assetId}::${agencyId}`;
+    let rec = testMemoryStore.agencyTracking.get(key);
+    if (!rec) {
+      rec = {
+        id: `${assetId}_${agencyId}`,
+        assetId,
+        agencyId,
+        status: 'New',
+        rejectionCount: 0,
+        scrapedDownloads: 0,
+        scrapedEarningsCents: 0,
+        scrapedViews: 0,
+        createdAt: now,
+        updatedAt: now,
+      };
+      testMemoryStore.agencyTracking.set(key, rec);
+    }
+    const reason = rec.rejectionReasonId
+      ? testMemoryStore.rejectionDictionary.get(rec.rejectionReasonId)
+      : undefined;
+    result[agencyId] = {
+      ...rec,
+      rejectionReasonTitle: reason ? reason.title : rec.rejectionReasonTitle,
+    };
+  }
+  return result;
+}
+
+function recordTestBackup(triggerEvent: BackupLogRecord['triggerEvent']): BackupLogRecord {
+  const now = Date.now();
+  const log: BackupLogRecord = {
+    id: crypto.randomUUID(),
+    triggerEvent,
+    backupFilePath: `/StockFlow/backups/stockflow_${now}_${triggerEvent}.sqlite`,
+    fileSizeBytes: 8192,
+    assetCountSnapshot: testMemoryStore.masterRecords.size,
+    durationMs: 2,
+    createdAt: now,
+  };
+  testMemoryStore.backupLogs.unshift(log);
+  if (testMemoryStore.backupLogs.length > 30) {
+    testMemoryStore.backupLogs.length = 30;
+  }
+  return log;
+}
 
 async function invokeDbRpc(method: string, ...args: any[]): Promise<any> {
   if (typeof window !== 'undefined' && window.electronAPI?.db?.invoke) {
@@ -123,24 +245,52 @@ async function invokeDbRpc(method: string, ...args: any[]): Promise<any> {
   // Fallback for Node / Vitest unit test environments
   switch (method) {
     case 'getDbInfo':
-      return { dbPath: ':memory:', engine: 'test-memory' };
+      return {
+        dbPath: ':memory:',
+        baseDir: '/StockFlow',
+        masterVaultDir: '/StockFlow/Master_Vault',
+        exportBasketsDir: '/StockFlow/Export_Baskets',
+        backupsDir: '/StockFlow/backups',
+        engine: 'test-memory',
+      };
+    case 'getWorkspacePaths':
+      return {
+        baseDir: '/StockFlow',
+        dbPath: '/StockFlow/stockflow.sqlite',
+        masterVaultDir: '/StockFlow/Master_Vault',
+        tempStagingDir: '/StockFlow/.stockflow_temp',
+        exportBasketsDir: '/StockFlow/Export_Baskets',
+        backupsDir: '/StockFlow/backups',
+      } satisfies WorkspacePathsInfo;
     case 'getMasterRecords':
-      return Array.from(testMemoryStore.masterRecords.values()).sort(
-        (a, b) => (a.createdAt || 0) - (b.createdAt || 0)
-      );
-    case 'getMasterRecord':
-      return testMemoryStore.masterRecords.get(args[0]);
+      return Array.from(testMemoryStore.masterRecords.values())
+        .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+        .map((r) => ({
+          ...r,
+          agencyTrackings: ensureTestAgencyTracking(r.id, r.createdAt),
+        }));
+    case 'getMasterRecord': {
+      const rec = testMemoryStore.masterRecords.get(args[0]);
+      if (!rec) return undefined;
+      return {
+        ...rec,
+        agencyTrackings: ensureTestAgencyTracking(rec.id, rec.createdAt),
+      };
+    }
     case 'countMasterRecords':
       return testMemoryStore.masterRecords.size;
     case 'putMasterRecord': {
       const rec = args[0] as MasterMetadataRecord;
-      testMemoryStore.masterRecords.set(rec.id, { ...rec });
+      const agencyTrackings = ensureTestAgencyTracking(rec.id, rec.createdAt || Date.now());
+      testMemoryStore.masterRecords.set(rec.id, { ...rec, agencyTrackings });
       return rec.id;
     }
     case 'bulkPutMasterRecords': {
       for (const r of (args[0] || []) as MasterMetadataRecord[]) {
-        testMemoryStore.masterRecords.set(r.id, { ...r });
+        const agencyTrackings = ensureTestAgencyTracking(r.id, r.createdAt || Date.now());
+        testMemoryStore.masterRecords.set(r.id, { ...r, agencyTrackings });
       }
+      recordTestBackup('batch_metadata');
       return;
     }
     case 'updateMasterRecord': {
@@ -157,15 +307,257 @@ async function invokeDbRpc(method: string, ...args: any[]): Promise<any> {
       }
       return;
     }
-    case 'deleteMasterRecord':
-      testMemoryStore.masterRecords.delete(args[0]);
+    case 'deleteMasterRecord': {
+      const id = args[0];
+      testMemoryStore.masterRecords.delete(id);
+      for (const agencyId of ALL_AGENCIES) {
+        testMemoryStore.agencyTracking.delete(`${id}::${agencyId}`);
+      }
       return;
+    }
     case 'bulkDeleteMasterRecords':
-      for (const id of args[0] || []) testMemoryStore.masterRecords.delete(id);
+      for (const id of args[0] || []) {
+        testMemoryStore.masterRecords.delete(id);
+        for (const agencyId of ALL_AGENCIES) {
+          testMemoryStore.agencyTracking.delete(`${id}::${agencyId}`);
+        }
+      }
       return;
     case 'clearMasterRecords':
       testMemoryStore.masterRecords.clear();
+      testMemoryStore.agencyTracking.clear();
       return;
+    case 'checkDuplicateHash': {
+      const fileHash = args[0];
+      if (!fileHash) return { isDuplicate: false };
+      for (const rec of testMemoryStore.masterRecords.values()) {
+        if (rec.fileHash && rec.fileHash === fileHash) {
+          return { isDuplicate: true, existingAssetId: rec.id, existingFilename: rec.filename };
+        }
+      }
+      return { isDuplicate: false };
+    }
+    case 'stageAndHashFile': {
+      const { sourcePath, fileBuffer, filename, batchId = 'batch_default' } = args[0] || {};
+      let hexHash = '';
+      let fileSize = 0;
+      if (fileBuffer && fileBuffer.byteLength > 0) {
+        const bytes = new Uint8Array(fileBuffer);
+        fileSize = bytes.byteLength;
+        let h1 = 0xdeadbeef ^ fileSize;
+        let h2 = 0x41c6ce57 ^ fileSize;
+        for (let i = 0; i < bytes.length; i++) {
+          const ch = bytes[i];
+          h1 = Math.imul(h1 ^ ch, 2654435761);
+          h2 = Math.imul(h2 ^ ch, 1597334677);
+        }
+        h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+        h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+        hexHash = `sha256_${(h2 >>> 0).toString(16).padStart(8, '0')}${(h1 >>> 0).toString(16).padStart(8, '0')}_${fileSize}`;
+      } else {
+        const seed = String(sourcePath || filename || Date.now());
+        fileSize = 1024;
+        let acc = 2166136261;
+        for (let i = 0; i < seed.length; i++) {
+          acc ^= seed.charCodeAt(i);
+          acc = Math.imul(acc, 16777619);
+        }
+        hexHash = `sha256_${(acc >>> 0).toString(16).padStart(8, '0')}`;
+      }
+
+      for (const rec of testMemoryStore.masterRecords.values()) {
+        if (rec.fileHash && rec.fileHash === hexHash) {
+          return {
+            success: true,
+            isDuplicate: true,
+            fileHash: hexHash,
+            fileSize,
+            existingAssetId: rec.id,
+            existingFilename: rec.filename,
+          };
+        }
+      }
+
+      return {
+        success: true,
+        isDuplicate: false,
+        tempFilePath: `/StockFlow/.stockflow_temp/${batchId}/${filename || 'temp.bin'}`,
+        fileHash: hexHash,
+        fileSize,
+      };
+    }
+    case 'commitAtomicallyToMasterVault': {
+      const { record, triggerBackup } = args[0] || {};
+      const agencyTrackings = ensureTestAgencyTracking(record.id, record.createdAt || Date.now());
+      const committed: MasterMetadataRecord = {
+        ...record,
+        masterPath: record.masterPath || `/StockFlow/Master_Vault/${record.filename}`,
+        pipelineStage: 'committed',
+        status: 'completed',
+        agencyTrackings,
+      };
+      testMemoryStore.masterRecords.set(record.id, committed);
+      if (triggerBackup) {
+        recordTestBackup('batch_ingest');
+      }
+      return committed;
+    }
+    case 'rollbackIngestedItem': {
+      const { assetId } = args[0] || {};
+      if (assetId) {
+        testMemoryStore.masterRecords.delete(assetId);
+        for (const agencyId of ALL_AGENCIES) {
+          testMemoryStore.agencyTracking.delete(`${assetId}::${agencyId}`);
+        }
+      }
+      return { rolledBack: true };
+    }
+    case 'getRejectionDictionary': {
+      const agencyId = args[0];
+      const all = Array.from(testMemoryStore.rejectionDictionary.values()).filter((r) => r.isActive);
+      if (agencyId && agencyId !== 'all') {
+        return all.filter((r) => r.agencyId === 'all' || r.agencyId === agencyId);
+      }
+      return all;
+    }
+    case 'addRejectionReason': {
+      const { agencyId = 'all', title, description = '', severity = 'standard', code } = args[0] || {};
+      const now = Date.now();
+      const id = `rej_${crypto.randomUUID().slice(0, 8)}`;
+      const rec: RejectionReasonRecord = {
+        id,
+        agencyId,
+        code,
+        title: String(title || '').trim(),
+        description: String(description || '').trim(),
+        severity,
+        usageCount: 0,
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+      testMemoryStore.rejectionDictionary.set(id, rec);
+      return rec;
+    }
+    case 'createExportBasket': {
+      const { agencyId, basketName, assetIds, csvFilename } = args[0] || {};
+      const now = Date.now();
+      const basketId = `basket_${crypto.randomUUID().slice(0, 8)}`;
+      const cleanName = (basketName || `${agencyId}_batch`).replace(/[^a-zA-Z0-9_-]/g, '_');
+      const stagingFolderPath = `/StockFlow/Export_Baskets/${cleanName}_${basketId}`;
+      const basket: ExportBasketRecord = {
+        id: basketId,
+        agencyId,
+        basketName: cleanName,
+        stagingFolderPath,
+        csvFilePath: csvFilename ? `${stagingFolderPath}/${csvFilename}` : undefined,
+        itemCount: assetIds.length,
+        status: 'pending_reconciliation',
+        createdAt: now,
+      };
+      testMemoryStore.exportBaskets.set(basketId, basket);
+      for (const assetId of assetIds) {
+        ensureTestAgencyTracking(assetId, now);
+        const key = `${assetId}::${agencyId}`;
+        const existing = testMemoryStore.agencyTracking.get(key)!;
+        testMemoryStore.agencyTracking.set(key, {
+          ...existing,
+          status: 'Pending Upload',
+          exportBasketId: basketId,
+          stagedFilePath: `${stagingFolderPath}/${testMemoryStore.masterRecords.get(assetId)?.filename || assetId}`,
+          submissionBatchName: cleanName,
+          exportedAt: now,
+          updatedAt: now,
+        });
+      }
+      recordTestBackup('batch_export');
+      return basket;
+    }
+    case 'getExportBaskets': {
+      const agencyId = args[0];
+      const all = Array.from(testMemoryStore.exportBaskets.values()).sort((a, b) => b.createdAt - a.createdAt);
+      return agencyId ? all.filter((b) => b.agencyId === agencyId) : all;
+    }
+    case 'reconcileAgencyStatuses': {
+      const { assetIds = [], agencyId, targetStatus, rejectionReasonId, customRejectionNote } = args[0] || {};
+      const now = Date.now();
+      for (const assetId of assetIds) {
+        ensureTestAgencyTracking(assetId, now);
+        const key = `${assetId}::${agencyId}`;
+        const existing = testMemoryStore.agencyTracking.get(key)!;
+        const isRejected = targetStatus === 'Rejected';
+        const isReverted = targetStatus === 'New';
+        testMemoryStore.agencyTracking.set(key, {
+          ...existing,
+          status: targetStatus,
+          rejectionReasonId: isRejected ? rejectionReasonId : isReverted ? undefined : existing.rejectionReasonId,
+          customRejectionNote: isRejected ? customRejectionNote : isReverted ? undefined : existing.customRejectionNote,
+          rejectionCount: isRejected ? (existing.rejectionCount || 0) + 1 : existing.rejectionCount || 0,
+          uploadedAt: targetStatus === 'Uploaded' ? now : existing.uploadedAt,
+          acceptedAt: targetStatus === 'Accepted' ? now : existing.acceptedAt,
+          rejectedAt: isRejected ? now : existing.rejectedAt,
+          updatedAt: now,
+        });
+      }
+      if (targetStatus === 'Rejected' && rejectionReasonId) {
+        const reason = testMemoryStore.rejectionDictionary.get(rejectionReasonId);
+        if (reason) {
+          reason.usageCount += assetIds.length;
+        }
+      }
+      recordTestBackup('batch_reconcile');
+      return { updatedCount: assetIds.length };
+    }
+    case 'getTrackerStats': {
+      const records = Array.from(testMemoryStore.masterRecords.values());
+      const perAgencyStats = {} as TrackerSummaryStats['perAgencyStats'];
+      for (const agencyId of ALL_AGENCIES) {
+        perAgencyStats[agencyId] = {
+          New: 0,
+          'Pending Upload': 0,
+          Uploaded: 0,
+          'In Review': 0,
+          Accepted: 0,
+          Rejected: 0,
+        };
+      }
+      let newCount = 0;
+      let pendingUploadCount = 0;
+      let uploadedCount = 0;
+      let inReviewCount = 0;
+      let acceptedCount = 0;
+      let rejectedCount = 0;
+
+      for (const rec of records) {
+        const map = ensureTestAgencyTracking(rec.id, rec.createdAt);
+        for (const agencyId of ALL_AGENCIES) {
+          const st = map[agencyId]?.status || 'New';
+          perAgencyStats[agencyId][st]++;
+          if (st === 'New') newCount++;
+          else if (st === 'Pending Upload') pendingUploadCount++;
+          else if (st === 'Uploaded') uploadedCount++;
+          else if (st === 'In Review') inReviewCount++;
+          else if (st === 'Accepted') acceptedCount++;
+          else if (st === 'Rejected') rejectedCount++;
+        }
+      }
+      return {
+        totalAssets: records.length,
+        newCount,
+        pendingUploadCount,
+        uploadedCount,
+        inReviewCount,
+        acceptedCount,
+        rejectedCount,
+        perAgencyStats,
+        lastBackup: testMemoryStore.backupLogs[0],
+        backupCount: testMemoryStore.backupLogs.length,
+      } satisfies TrackerSummaryStats;
+    }
+    case 'performHotBackup':
+      return recordTestBackup(args[0] || 'manual');
+    case 'getBackupLogs':
+      return testMemoryStore.backupLogs.slice(0, args[0] || 30);
     case 'getApiKeys':
       return Array.from(testMemoryStore.apiKeys.values()).sort(
         (a, b) => (a.createdAt || 0) - (b.createdAt || 0)
@@ -291,6 +683,108 @@ export class StockFlowSqliteDB {
     clear: async (): Promise<void> => {
       await invokeDbRpc('clearMasterRecords');
       notifyDbChanged(true);
+    },
+  };
+
+  tracker = {
+    getWorkspacePaths: async (): Promise<WorkspacePathsInfo> => {
+      return await invokeDbRpc('getWorkspacePaths');
+    },
+    getStats: async (): Promise<TrackerSummaryStats> => {
+      return await invokeDbRpc('getTrackerStats');
+    },
+    checkDuplicateHash: async (
+      fileHash: string
+    ): Promise<{ isDuplicate: boolean; existingAssetId?: string; existingFilename?: string }> => {
+      return await invokeDbRpc('checkDuplicateHash', fileHash);
+    },
+    stageAndHashFile: async (payload: {
+      sourcePath?: string;
+      fileBuffer?: ArrayBuffer;
+      filename: string;
+      batchId?: string;
+    }): Promise<{
+      success: boolean;
+      isDuplicate?: boolean;
+      tempFilePath?: string;
+      fileHash?: string;
+      fileSize?: number;
+      existingAssetId?: string;
+      existingFilename?: string;
+      error?: string;
+    }> => {
+      return await invokeDbRpc('stageAndHashFile', payload);
+    },
+    commitAtomicallyToMasterVault: async (payload: {
+      record: MasterMetadataRecord;
+      tempFilePath?: string;
+      previewBuffer?: ArrayBuffer;
+      triggerBackup?: boolean;
+    }): Promise<MasterMetadataRecord> => {
+      const res = await invokeDbRpc('commitAtomicallyToMasterVault', payload);
+      notifyDbChanged(true);
+      return res;
+    },
+    rollbackIngestedItem: async (payload: {
+      assetId?: string;
+      tempFilePath?: string;
+      previewTempPath?: string;
+    }): Promise<{ rolledBack: boolean }> => {
+      const res = await invokeDbRpc('rollbackIngestedItem', payload);
+      notifyDbChanged(true);
+      return res;
+    },
+    getRejectionDictionary: async (agencyId?: SupportedPlatform | 'all'): Promise<RejectionReasonRecord[]> => {
+      return (await invokeDbRpc('getRejectionDictionary', agencyId)) || [];
+    },
+    addRejectionReason: async (payload: {
+      agencyId: SupportedPlatform | 'all';
+      title: string;
+      description?: string;
+      severity?: 'fixable' | 'standard' | 'permanent_ban_risk';
+      code?: string;
+    }): Promise<RejectionReasonRecord> => {
+      const res = await invokeDbRpc('addRejectionReason', payload);
+      notifyDbChanged(true);
+      return res;
+    },
+    createExportBasket: async (payload: {
+      agencyId: SupportedPlatform;
+      basketName?: string;
+      assetIds: string[];
+      csvFilename: string;
+      csvContent: string;
+      additionalCsvs?: Array<{ filename: string; csvString: string }>;
+    }): Promise<ExportBasketRecord> => {
+      const res = await invokeDbRpc('createExportBasket', payload);
+      notifyDbChanged(true);
+      return res;
+    },
+    getExportBaskets: async (agencyId?: SupportedPlatform): Promise<ExportBasketRecord[]> => {
+      return (await invokeDbRpc('getExportBaskets', agencyId)) || [];
+    },
+    reconcileAgencyStatuses: async (payload: {
+      assetIds: string[];
+      agencyId: SupportedPlatform;
+      targetStatus: TrackerAgencyStatus;
+      rejectionReasonId?: string | null;
+      customRejectionNote?: string | null;
+      agencyUrl?: string | null;
+      agencyAssetId?: string | null;
+    }): Promise<{ updatedCount: number }> => {
+      const res = await invokeDbRpc('reconcileAgencyStatuses', payload);
+      notifyDbChanged(true);
+      return res;
+    },
+    performHotBackup: async (
+      triggerEvent: BackupLogRecord['triggerEvent'] = 'manual'
+    ): Promise<BackupLogRecord | null> => {
+      const res = await invokeDbRpc('performHotBackup', triggerEvent);
+      notifyDbChanged(true);
+      return res;
+    },
+    getBackupLogs: async (limit = 30): Promise<BackupLogRecord[]> => {
+      return (await invokeDbRpc('getBackupLogs', limit)) || [];
     },
   };
 

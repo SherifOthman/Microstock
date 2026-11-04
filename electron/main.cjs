@@ -384,6 +384,14 @@ if (!gotTheLock) {
   });
 }
 
+app.on('before-quit', () => {
+  try {
+    sqliteDb.performHotBackup('app_quit');
+  } catch (err) {
+    console.warn('[Electron Main] before-quit backup warning:', err.message);
+  }
+});
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();

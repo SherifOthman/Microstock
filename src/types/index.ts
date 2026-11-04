@@ -85,7 +85,144 @@ export interface MasterMetadataRecord {
   status: 'pending' | 'processing' | 'completed' | 'error';
   errorMessage?: string;
   nativePath?: string;
+  // Distribution Tracker Extended Vault Fields
+  originalPath?: string;
+  masterPath?: string;
+  previewPath?: string;
+  originalFilename?: string;
+  fileHash?: string;
+  perceptualHash?: string;
+  pipelineStage?: TrackerPipelineStage;
+  aiVisionScore?: number;
+  aiFlags?: string[];
+  agencyTrackings?: Record<SupportedPlatform, AgencyTrackingRecord>;
   createdAt: number;
+  updatedAt?: number;
+}
+
+export type TrackerPipelineStage =
+  | 'queued'
+  | 'copying_temp'
+  | 'hashing'
+  | 'validating_quality'
+  | 'extracting_eps'
+  | 'muting_audio'
+  | 'generating_metadata'
+  | 'committing_vault'
+  | 'committed'
+  | 'duplicate_skipped'
+  | 'failed';
+
+export type TrackerAgencyStatus =
+  | 'New'
+  | 'Pending Upload'
+  | 'Uploaded'
+  | 'In Review'
+  | 'Accepted'
+  | 'Rejected';
+
+export interface AgencyTrackingRecord {
+  id: string;
+  assetId: string;
+  agencyId: SupportedPlatform;
+  status: TrackerAgencyStatus;
+  exportBasketId?: string;
+  stagedFilePath?: string;
+  exportedFilename?: string;
+  submissionBatchName?: string;
+  agencyAssetId?: string;
+  agencyUrl?: string;
+  rejectionReasonId?: string;
+  rejectionReasonTitle?: string;
+  customRejectionNote?: string;
+  rejectionCount: number;
+  exportedAt?: number;
+  uploadedAt?: number;
+  reviewedAt?: number;
+  acceptedAt?: number;
+  rejectedAt?: number;
+  // Future-Proof Fields
+  ftpStatus?: 'idle' | 'queued' | 'uploading' | 'transferred' | 'failed';
+  ftpRemotePath?: string;
+  ftpLastAttemptAt?: number;
+  ftpErrorMessage?: string;
+  scrapedStatusRaw?: string;
+  scrapedDownloads: number;
+  scrapedEarningsCents: number;
+  scrapedViews: number;
+  lastScrapedAt?: number;
+  aiFlags?: string;
+  agencyMetadataOverride?: string;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface RejectionReasonRecord {
+  id: string;
+  agencyId: SupportedPlatform | 'all';
+  code?: string;
+  title: string;
+  description: string;
+  severity: 'fixable' | 'standard' | 'permanent_ban_risk';
+  usageCount: number;
+  isActive: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ExportBasketRecord {
+  id: string;
+  agencyId: SupportedPlatform;
+  basketName: string;
+  stagingFolderPath: string;
+  csvFilePath?: string;
+  itemCount: number;
+  status: 'pending_reconciliation' | 'reconciled' | 'cancelled';
+  createdAt: number;
+  reconciledAt?: number;
+}
+
+export interface BackupLogRecord {
+  id: string;
+  triggerEvent: 'app_startup' | 'app_quit' | 'batch_ingest' | 'batch_metadata' | 'batch_export' | 'batch_reconcile' | 'manual';
+  backupFilePath: string;
+  fileSizeBytes: number;
+  assetCountSnapshot: number;
+  durationMs: number;
+  createdAt: number;
+}
+
+export interface TrackerSummaryStats {
+  totalAssets: number;
+  newCount: number;
+  pendingUploadCount: number;
+  uploadedCount: number;
+  inReviewCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  perAgencyStats: Record<
+    SupportedPlatform,
+    {
+      New: number;
+      'Pending Upload': number;
+      Uploaded: number;
+      'In Review': number;
+      Accepted: number;
+      Rejected: number;
+    }
+  >;
+  lastBackup?: BackupLogRecord;
+  backupCount: number;
+}
+
+export interface WorkspacePathsInfo {
+  baseDir: string;
+  dbPath: string;
+  masterVaultDir: string;
+  tempStagingDir: string;
+  exportBasketsDir: string;
+  backupsDir: string;
 }
 
 export interface BatchRecord {

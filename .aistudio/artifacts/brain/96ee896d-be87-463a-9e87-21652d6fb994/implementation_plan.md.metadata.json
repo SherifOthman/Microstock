@@ -1,6 +1,6 @@
 {
-  "summary": "Comprehensive architectural plan for optimizing LFM3-VL-2B Local AI inference, 4-bucket 45-49 keyword generation with fast text-only top-up fallback, auto-scaling hardware profiles (iGPU Laptop vs Dedicated GPU), and an embedded LM Studio tuning checklist—while keeping Cloud KeyRing 100% untouched.",
-  "updatedAt": "2026-11-04T19:39:03.549769247Z",
+  "summary": "Comprehensive Architectural Plan and Future-Proof Database Schema (Prisma + Native SQLite WAL) for the Microstock Distribution Tracker, covering Atomic Ingestion, 50,000-row Virtualized Grid, 6-Agency Export Baskets & Reconciliation, and Event-Driven Hot Backups.",
+  "updatedAt": "2026-11-04T21:46:16.119414324Z",
   "requestFeedback": true,
   "userFacing": true
 }

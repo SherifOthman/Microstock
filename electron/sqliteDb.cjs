@@ -1,38 +1,137 @@
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
+
+const SUPPORTED_AGENCIES = ['adobe', 'freepik', 'shutterstock', 'vecteezy', 'dreamstime', '123rf'];
+
+const DEFAULT_REJECTION_REASONS = [
+  {
+    id: 'rej_tech_quality',
+    agencyId: 'all',
+    code: 'TECH_QUALITY',
+    title: 'Technical Quality / Artifacts',
+    description: 'Chromatic aberration, sensor noise, compression artifacts, or AI anatomy/blending flaws.',
+    severity: 'fixable',
+  },
+  {
+    id: 'rej_similar_content',
+    agencyId: 'all',
+    code: 'SIMILAR_DUPLICATE',
+    title: 'Similar / Duplicate Submission',
+    description: 'Asset is too visually or conceptually similar to files already in queue or portfolio.',
+    severity: 'standard',
+  },
+  {
+    id: 'rej_ip_trademark',
+    agencyId: 'all',
+    code: 'IP_TRADEMARK',
+    title: 'Intellectual Property / Trademark',
+    description: 'Contains recognizable brand logos, copyrighted designs, or protected architecture.',
+    severity: 'permanent_ban_risk',
+  },
+  {
+    id: 'rej_missing_release',
+    agencyId: 'all',
+    code: 'MISSING_RELEASE',
+    title: 'Missing Model / Property Release',
+    description: 'Recognizable face or private property requires a signed release or Editorial flag.',
+    severity: 'fixable',
+  },
+  {
+    id: 'rej_metadata_mismatch',
+    agencyId: 'all',
+    code: 'METADATA_SPAM',
+    title: 'Title / Keyword Inaccuracy',
+    description: 'Irrelevant keywords, brand names in tags, or missing generative AI flag.',
+    severity: 'fixable',
+  },
+  {
+    id: 'rej_low_commercial_value',
+    agencyId: 'all',
+    code: 'COMMERCIAL_VALUE',
+    title: 'Non-Commercial / Low Demand',
+    description: 'Composition or subject matter does not meet current agency commercial demand.',
+    severity: 'standard',
+  },
+];
 
 /**
  * StockFlow Native SQLite Relational Engine (Main Process)
  * Stores data in a single portable file: <Documents>/StockFlow/stockflow.sqlite
- * Configured with WAL mode for high concurrency and zero-lock reads.
+ * Configured with WAL mode for high concurrency, zero-lock reads, and Event-Driven Hot Backups.
  */
 class SqliteDatabaseManager {
-  constructor() {
+  constructor(customBaseDir = null) {
     this.db = null;
+    this.baseDir = typeof customBaseDir === 'string' ? customBaseDir : '';
     this.dbPath = '';
+    this.masterVaultDir = '';
+    this.tempStagingDir = '';
+    this.exportBasketsDir = '';
+    this.backupsDir = '';
     this.isNativeSqlite = false;
+    this.maxBackupRetention = 30;
     this.memoryFallback = {
       masterRecords: new Map(),
+      agencyTracking: new Map(), // key: `${assetId}::${agencyId}`
+      rejectionDictionary: new Map(),
+      exportBaskets: new Map(),
+      backupLogs: [],
       apiKeys: new Map(),
       batches: new Map(),
       settings: new Map(),
     };
+    this._seedMemoryFallbackDefaults();
   }
 
-  init(app) {
-    if (this.db || this.dbPath) return;
+  _seedMemoryFallbackDefaults() {
+    const now = Date.now();
+    for (const r of DEFAULT_REJECTION_REASONS) {
+      this.memoryFallback.rejectionDictionary.set(r.id, {
+        ...r,
+        usageCount: 0,
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  }
 
-    let baseDir = '';
-    try {
-      const docsDir = app.getPath('documents');
-      baseDir = path.join(docsDir, 'StockFlow');
-      fs.mkdirSync(baseDir, { recursive: true });
-    } catch {
-      baseDir = app.getPath('userData');
+  init(app = null, customBaseDir = null) {
+    if (typeof app === 'string' && !customBaseDir) {
+      customBaseDir = app;
+      app = null;
+    }
+    if (this.db && !customBaseDir) return;
+
+    let baseDir = customBaseDir || this.baseDir || '';
+    if (!baseDir) {
+      try {
+        const docsDir = app.getPath('documents');
+        baseDir = path.join(docsDir, 'StockFlow');
+        fs.mkdirSync(baseDir, { recursive: true });
+      } catch {
+        baseDir = app ? app.getPath('userData') : path.join(process.cwd(), '.stockflow_data');
+        fs.mkdirSync(baseDir, { recursive: true });
+      }
+    } else {
       fs.mkdirSync(baseDir, { recursive: true });
     }
 
+    this.baseDir = baseDir;
     this.dbPath = path.join(baseDir, 'stockflow.sqlite');
+    this.masterVaultDir = path.join(baseDir, 'Master_Vault');
+    this.tempStagingDir = path.join(baseDir, '.stockflow_temp');
+    this.exportBasketsDir = path.join(baseDir, 'Export_Baskets');
+    this.backupsDir = path.join(baseDir, 'backups');
+
+    for (const dir of [this.masterVaultDir, this.tempStagingDir, this.exportBasketsDir, this.backupsDir]) {
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+      } catch {
+        // ignore
+      }
+    }
 
     try {
       const Database = require('better-sqlite3');
@@ -41,11 +140,26 @@ class SqliteDatabaseManager {
       this.db.pragma('synchronous = NORMAL');
       this.db.pragma('foreign_keys = ON');
       this.createSchema();
+      this.migrateColumnsIfNeeded();
       this.seedDefaultAgencies();
+      this.seedDefaultRejectionDictionary();
+      this.ensureAgencyTrackingForAllAssets();
       this.isNativeSqlite = true;
+
+      // Trigger Event-Driven Backup #1: On Application Startup
+      this.performHotBackup('app_startup');
     } catch (err) {
       console.warn('[SQLite] Native better-sqlite3 unavailable, using in-memory relational fallback:', err.message);
       this.isNativeSqlite = false;
+    }
+  }
+
+  close() {
+    if (this.db) {
+      try {
+        this.db.close();
+      } catch {}
+      this.db = null;
     }
   }
 
@@ -56,17 +170,43 @@ class SqliteDatabaseManager {
       CREATE TABLE IF NOT EXISTS assets (
         id TEXT PRIMARY KEY,
         batch_id TEXT,
+        original_path TEXT,
+        master_path TEXT,
+        preview_path TEXT,
         filename TEXT NOT NULL,
+        original_filename TEXT,
+        file_hash TEXT,
+        perceptual_hash TEXT,
         media_type TEXT DEFAULT 'image',
+        mime_type TEXT,
         file_size INTEGER,
         compressed_size INTEGER,
         width INTEGER,
         height INTEGER,
+        aspect_ratio TEXT,
         duration_seconds REAL,
+        frame_rate REAL,
+        codec TEXT,
+        has_audio INTEGER DEFAULT 0,
+        audio_muted_at INTEGER,
+        eps_extracted_at INTEGER,
         resolution TEXT,
+        color_space TEXT,
         thumbnail_base64 TEXT,
+        is_ai_generated INTEGER DEFAULT 1,
+        ai_generator_model TEXT,
+        base_title TEXT DEFAULT '',
+        detailed_description TEXT DEFAULT '',
+        keywords_json TEXT DEFAULT '[]',
+        categories_json TEXT,
+        metadata_json TEXT,
+        pipeline_stage TEXT DEFAULT 'committed',
         status TEXT NOT NULL DEFAULT 'pending',
         error_message TEXT,
+        ai_vision_score REAL,
+        ai_flags_json TEXT,
+        custom_attributes_json TEXT,
+        is_archived INTEGER DEFAULT 0,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -128,7 +268,6 @@ class SqliteDatabaseManager {
         updated_at INTEGER NOT NULL
       );
 
-      -- Dormant Distribution Tracker Schema (Milestone 3 Foundation)
       CREATE TABLE IF NOT EXISTS agencies (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -149,7 +288,160 @@ class SqliteDatabaseManager {
 
       CREATE INDEX IF NOT EXISTS idx_distributions_agency_status
         ON asset_distributions(agency_id, upload_status);
+
+      -- Pillar 1: Future-Proof Rejection Dictionary Table
+      CREATE TABLE IF NOT EXISTS rejection_dictionary (
+        id TEXT PRIMARY KEY,
+        agency_id TEXT NOT NULL DEFAULT 'all',
+        code TEXT,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        severity TEXT NOT NULL DEFAULT 'standard',
+        usage_count INTEGER NOT NULL DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(agency_id, title)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_rejection_agency_active
+        ON rejection_dictionary(agency_id, is_active);
+
+      -- Pillar 4: Export Baskets Table
+      CREATE TABLE IF NOT EXISTS export_baskets (
+        id TEXT PRIMARY KEY,
+        agency_id TEXT NOT NULL,
+        basket_name TEXT NOT NULL,
+        staging_folder_path TEXT NOT NULL,
+        csv_file_path TEXT,
+        item_count INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending_reconciliation',
+        created_at INTEGER NOT NULL,
+        reconciled_at INTEGER
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_baskets_agency_status
+        ON export_baskets(agency_id, status);
+
+      -- Pillar 1: Future-Proof AgencyTracking Table
+      CREATE TABLE IF NOT EXISTS agency_tracking (
+        id TEXT PRIMARY KEY,
+        asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+        agency_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'New',
+        export_basket_id TEXT REFERENCES export_baskets(id) ON DELETE SET NULL,
+        staged_file_path TEXT,
+        exported_filename TEXT,
+        submission_batch_name TEXT,
+        agency_asset_id TEXT,
+        agency_url TEXT,
+        rejection_reason_id TEXT REFERENCES rejection_dictionary(id) ON DELETE SET NULL,
+        custom_rejection_note TEXT,
+        rejection_count INTEGER NOT NULL DEFAULT 0,
+        exported_at INTEGER,
+        uploaded_at INTEGER,
+        reviewed_at INTEGER,
+        accepted_at INTEGER,
+        rejected_at INTEGER,
+        ftp_status TEXT,
+        ftp_remote_path TEXT,
+        ftp_last_attempt_at INTEGER,
+        ftp_error_message TEXT,
+        scraped_status_raw TEXT,
+        scraped_downloads INTEGER NOT NULL DEFAULT 0,
+        scraped_earnings_cents INTEGER NOT NULL DEFAULT 0,
+        scraped_views INTEGER NOT NULL DEFAULT 0,
+        last_scraped_at INTEGER,
+        ai_flags TEXT,
+        agency_metadata_override TEXT,
+        notes TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(asset_id, agency_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_tracking_agency_status
+        ON agency_tracking(agency_id, status);
+      CREATE INDEX IF NOT EXISTS idx_tracking_export_basket
+        ON agency_tracking(export_basket_id);
+      CREATE INDEX IF NOT EXISTS idx_tracking_rejection_reason
+        ON agency_tracking(rejection_reason_id);
+
+      -- Pillar 5: Event-Driven Hot Backup Audit Log
+      CREATE TABLE IF NOT EXISTS backup_logs (
+        id TEXT PRIMARY KEY,
+        trigger_event TEXT NOT NULL,
+        backup_file_path TEXT NOT NULL,
+        file_size_bytes INTEGER NOT NULL DEFAULT 0,
+        asset_count_snapshot INTEGER NOT NULL DEFAULT 0,
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_backup_logs_created_at
+        ON backup_logs(created_at);
     `);
+  }
+
+  /**
+   * Non-destructive migration for existing `assets` databases created prior to the Distribution Tracker upgrade
+   */
+  migrateColumnsIfNeeded() {
+    if (!this.db) return;
+    const existingCols = new Set(
+      this.db
+        .prepare('PRAGMA table_info(assets)')
+        .all()
+        .map((c) => c.name)
+    );
+
+    const newColumns = [
+      ['original_path', 'TEXT'],
+      ['master_path', 'TEXT'],
+      ['preview_path', 'TEXT'],
+      ['original_filename', 'TEXT'],
+      ['file_hash', 'TEXT'],
+      ['perceptual_hash', 'TEXT'],
+      ['mime_type', 'TEXT'],
+      ['aspect_ratio', 'TEXT'],
+      ['frame_rate', 'REAL'],
+      ['codec', 'TEXT'],
+      ['has_audio', 'INTEGER DEFAULT 0'],
+      ['audio_muted_at', 'INTEGER'],
+      ['eps_extracted_at', 'INTEGER'],
+      ['color_space', 'TEXT'],
+      ['is_ai_generated', 'INTEGER DEFAULT 1'],
+      ['ai_generator_model', 'TEXT'],
+      ['base_title', "TEXT DEFAULT ''"],
+      ['detailed_description', "TEXT DEFAULT ''"],
+      ['keywords_json', "TEXT DEFAULT '[]'"],
+      ['categories_json', 'TEXT'],
+      ['metadata_json', 'TEXT'],
+      ['pipeline_stage', "TEXT DEFAULT 'committed'"],
+      ['ai_vision_score', 'REAL'],
+      ['ai_flags_json', 'TEXT'],
+      ['custom_attributes_json', 'TEXT'],
+      ['is_archived', 'INTEGER DEFAULT 0'],
+    ];
+
+    for (const [colName, colDef] of newColumns) {
+      if (!existingCols.has(colName)) {
+        try {
+          this.db.exec(`ALTER TABLE assets ADD COLUMN ${colName} ${colDef}`);
+        } catch (err) {
+          console.warn(`[SQLite Migration] Column ${colName} skip:`, err.message);
+        }
+      }
+    }
+
+    try {
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_assets_file_hash ON assets(file_hash);
+        CREATE INDEX IF NOT EXISTS idx_assets_pipeline ON assets(status, pipeline_stage);
+      `);
+    } catch {
+      // ignore
+    }
   }
 
   seedDefaultAgencies() {
@@ -174,19 +466,210 @@ class SqliteDatabaseManager {
     tx();
   }
 
-  rowToMasterRecord(row) {
+  seedDefaultRejectionDictionary() {
+    if (!this.db) return;
+    const now = Date.now();
+    const stmt = this.db.prepare(`
+      INSERT OR IGNORE INTO rejection_dictionary (
+        id, agency_id, code, title, description, severity, usage_count, is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
+    `);
+    const tx = this.db.transaction(() => {
+      for (const item of DEFAULT_REJECTION_REASONS) {
+        stmt.run(item.id, item.agencyId, item.code, item.title, item.description, item.severity, now, now);
+      }
+    });
+    tx();
+  }
+
+  ensureAgencyTrackingForAllAssets() {
+    if (!this.db) return;
+    const now = Date.now();
+    const assets = this.db.prepare('SELECT id FROM assets').all();
+    if (assets.length === 0) return;
+
+    const insertTracking = this.db.prepare(`
+      INSERT OR IGNORE INTO agency_tracking (
+        id, asset_id, agency_id, status, rejection_count,
+        scraped_downloads, scraped_earnings_cents, scraped_views, created_at, updated_at
+      ) VALUES (?, ?, ?, 'New', 0, 0, 0, 0, ?, ?)
+    `);
+
+    const tx = this.db.transaction(() => {
+      for (const a of assets) {
+        for (const agencyId of SUPPORTED_AGENCIES) {
+          insertTracking.run(`${a.id}_${agencyId}`, a.id, agencyId, now, now);
+        }
+      }
+    });
+    tx();
+  }
+
+  // ============================================================================
+  // Pillar 5: Event-Driven Hot Backup Engine (30-File Rolling Retention)
+  // ============================================================================
+  performHotBackup(triggerEvent = 'manual') {
+    const startTime = Date.now();
+    const validTrigger = triggerEvent || 'manual';
+
+    if (!this.isNativeSqlite || !this.db || !this.dbPath) {
+      const mockLog = {
+        id: crypto.randomUUID(),
+        triggerEvent: validTrigger,
+        backupFilePath: path.join(this.backupsDir || '/backups', `stockflow_backup_${startTime}_${validTrigger}.sqlite`),
+        fileSizeBytes: 4096,
+        assetCountSnapshot: this.memoryFallback.masterRecords.size,
+        durationMs: 1,
+        createdAt: startTime,
+      };
+      this.memoryFallback.backupLogs.unshift(mockLog);
+      if (this.memoryFallback.backupLogs.length > this.maxBackupRetention) {
+        this.memoryFallback.backupLogs.length = this.maxBackupRetention;
+      }
+      return mockLog;
+    }
+
+    try {
+      fs.mkdirSync(this.backupsDir, { recursive: true });
+
+      // Flush WAL to main database file safely before taking snapshot
+      try {
+        this.db.pragma('wal_checkpoint(PASSIVE)');
+      } catch {
+        // ignore if busy
+      }
+
+      const isoStamp = new Date(startTime)
+        .toISOString()
+        .replace(/[:.]/g, '-')
+        .replace('T', '_');
+      const safeTrigger = String(validTrigger).replace(/[^a-zA-Z0-9_-]/g, '');
+      const shortId = crypto.randomUUID().slice(0, 6);
+      const backupFilename = `stockflow_backup_${isoStamp}_${safeTrigger}_${shortId}.sqlite`;
+      const backupFilePath = path.join(this.backupsDir, backupFilename);
+
+      fs.copyFileSync(this.dbPath, backupFilePath);
+
+      const stat = fs.statSync(backupFilePath);
+      const assetCount = this.countMasterRecords();
+      const durationMs = Math.max(1, Date.now() - startTime);
+
+      const logRecord = {
+        id: crypto.randomUUID(),
+        triggerEvent: validTrigger,
+        backupFilePath,
+        fileSizeBytes: stat.size,
+        assetCountSnapshot: assetCount,
+        durationMs,
+        createdAt: startTime,
+      };
+
+      this.db
+        .prepare(`
+          INSERT INTO backup_logs (
+            id, trigger_event, backup_file_path, file_size_bytes, asset_count_snapshot, duration_ms, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          logRecord.id,
+          logRecord.triggerEvent,
+          logRecord.backupFilePath,
+          logRecord.fileSizeBytes,
+          logRecord.assetCountSnapshot,
+          logRecord.durationMs,
+          logRecord.createdAt
+        );
+
+      // Rolling Retention Policy: Keep newest 30 backup files, prune oldest
+      this.pruneOldBackups(this.maxBackupRetention);
+
+      return logRecord;
+    } catch (err) {
+      console.warn('[SQLite HotBackup] Backup warning:', err.message);
+      return null;
+    }
+  }
+
+  pruneOldBackups(maxFiles = 30) {
+    if (!this.backupsDir || !fs.existsSync(this.backupsDir)) return 0;
+    try {
+      const files = fs
+        .readdirSync(this.backupsDir)
+        .filter((f) => f.endsWith('.sqlite') || f.endsWith('.db'))
+        .map((name) => {
+          const fullPath = path.join(this.backupsDir, name);
+          const stat = fs.statSync(fullPath);
+          return { name, fullPath, mtimeMs: stat.mtimeMs };
+        })
+        .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+      let deleted = 0;
+      if (files.length > maxFiles) {
+        const toDelete = files.slice(maxFiles);
+        for (const item of toDelete) {
+          try {
+            fs.unlinkSync(item.fullPath);
+            deleted++;
+          } catch {
+            // ignore
+          }
+        }
+      }
+      return deleted;
+    } catch {
+      return 0;
+    }
+  }
+
+  getBackupLogs(limit = 30) {
+    if (!this.isNativeSqlite) {
+      return this.memoryFallback.backupLogs.slice(0, limit);
+    }
+    const rows = this.db
+      .prepare('SELECT * FROM backup_logs ORDER BY created_at DESC LIMIT ?')
+      .all(limit);
+    return rows.map((r) => ({
+      id: r.id,
+      triggerEvent: r.trigger_event,
+      backupFilePath: r.backup_file_path,
+      fileSizeBytes: r.file_size_bytes,
+      assetCountSnapshot: r.asset_count_snapshot,
+      durationMs: r.duration_ms,
+      createdAt: r.created_at,
+    }));
+  }
+
+  getWorkspacePaths() {
+    return {
+      baseDir: this.baseDir,
+      dbPath: this.dbPath,
+      masterVaultDir: this.masterVaultDir,
+      tempStagingDir: this.tempStagingDir,
+      exportBasketsDir: this.exportBasketsDir,
+      backupsDir: this.backupsDir,
+    };
+  }
+
+  // ============================================================================
+  // Row Mapping & Master Records
+  // ============================================================================
+  rowToMasterRecord(row, agencyMapForAsset = null) {
     if (!row) return undefined;
     let rankedKeywords = [];
     let categories = undefined;
     let attemptHistory = undefined;
+    let aiFlags = undefined;
+
+    const kwSource = row.m_keywords_json || row.keywords_json;
+    const catSource = row.m_categories_json || row.categories_json;
 
     try {
-      if (row.keywords_json) rankedKeywords = JSON.parse(row.keywords_json);
+      if (kwSource) rankedKeywords = JSON.parse(kwSource);
     } catch {
       rankedKeywords = [];
     }
     try {
-      if (row.categories_json) categories = JSON.parse(row.categories_json);
+      if (catSource) categories = JSON.parse(catSource);
     } catch {
       categories = undefined;
     }
@@ -195,14 +678,20 @@ class SqliteDatabaseManager {
     } catch {
       attemptHistory = undefined;
     }
+    try {
+      if (row.ai_flags_json) aiFlags = JSON.parse(row.ai_flags_json);
+    } catch {
+      aiFlags = undefined;
+    }
 
     const videoMeta =
-      row.duration_seconds != null || row.resolution != null || row.width != null || row.height != null
+      row.duration_seconds != null || row.resolution != null || row.width != null || row.height != null || row.has_audio != null
         ? {
             durationSeconds: row.duration_seconds ?? undefined,
             resolution: row.resolution ?? undefined,
             width: row.width ?? undefined,
             height: row.height ?? undefined,
+            hasAudio: Boolean(row.has_audio),
           }
         : undefined;
 
@@ -217,56 +706,188 @@ class SqliteDatabaseManager {
           }
         : undefined;
 
+    const isAi =
+      row.m_is_ai_generated !== undefined && row.m_is_ai_generated !== null
+        ? Boolean(row.m_is_ai_generated)
+        : Boolean(row.is_ai_generated ?? 1);
+
     return {
       id: row.id,
       batchId: row.batch_id || '',
       filename: row.filename,
+      originalFilename: row.original_filename ?? undefined,
+      originalPath: row.original_path ?? undefined,
+      masterPath: row.master_path ?? undefined,
+      previewPath: row.preview_path ?? undefined,
+      nativePath: row.master_path || row.original_path || undefined,
+      fileHash: row.file_hash ?? undefined,
+      perceptualHash: row.perceptual_hash ?? undefined,
       fileSize: row.file_size ?? undefined,
       compressedSize: row.compressed_size ?? undefined,
       thumbnailBase64: row.thumbnail_base64 || '',
       mediaType: row.media_type || 'image',
       videoMeta,
-      isAiGenerated: Boolean(row.is_ai_generated ?? 1),
-      baseTitle: row.base_title || '',
-      detailedDescription: row.detailed_description || '',
+      isAiGenerated: isAi,
+      baseTitle: row.m_base_title ?? row.base_title ?? '',
+      detailedDescription: row.m_detailed_description ?? row.detailed_description ?? '',
       rankedKeywords,
       categories,
       aiGenerationInfo,
-      status: row.status || 'pending',
+      pipelineStage: row.pipeline_stage || 'committed',
+      status: row.status || 'completed',
       errorMessage: row.error_message ?? undefined,
+      aiVisionScore: row.ai_vision_score ?? undefined,
+      aiFlags,
+      agencyTrackings: agencyMapForAsset || undefined,
       createdAt: row.created_at,
+      updatedAt: row.updated_at,
     };
+  }
+
+  _buildAgencyTrackingMapForAssets() {
+    const result = new Map();
+    if (!this.isNativeSqlite) {
+      for (const rec of this.memoryFallback.agencyTracking.values()) {
+        if (!result.has(rec.assetId)) result.set(rec.assetId, {});
+        const reason = rec.rejectionReasonId
+          ? this.memoryFallback.rejectionDictionary.get(rec.rejectionReasonId)
+          : undefined;
+        result.get(rec.assetId)[rec.agencyId] = {
+          ...rec,
+          rejectionReasonTitle: reason ? reason.title : rec.rejectionReasonTitle,
+        };
+      }
+      return result;
+    }
+
+    const rows = this.db
+      .prepare(`
+        SELECT
+          t.*,
+          r.title AS rejection_reason_title
+        FROM agency_tracking t
+        LEFT JOIN rejection_dictionary r ON t.rejection_reason_id = r.id
+      `)
+      .all();
+
+    for (const r of rows) {
+      if (!result.has(r.asset_id)) {
+        result.set(r.asset_id, {});
+      }
+      result.get(r.asset_id)[r.agency_id] = {
+        id: r.id,
+        assetId: r.asset_id,
+        agencyId: r.agency_id,
+        status: r.status || 'New',
+        exportBasketId: r.export_basket_id ?? undefined,
+        stagedFilePath: r.staged_file_path ?? undefined,
+        exportedFilename: r.exported_filename ?? undefined,
+        submissionBatchName: r.submission_batch_name ?? undefined,
+        agencyAssetId: r.agency_asset_id ?? undefined,
+        agencyUrl: r.agency_url ?? undefined,
+        rejectionReasonId: r.rejection_reason_id ?? undefined,
+        rejectionReasonTitle: r.rejection_reason_title ?? undefined,
+        customRejectionNote: r.custom_rejection_note ?? undefined,
+        rejectionCount: r.rejection_count || 0,
+        exportedAt: r.exported_at ?? undefined,
+        uploadedAt: r.uploaded_at ?? undefined,
+        reviewedAt: r.reviewed_at ?? undefined,
+        acceptedAt: r.accepted_at ?? undefined,
+        rejectedAt: r.rejected_at ?? undefined,
+        ftpStatus: r.ftp_status ?? undefined,
+        ftpRemotePath: r.ftp_remote_path ?? undefined,
+        ftpLastAttemptAt: r.ftp_last_attempt_at ?? undefined,
+        ftpErrorMessage: r.ftp_error_message ?? undefined,
+        scrapedStatusRaw: r.scraped_status_raw ?? undefined,
+        scrapedDownloads: r.scraped_downloads || 0,
+        scrapedEarningsCents: r.scraped_earnings_cents || 0,
+        scrapedViews: r.scraped_views || 0,
+        lastScrapedAt: r.last_scraped_at ?? undefined,
+        aiFlags: r.ai_flags ?? undefined,
+        agencyMetadataOverride: r.agency_metadata_override ?? undefined,
+        notes: r.notes ?? undefined,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      };
+    }
+
+    return result;
+  }
+
+  _ensureMemoryAgencyTrackingForAsset(assetId, now = Date.now()) {
+    const trackingObj = {};
+    for (const agencyId of SUPPORTED_AGENCIES) {
+      const key = `${assetId}::${agencyId}`;
+      if (!this.memoryFallback.agencyTracking.has(key)) {
+        this.memoryFallback.agencyTracking.set(key, {
+          id: `${assetId}_${agencyId}`,
+          assetId,
+          agencyId,
+          status: 'New',
+          rejectionCount: 0,
+          scrapedDownloads: 0,
+          scrapedEarningsCents: 0,
+          scrapedViews: 0,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      trackingObj[agencyId] = this.memoryFallback.agencyTracking.get(key);
+    }
+    return trackingObj;
   }
 
   upsertSingleMasterRecord(rec) {
     const now = Date.now();
     const createdAt = rec.createdAt || now;
+    const kwJson = JSON.stringify(rec.rankedKeywords || []);
+    const catJson = rec.categories ? JSON.stringify(rec.categories) : null;
+    const isAiInt = rec.isAiGenerated === false ? 0 : 1;
 
     const upsertAsset = this.db.prepare(`
       INSERT INTO assets (
-        id, batch_id, filename, media_type, file_size, compressed_size,
-        width, height, duration_seconds, resolution, thumbnail_base64,
-        status, error_message, created_at, updated_at
+        id, batch_id, original_path, master_path, preview_path,
+        filename, original_filename, file_hash, perceptual_hash,
+        media_type, file_size, compressed_size,
+        width, height, duration_seconds, has_audio, resolution, thumbnail_base64,
+        is_ai_generated, base_title, detailed_description, keywords_json, categories_json,
+        pipeline_stage, status, error_message, created_at, updated_at
       ) VALUES (
-        @id, @batch_id, @filename, @media_type, @file_size, @compressed_size,
-        @width, @height, @duration_seconds, @resolution, @thumbnail_base64,
-        @status, @error_message, @created_at, @updated_at
+        @id, @batch_id, @original_path, @master_path, @preview_path,
+        @filename, @original_filename, @file_hash, @perceptual_hash,
+        @media_type, @file_size, @compressed_size,
+        @width, @height, @duration_seconds, @has_audio, @resolution, @thumbnail_base64,
+        @is_ai_generated, @base_title, @detailed_description, @keywords_json, @categories_json,
+        @pipeline_stage, @status, @error_message, @created_at, @updated_at
       )
       ON CONFLICT(id) DO UPDATE SET
         batch_id = excluded.batch_id,
+        original_path = COALESCE(excluded.original_path, assets.original_path),
+        master_path = COALESCE(excluded.master_path, assets.master_path),
+        preview_path = COALESCE(excluded.preview_path, assets.preview_path),
         filename = excluded.filename,
+        original_filename = COALESCE(excluded.original_filename, assets.original_filename),
+        file_hash = COALESCE(excluded.file_hash, assets.file_hash),
+        perceptual_hash = COALESCE(excluded.perceptual_hash, assets.perceptual_hash),
         media_type = excluded.media_type,
         file_size = COALESCE(excluded.file_size, assets.file_size),
         compressed_size = COALESCE(excluded.compressed_size, assets.compressed_size),
         width = COALESCE(excluded.width, assets.width),
         height = COALESCE(excluded.height, assets.height),
         duration_seconds = COALESCE(excluded.duration_seconds, assets.duration_seconds),
+        has_audio = COALESCE(excluded.has_audio, assets.has_audio),
         resolution = COALESCE(excluded.resolution, assets.resolution),
         thumbnail_base64 = CASE
           WHEN excluded.thumbnail_base64 IS NOT NULL AND excluded.thumbnail_base64 != ''
           THEN excluded.thumbnail_base64
           ELSE assets.thumbnail_base64
         END,
+        is_ai_generated = excluded.is_ai_generated,
+        base_title = excluded.base_title,
+        detailed_description = excluded.detailed_description,
+        keywords_json = excluded.keywords_json,
+        categories_json = COALESCE(excluded.categories_json, assets.categories_json),
+        pipeline_stage = COALESCE(excluded.pipeline_stage, assets.pipeline_stage),
         status = excluded.status,
         error_message = excluded.error_message,
         updated_at = excluded.updated_at
@@ -296,19 +917,39 @@ class SqliteDatabaseManager {
         updated_at = excluded.updated_at
     `);
 
+    const insertAgencyTracking = this.db.prepare(`
+      INSERT OR IGNORE INTO agency_tracking (
+        id, asset_id, agency_id, status, rejection_count,
+        scraped_downloads, scraped_earnings_cents, scraped_views, created_at, updated_at
+      ) VALUES (?, ?, ?, 'New', 0, 0, 0, 0, ?, ?)
+    `);
+
     upsertAsset.run({
       id: rec.id,
       batch_id: rec.batchId || '',
+      original_path: rec.originalPath || rec.nativePath || null,
+      master_path: rec.masterPath || null,
+      preview_path: rec.previewPath || null,
       filename: rec.filename || '',
+      original_filename: rec.originalFilename || rec.filename || null,
+      file_hash: rec.fileHash || null,
+      perceptual_hash: rec.perceptualHash || null,
       media_type: rec.mediaType || 'image',
       file_size: rec.fileSize ?? null,
       compressed_size: rec.compressedSize ?? null,
       width: rec.videoMeta?.width ?? null,
       height: rec.videoMeta?.height ?? null,
       duration_seconds: rec.videoMeta?.durationSeconds ?? null,
+      has_audio: rec.videoMeta?.hasAudio ? 1 : 0,
       resolution: rec.videoMeta?.resolution ?? null,
       thumbnail_base64: rec.thumbnailBase64 || '',
-      status: rec.status || 'pending',
+      is_ai_generated: isAiInt,
+      base_title: rec.baseTitle || '',
+      detailed_description: rec.detailedDescription || '',
+      keywords_json: kwJson,
+      categories_json: catJson,
+      pipeline_stage: rec.pipelineStage || 'committed',
+      status: rec.status || 'completed',
       error_message: rec.errorMessage ?? null,
       created_at: createdAt,
       updated_at: now,
@@ -318,9 +959,9 @@ class SqliteDatabaseManager {
       asset_id: rec.id,
       base_title: rec.baseTitle || '',
       detailed_description: rec.detailedDescription || '',
-      keywords_json: JSON.stringify(rec.rankedKeywords || []),
-      categories_json: rec.categories ? JSON.stringify(rec.categories) : null,
-      is_ai_generated: rec.isAiGenerated === false ? 0 : 1,
+      keywords_json: kwJson,
+      categories_json: catJson,
+      is_ai_generated: isAiInt,
       ai_provider: rec.aiGenerationInfo?.provider ?? null,
       ai_model: rec.aiGenerationInfo?.model ?? null,
       ai_prompt: rec.aiGenerationInfo?.prompt ?? null,
@@ -330,6 +971,10 @@ class SqliteDatabaseManager {
         : null,
       updated_at: now,
     });
+
+    for (const agencyId of SUPPORTED_AGENCIES) {
+      insertAgencyTracking.run(`${rec.id}_${agencyId}`, rec.id, agencyId, createdAt, now);
+    }
   }
 
   // ============================================================================
@@ -345,26 +990,34 @@ class SqliteDatabaseManager {
   getDbInfo() {
     return {
       dbPath: this.dbPath,
+      baseDir: this.baseDir,
+      masterVaultDir: this.masterVaultDir,
+      exportBasketsDir: this.exportBasketsDir,
+      backupsDir: this.backupsDir,
       engine: this.isNativeSqlite ? 'sqlite-wal' : 'memory-fallback',
     };
   }
 
-  // --- MasterMetadataRecords (assets + asset_metadata) ---
+  // --- MasterMetadataRecords (assets + asset_metadata + agency_tracking) ---
   getMasterRecords() {
+    const trackingMap = this._buildAgencyTrackingMapForAssets();
     if (!this.isNativeSqlite) {
-      return Array.from(this.memoryFallback.masterRecords.values()).sort(
-        (a, b) => (a.createdAt || 0) - (b.createdAt || 0)
-      );
+      return Array.from(this.memoryFallback.masterRecords.values())
+        .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+        .map((r) => ({
+          ...r,
+          agencyTrackings: trackingMap.get(r.id) || this._ensureMemoryAgencyTrackingForAsset(r.id),
+        }));
     }
     const rows = this.db
       .prepare(`
         SELECT
           a.*,
-          m.base_title,
-          m.detailed_description,
-          m.keywords_json,
-          m.categories_json,
-          m.is_ai_generated,
+          m.base_title AS m_base_title,
+          m.detailed_description AS m_detailed_description,
+          m.keywords_json AS m_keywords_json,
+          m.categories_json AS m_categories_json,
+          m.is_ai_generated AS m_is_ai_generated,
           m.ai_provider,
           m.ai_model,
           m.ai_prompt,
@@ -375,22 +1028,28 @@ class SqliteDatabaseManager {
         ORDER BY a.created_at ASC
       `)
       .all();
-    return rows.map((r) => this.rowToMasterRecord(r));
+    return rows.map((r) => this.rowToMasterRecord(r, trackingMap.get(r.id)));
   }
 
   getMasterRecord(id) {
+    const trackingMap = this._buildAgencyTrackingMapForAssets();
     if (!this.isNativeSqlite) {
-      return this.memoryFallback.masterRecords.get(id);
+      const rec = this.memoryFallback.masterRecords.get(id);
+      if (!rec) return undefined;
+      return {
+        ...rec,
+        agencyTrackings: trackingMap.get(id) || this._ensureMemoryAgencyTrackingForAsset(id),
+      };
     }
     const row = this.db
       .prepare(`
         SELECT
           a.*,
-          m.base_title,
-          m.detailed_description,
-          m.keywords_json,
-          m.categories_json,
-          m.is_ai_generated,
+          m.base_title AS m_base_title,
+          m.detailed_description AS m_detailed_description,
+          m.keywords_json AS m_keywords_json,
+          m.categories_json AS m_categories_json,
+          m.is_ai_generated AS m_is_ai_generated,
           m.ai_provider,
           m.ai_model,
           m.ai_prompt,
@@ -401,7 +1060,7 @@ class SqliteDatabaseManager {
         WHERE a.id = ?
       `)
       .get(id);
-    return this.rowToMasterRecord(row);
+    return this.rowToMasterRecord(row, trackingMap.get(id));
   }
 
   countMasterRecords() {
@@ -414,7 +1073,8 @@ class SqliteDatabaseManager {
 
   putMasterRecord(record) {
     if (!this.isNativeSqlite) {
-      this.memoryFallback.masterRecords.set(record.id, { ...record });
+      const agencyTrackings = this._ensureMemoryAgencyTrackingForAsset(record.id, record.createdAt || Date.now());
+      this.memoryFallback.masterRecords.set(record.id, { ...record, agencyTrackings });
       return record.id;
     }
     const tx = this.db.transaction((rec) => {
@@ -428,8 +1088,10 @@ class SqliteDatabaseManager {
     if (!Array.isArray(records) || records.length === 0) return;
     if (!this.isNativeSqlite) {
       for (const r of records) {
-        this.memoryFallback.masterRecords.set(r.id, { ...r });
+        const agencyTrackings = this._ensureMemoryAgencyTrackingForAsset(r.id, r.createdAt || Date.now());
+        this.memoryFallback.masterRecords.set(r.id, { ...r, agencyTrackings });
       }
+      this.performHotBackup('batch_metadata');
       return;
     }
     const tx = this.db.transaction((items) => {
@@ -438,6 +1100,7 @@ class SqliteDatabaseManager {
       }
     });
     tx(records);
+    this.performHotBackup('batch_metadata');
   }
 
   updateMasterRecord(id, changes) {
@@ -463,6 +1126,9 @@ class SqliteDatabaseManager {
   deleteMasterRecord(id) {
     if (!this.isNativeSqlite) {
       this.memoryFallback.masterRecords.delete(id);
+      for (const agencyId of SUPPORTED_AGENCIES) {
+        this.memoryFallback.agencyTracking.delete(`${id}::${agencyId}`);
+      }
       return;
     }
     this.db.prepare('DELETE FROM assets WHERE id = ?').run(id);
@@ -471,7 +1137,12 @@ class SqliteDatabaseManager {
   bulkDeleteMasterRecords(ids) {
     if (!Array.isArray(ids) || ids.length === 0) return;
     if (!this.isNativeSqlite) {
-      for (const id of ids) this.memoryFallback.masterRecords.delete(id);
+      for (const id of ids) {
+        this.memoryFallback.masterRecords.delete(id);
+        for (const agencyId of SUPPORTED_AGENCIES) {
+          this.memoryFallback.agencyTracking.delete(`${id}::${agencyId}`);
+        }
+      }
       return;
     }
     const stmt = this.db.prepare('DELETE FROM assets WHERE id = ?');
@@ -484,9 +1155,668 @@ class SqliteDatabaseManager {
   clearMasterRecords() {
     if (!this.isNativeSqlite) {
       this.memoryFallback.masterRecords.clear();
+      this.memoryFallback.agencyTracking.clear();
       return;
     }
     this.db.prepare('DELETE FROM assets').run();
+  }
+
+  // ============================================================================
+  // Pillar 1 & 2: Atomic Deduplication, Ingestion & Master Vault Operations
+  // ============================================================================
+  checkDuplicateHash(fileHash) {
+    if (!fileHash) return { isDuplicate: false };
+    if (!this.isNativeSqlite) {
+      for (const rec of this.memoryFallback.masterRecords.values()) {
+        if (rec.fileHash && rec.fileHash === fileHash) {
+          return { isDuplicate: true, existingAssetId: rec.id, existingFilename: rec.filename };
+        }
+      }
+      return { isDuplicate: false };
+    }
+    const row = this.db
+      .prepare('SELECT id, filename, master_path FROM assets WHERE file_hash = ? LIMIT 1')
+      .get(fileHash);
+    if (row) {
+      return {
+        isDuplicate: true,
+        existingAssetId: row.id,
+        existingFilename: row.filename,
+        masterPath: row.master_path,
+      };
+    }
+    return { isDuplicate: false };
+  }
+
+  /**
+   * Copies a source file to the hidden `.stockflow_temp` folder (never moving or modifying source),
+   * computes its SHA-256 content hash, and checks if it already exists in the SQLite Master Vault.
+   */
+  stageAndHashFile({ sourcePath, fileBuffer, filename, batchId = 'batch_default' }) {
+    const cleanBatch = String(batchId || 'batch_default').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const tempBatchDir = path.join(this.tempStagingDir || path.join(process.cwd(), '.stockflow_temp'), cleanBatch);
+    fs.mkdirSync(tempBatchDir, { recursive: true });
+
+    const safeName = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}_${path.basename(filename || sourcePath || 'asset.bin')}`;
+    const tempFilePath = path.join(tempBatchDir, safeName);
+
+    try {
+      if (sourcePath && fs.existsSync(sourcePath)) {
+        // Strictly COPY (never move) from source directory to hidden temp staging
+        fs.copyFileSync(sourcePath, tempFilePath);
+      } else if (fileBuffer) {
+        fs.writeFileSync(tempFilePath, Buffer.from(fileBuffer));
+      } else {
+        throw new Error('Source file does not exist and no file buffer was provided.');
+      }
+
+      const buf = fs.readFileSync(tempFilePath);
+      const fileHash = crypto.createHash('sha256').update(buf).digest('hex');
+      const fileSize = buf.byteLength;
+
+      const dupCheck = this.checkDuplicateHash(fileHash);
+      if (dupCheck.isDuplicate) {
+        // Atomic cleanup of temp file if duplicate
+        try {
+          fs.unlinkSync(tempFilePath);
+        } catch {}
+        return {
+          success: true,
+          isDuplicate: true,
+          fileHash,
+          fileSize,
+          existingAssetId: dupCheck.existingAssetId,
+          existingFilename: dupCheck.existingFilename,
+        };
+      }
+
+      return {
+        success: true,
+        isDuplicate: false,
+        tempFilePath,
+        fileHash,
+        fileSize,
+      };
+    } catch (err) {
+      try {
+        if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+      } catch {}
+      return {
+        success: false,
+        error: err.message || 'Failed to stage and hash file in temp directory.',
+      };
+    }
+  }
+
+  /**
+   * Atomic Rollback: Wipes temporary staging files and ensures no partial DB record exists for a failed item.
+   */
+  rollbackIngestedItem({ assetId, tempFilePath, previewTempPath }) {
+    if (tempFilePath && typeof tempFilePath === 'string' && fs.existsSync(tempFilePath)) {
+      try {
+        fs.unlinkSync(tempFilePath);
+      } catch {}
+    }
+    if (previewTempPath && typeof previewTempPath === 'string' && fs.existsSync(previewTempPath)) {
+      try {
+        fs.unlinkSync(previewTempPath);
+      } catch {}
+    }
+    if (assetId) {
+      this.deleteMasterRecord(assetId);
+    }
+    return { rolledBack: true };
+  }
+
+  /**
+   * Atomic Commit: Moves verified temp file(s) to the centralized Master_Vault directory
+   * and commits the Asset + Metadata + 6 AgencyTracking rows in a single transaction.
+   */
+  commitAtomicallyToMasterVault(payload) {
+    const {
+      record,
+      tempFilePath,
+      previewBuffer,
+      triggerBackup = false,
+    } = payload || {};
+
+    if (!record || !record.id || !record.filename) {
+      throw new Error('Invalid asset record for Master Vault commit.');
+    }
+
+    const mediaSubfolder =
+      record.mediaType === 'video'
+        ? 'Videos'
+        : record.mediaType === 'vector'
+        ? 'Vectors'
+        : 'Photos';
+    const aiPrefix = record.isAiGenerated ? 'AI' : 'Real';
+    const batchFolder = (record.batchId || 'B01').replace(/[^a-zA-Z0-9_-]/g, '_');
+
+    const vaultTargetDir = path.join(
+      this.masterVaultDir || path.join(process.cwd(), '.stockflow_data', 'Master_Vault'),
+      aiPrefix,
+      mediaSubfolder,
+      batchFolder
+    );
+    fs.mkdirSync(vaultTargetDir, { recursive: true });
+
+    let masterPath = record.masterPath || path.join(vaultTargetDir, record.filename);
+    let previewPath = record.previewPath || null;
+
+    try {
+      if (tempFilePath && fs.existsSync(tempFilePath)) {
+        try {
+          fs.renameSync(tempFilePath, masterPath);
+        } catch (moveErr) {
+          if (moveErr.code === 'EXDEV') {
+            fs.copyFileSync(tempFilePath, masterPath);
+            fs.unlinkSync(tempFilePath);
+          } else {
+            throw moveErr;
+          }
+        }
+      }
+
+      if (previewBuffer && record.mediaType === 'vector') {
+        const ext = path.extname(record.filename);
+        const base = path.basename(record.filename, ext);
+        previewPath = path.join(vaultTargetDir, `${base}.jpg`);
+        fs.writeFileSync(previewPath, Buffer.from(previewBuffer));
+      }
+
+      const finalizedRecord = {
+        ...record,
+        masterPath,
+        previewPath: previewPath || undefined,
+        nativePath: masterPath,
+        pipelineStage: 'committed',
+        status: 'completed',
+      };
+
+      this.putMasterRecord(finalizedRecord);
+
+      if (triggerBackup) {
+        this.performHotBackup('batch_ingest');
+      }
+
+      return this.getMasterRecord(record.id);
+    } catch (err) {
+      // Rollback any moved file or temp file if DB commit failed
+      try {
+        if (tempFilePath && fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+      } catch {}
+      throw err;
+    }
+  }
+
+  // ============================================================================
+  // Pillar 1, 3 & 4: Agency Tracking, Export Baskets & Reconciliation
+  // ============================================================================
+  getRejectionDictionary(agencyId = null) {
+    if (!this.isNativeSqlite) {
+      const all = Array.from(this.memoryFallback.rejectionDictionary.values()).filter((r) => r.isActive);
+      if (agencyId && agencyId !== 'all') {
+        return all.filter((r) => r.agencyId === 'all' || r.agencyId === agencyId);
+      }
+      return all;
+    }
+
+    let rows;
+    if (agencyId && agencyId !== 'all') {
+      rows = this.db
+        .prepare(
+          `SELECT * FROM rejection_dictionary WHERE is_active = 1 AND (agency_id = 'all' OR agency_id = ?) ORDER BY usage_count DESC, title ASC`
+        )
+        .all(agencyId);
+    } else {
+      rows = this.db
+        .prepare(`SELECT * FROM rejection_dictionary WHERE is_active = 1 ORDER BY usage_count DESC, title ASC`)
+        .all();
+    }
+
+    return rows.map((r) => ({
+      id: r.id,
+      agencyId: r.agency_id,
+      code: r.code ?? undefined,
+      title: r.title,
+      description: r.description || '',
+      severity: r.severity || 'standard',
+      usageCount: r.usage_count || 0,
+      isActive: Boolean(r.is_active),
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  addRejectionReason({ agencyId = 'all', title, description = '', severity = 'standard', code = null }) {
+    if (!title || !String(title).trim()) {
+      throw new Error('Rejection reason title is required.');
+    }
+    const cleanTitle = String(title).trim();
+    const cleanDesc = String(description || '').trim();
+    const now = Date.now();
+    const id = `rej_${crypto.randomUUID().slice(0, 8)}`;
+
+    if (!this.isNativeSqlite) {
+      const rec = {
+        id,
+        agencyId,
+        code: code || undefined,
+        title: cleanTitle,
+        description: cleanDesc,
+        severity,
+        usageCount: 0,
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.memoryFallback.rejectionDictionary.set(id, rec);
+      return rec;
+    }
+
+    this.db
+      .prepare(`
+        INSERT INTO rejection_dictionary (
+          id, agency_id, code, title, description, severity, usage_count, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
+        ON CONFLICT(agency_id, title) DO UPDATE SET
+          description = excluded.description,
+          severity = excluded.severity,
+          is_active = 1,
+          updated_at = excluded.updated_at
+      `)
+      .run(id, agencyId, code, cleanTitle, cleanDesc, severity, now, now);
+
+    const row = this.db
+      .prepare('SELECT * FROM rejection_dictionary WHERE agency_id = ? AND title = ?')
+      .get(agencyId, cleanTitle);
+
+    return {
+      id: row.id,
+      agencyId: row.agency_id,
+      code: row.code ?? undefined,
+      title: row.title,
+      description: row.description || '',
+      severity: row.severity || 'standard',
+      usageCount: row.usage_count || 0,
+      isActive: Boolean(row.is_active),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /**
+   * Creates an Export Basket on disk (staging copies of selected Master files + generated CSV)
+   * and transitions all selected assets for that agency to `Pending Upload`.
+   */
+  createExportBasket({ agencyId, basketName, assetIds, csvFilename, csvContent, additionalCsvs = [] }) {
+    if (!agencyId || !Array.isArray(assetIds) || assetIds.length === 0) {
+      throw new Error('Agency and at least one asset ID are required to create an Export Basket.');
+    }
+
+    const now = Date.now();
+    const basketId = `basket_${crypto.randomUUID().slice(0, 8)}`;
+    const dateStamp = new Date(now).toISOString().slice(0, 10);
+    const cleanBasketName =
+      (basketName || `${agencyId.toUpperCase()}_${dateStamp}`).replace(/[^a-zA-Z0-9_-]/g, '_');
+
+    const stagingFolderPath = path.join(
+      this.exportBasketsDir || path.join(process.cwd(), '.stockflow_data', 'Export_Baskets'),
+      `${cleanBasketName}_${basketId}`
+    );
+
+    try {
+      fs.mkdirSync(stagingFolderPath, { recursive: true });
+    } catch {
+      // ignore in virtualized test environments
+    }
+
+    let csvFilePath = null;
+    if (csvFilename && typeof csvContent === 'string' && csvContent.length > 0) {
+      csvFilePath = path.join(stagingFolderPath, csvFilename);
+      try {
+        fs.writeFileSync(csvFilePath, Buffer.from(csvContent, 'utf8'));
+      } catch {
+        // ignore if virtual FS
+      }
+    }
+
+    if (Array.isArray(additionalCsvs)) {
+      for (const extra of additionalCsvs) {
+        if (extra?.filename && extra?.csvString) {
+          try {
+            fs.writeFileSync(path.join(stagingFolderPath, extra.filename), Buffer.from(extra.csvString, 'utf8'));
+          } catch {}
+        }
+      }
+    }
+
+    // Copy master files into the staging basket folder if they exist on disk
+    for (const assetId of assetIds) {
+      const rec = this.getMasterRecord(assetId);
+      if (!rec) continue;
+      const srcPath = rec.masterPath || rec.originalPath || rec.nativePath;
+      if (srcPath && fs.existsSync(srcPath)) {
+        try {
+          const destPath = path.join(stagingFolderPath, rec.filename);
+          fs.copyFileSync(srcPath, destPath);
+          if (rec.previewPath && fs.existsSync(rec.previewPath)) {
+            const previewDest = path.join(stagingFolderPath, path.basename(rec.previewPath));
+            fs.copyFileSync(rec.previewPath, previewDest);
+          }
+        } catch {
+          // ignore if file missing
+        }
+      }
+    }
+
+    const basketRecord = {
+      id: basketId,
+      agencyId,
+      basketName: cleanBasketName,
+      stagingFolderPath,
+      csvFilePath: csvFilePath || undefined,
+      itemCount: assetIds.length,
+      status: 'pending_reconciliation',
+      createdAt: now,
+    };
+
+    if (!this.isNativeSqlite) {
+      this.memoryFallback.exportBaskets.set(basketId, basketRecord);
+      for (const assetId of assetIds) {
+        this._ensureMemoryAgencyTrackingForAsset(assetId, now);
+        const key = `${assetId}::${agencyId}`;
+        const existing = this.memoryFallback.agencyTracking.get(key);
+        this.memoryFallback.agencyTracking.set(key, {
+          ...existing,
+          status: 'Pending Upload',
+          exportBasketId: basketId,
+          stagedFilePath: path.join(stagingFolderPath, this.memoryFallback.masterRecords.get(assetId)?.filename || ''),
+          submissionBatchName: cleanBasketName,
+          exportedAt: now,
+          updatedAt: now,
+        });
+      }
+      this.performHotBackup('batch_export');
+      return basketRecord;
+    }
+
+    const tx = this.db.transaction(() => {
+      this.db
+        .prepare(`
+          INSERT INTO export_baskets (
+            id, agency_id, basket_name, staging_folder_path, csv_file_path, item_count, status, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'pending_reconciliation', ?)
+        `)
+        .run(
+          basketId,
+          agencyId,
+          cleanBasketName,
+          stagingFolderPath,
+          csvFilePath,
+          assetIds.length,
+          now
+        );
+
+      const upsertTracking = this.db.prepare(`
+        INSERT INTO agency_tracking (
+          id, asset_id, agency_id, status, export_basket_id, staged_file_path,
+          submission_batch_name, exported_at, rejection_count,
+          scraped_downloads, scraped_earnings_cents, scraped_views, created_at, updated_at
+        ) VALUES (?, ?, ?, 'Pending Upload', ?, ?, ?, ?, 0, 0, 0, 0, ?, ?)
+        ON CONFLICT(asset_id, agency_id) DO UPDATE SET
+          status = 'Pending Upload',
+          export_basket_id = excluded.export_basket_id,
+          staged_file_path = excluded.staged_file_path,
+          submission_batch_name = excluded.submission_batch_name,
+          exported_at = excluded.exported_at,
+          updated_at = excluded.updated_at
+      `);
+
+      for (const assetId of assetIds) {
+        const assetRow = this.db.prepare('SELECT filename FROM assets WHERE id = ?').get(assetId);
+        const stagedPath = assetRow ? path.join(stagingFolderPath, assetRow.filename) : stagingFolderPath;
+        upsertTracking.run(
+          `${assetId}_${agencyId}`,
+          assetId,
+          agencyId,
+          basketId,
+          stagedPath,
+          cleanBasketName,
+          now,
+          now,
+          now
+        );
+      }
+    });
+
+    tx();
+    // Event-Driven Backup Trigger: Immediately after Export Basket creation
+    this.performHotBackup('batch_export');
+
+    return basketRecord;
+  }
+
+  getExportBaskets(agencyId = null) {
+    if (!this.isNativeSqlite) {
+      const all = Array.from(this.memoryFallback.exportBaskets.values()).sort(
+        (a, b) => b.createdAt - a.createdAt
+      );
+      return agencyId ? all.filter((b) => b.agencyId === agencyId) : all;
+    }
+
+    const rows = agencyId
+      ? this.db
+          .prepare('SELECT * FROM export_baskets WHERE agency_id = ? ORDER BY created_at DESC')
+          .all(agencyId)
+      : this.db.prepare('SELECT * FROM export_baskets ORDER BY created_at DESC').all();
+
+    return rows.map((r) => ({
+      id: r.id,
+      agencyId: r.agency_id,
+      basketName: r.basket_name,
+      stagingFolderPath: r.staging_folder_path,
+      csvFilePath: r.csv_file_path ?? undefined,
+      itemCount: r.item_count,
+      status: r.status,
+      createdAt: r.created_at,
+      reconciledAt: r.reconciled_at ?? undefined,
+    }));
+  }
+
+  /**
+   * Bulk updates or reconciles agency statuses for one or many assets.
+   * Supports reverting failed portal uploads back to `New`, confirming `Uploaded` / `Accepted`,
+   * or logging `Rejected` with a RejectionDictionary reason.
+   */
+  reconcileAgencyStatuses({
+    assetIds,
+    agencyId,
+    targetStatus,
+    rejectionReasonId = null,
+    customRejectionNote = null,
+    agencyUrl = null,
+    agencyAssetId = null,
+  }) {
+    if (!Array.isArray(assetIds) || assetIds.length === 0 || !agencyId || !targetStatus) {
+      return { updatedCount: 0 };
+    }
+
+    const now = Date.now();
+
+    if (!this.isNativeSqlite) {
+      let updatedCount = 0;
+      for (const assetId of assetIds) {
+        this._ensureMemoryAgencyTrackingForAsset(assetId, now);
+        const key = `${assetId}::${agencyId}`;
+        const existing = this.memoryFallback.agencyTracking.get(key);
+        const isRejected = targetStatus === 'Rejected';
+        const isReverted = targetStatus === 'New';
+        this.memoryFallback.agencyTracking.set(key, {
+          ...existing,
+          status: targetStatus,
+          rejectionReasonId: isRejected ? rejectionReasonId || undefined : isReverted ? undefined : existing.rejectionReasonId,
+          customRejectionNote: isRejected
+            ? customRejectionNote || undefined
+            : isReverted
+            ? undefined
+            : existing.customRejectionNote,
+          rejectionCount: isRejected ? (existing.rejectionCount || 0) + 1 : existing.rejectionCount || 0,
+          uploadedAt: targetStatus === 'Uploaded' ? now : existing.uploadedAt,
+          acceptedAt: targetStatus === 'Accepted' ? now : existing.acceptedAt,
+          rejectedAt: isRejected ? now : existing.rejectedAt,
+          agencyUrl: agencyUrl || existing.agencyUrl,
+          agencyAssetId: agencyAssetId || existing.agencyAssetId,
+          updatedAt: now,
+        });
+        updatedCount++;
+      }
+      if (targetStatus === 'Rejected' && rejectionReasonId) {
+        const reason = this.memoryFallback.rejectionDictionary.get(rejectionReasonId);
+        if (reason) {
+          reason.usageCount = (reason.usageCount || 0) + assetIds.length;
+        }
+      }
+      this.performHotBackup('batch_reconcile');
+      return { updatedCount };
+    }
+
+    const tx = this.db.transaction(() => {
+      const stmt = this.db.prepare(`
+        INSERT INTO agency_tracking (
+          id, asset_id, agency_id, status, rejection_reason_id, custom_rejection_note,
+          rejection_count, uploaded_at, reviewed_at, accepted_at, rejected_at,
+          agency_url, agency_asset_id,
+          scraped_downloads, scraped_earnings_cents, scraped_views, created_at, updated_at
+        ) VALUES (
+          @id, @asset_id, @agency_id, @status, @rejection_reason_id, @custom_rejection_note,
+          @rejection_inc, @uploaded_at, @reviewed_at, @accepted_at, @rejected_at,
+          @agency_url, @agency_asset_id,
+          0, 0, 0, @now, @now
+        )
+        ON CONFLICT(asset_id, agency_id) DO UPDATE SET
+          status = excluded.status,
+          rejection_reason_id = CASE
+            WHEN excluded.status = 'Rejected' THEN excluded.rejection_reason_id
+            WHEN excluded.status = 'New' THEN NULL
+            ELSE agency_tracking.rejection_reason_id
+          END,
+          custom_rejection_note = CASE
+            WHEN excluded.status = 'Rejected' THEN excluded.custom_rejection_note
+            WHEN excluded.status = 'New' THEN NULL
+            ELSE agency_tracking.custom_rejection_note
+          END,
+          rejection_count = CASE
+            WHEN excluded.status = 'Rejected' THEN agency_tracking.rejection_count + 1
+            ELSE agency_tracking.rejection_count
+          END,
+          uploaded_at = COALESCE(excluded.uploaded_at, agency_tracking.uploaded_at),
+          reviewed_at = COALESCE(excluded.reviewed_at, agency_tracking.reviewed_at),
+          accepted_at = COALESCE(excluded.accepted_at, agency_tracking.accepted_at),
+          rejected_at = COALESCE(excluded.rejected_at, agency_tracking.rejected_at),
+          agency_url = COALESCE(excluded.agency_url, agency_tracking.agency_url),
+          agency_asset_id = COALESCE(excluded.agency_asset_id, agency_tracking.agency_asset_id),
+          updated_at = excluded.updated_at
+      `);
+
+      for (const assetId of assetIds) {
+        stmt.run({
+          id: `${assetId}_${agencyId}`,
+          asset_id: assetId,
+          agency_id: agencyId,
+          status: targetStatus,
+          rejection_reason_id: targetStatus === 'Rejected' ? rejectionReasonId : null,
+          custom_rejection_note: targetStatus === 'Rejected' ? customRejectionNote : null,
+          rejection_inc: targetStatus === 'Rejected' ? 1 : 0,
+          uploaded_at: targetStatus === 'Uploaded' ? now : null,
+          reviewed_at: targetStatus === 'In Review' ? now : null,
+          accepted_at: targetStatus === 'Accepted' ? now : null,
+          rejected_at: targetStatus === 'Rejected' ? now : null,
+          agency_url: agencyUrl || null,
+          agency_asset_id: agencyAssetId || null,
+          now,
+        });
+      }
+
+      if (targetStatus === 'Rejected' && rejectionReasonId) {
+        this.db
+          .prepare('UPDATE rejection_dictionary SET usage_count = usage_count + ?, updated_at = ? WHERE id = ?')
+          .run(assetIds.length, now, rejectionReasonId);
+      }
+
+      // Auto-mark export baskets as reconciled if all their items have left 'Pending Upload'
+      this.db
+        .prepare(`
+          UPDATE export_baskets
+          SET status = 'reconciled', reconciled_at = ?
+          WHERE status = 'pending_reconciliation'
+            AND NOT EXISTS (
+              SELECT 1 FROM agency_tracking t
+              WHERE t.export_basket_id = export_baskets.id AND t.status = 'Pending Upload'
+            )
+        `)
+        .run(now);
+    });
+
+    tx();
+
+    // Event-Driven Backup Trigger: Immediately after Batch Reconciliation
+    this.performHotBackup('batch_reconcile');
+
+    return { updatedCount: assetIds.length };
+  }
+
+  getTrackerStats() {
+    const records = this.getMasterRecords();
+    const perAgencyStats = {};
+    for (const agencyId of SUPPORTED_AGENCIES) {
+      perAgencyStats[agencyId] = {
+        New: 0,
+        'Pending Upload': 0,
+        Uploaded: 0,
+        'In Review': 0,
+        Accepted: 0,
+        Rejected: 0,
+      };
+    }
+
+    let newCount = 0;
+    let pendingUploadCount = 0;
+    let uploadedCount = 0;
+    let inReviewCount = 0;
+    let acceptedCount = 0;
+    let rejectedCount = 0;
+
+    for (const rec of records) {
+      const map = rec.agencyTrackings || {};
+      for (const agencyId of SUPPORTED_AGENCIES) {
+        const st = map[agencyId]?.status || 'New';
+        if (perAgencyStats[agencyId][st] !== undefined) {
+          perAgencyStats[agencyId][st]++;
+        }
+        if (st === 'New') newCount++;
+        else if (st === 'Pending Upload') pendingUploadCount++;
+        else if (st === 'Uploaded') uploadedCount++;
+        else if (st === 'In Review') inReviewCount++;
+        else if (st === 'Accepted') acceptedCount++;
+        else if (st === 'Rejected') rejectedCount++;
+      }
+    }
+
+    const backups = this.getBackupLogs(30);
+    return {
+      totalAssets: records.length,
+      newCount,
+      pendingUploadCount,
+      uploadedCount,
+      inReviewCount,
+      acceptedCount,
+      rejectedCount,
+      perAgencyStats,
+      lastBackup: backups[0] || undefined,
+      backupCount: backups.length,
+    };
   }
 
   // --- ApiKeys ---
@@ -715,5 +2045,4 @@ class SqliteDatabaseManager {
 }
 
 const sqliteDb = new SqliteDatabaseManager();
-module.exports = { sqliteDb, SqliteDatabaseManager };
-
+module.exports = { sqliteDb, SqliteDatabaseManager, DEFAULT_REJECTION_REASONS, SUPPORTED_AGENCIES };

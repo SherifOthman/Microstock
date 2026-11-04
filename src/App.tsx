@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { HomeHubView } from './features/home/HomeHubView';
+import { DistributionTrackerView } from './features/tracker/DistributionTrackerView';
 import { StudioView } from './features/studio/StudioView';
 import { FileCleanerView } from './features/cleaner/FileCleanerView';
 import { VideoMuterView } from './features/video/VideoMuterView';
@@ -21,6 +22,7 @@ import {
   PanelLeftOpen,
   FileSpreadsheet,
   Languages,
+  Database,
 } from 'lucide-react';
 import { Dialog } from './components/ui/dialog';
 import { Tooltip } from './components/ui/tooltip';
@@ -30,10 +32,11 @@ import { AppLogo } from './components/icons/AppLogo';
 import { useLanguage } from './context/LanguageContext';
 import { CustomTitleBar } from './components/CustomTitleBar';
 
-export type AppTab = 'home' | 'studio' | 'cleaner' | 'muter' | 'eps';
+export type AppTab = 'home' | 'tracker' | 'studio' | 'cleaner' | 'muter' | 'eps';
 
 const TAB_TO_PATH: Record<AppTab, string> = {
   home: '/',
+  tracker: '/tracker',
   studio: '/metadata',
   cleaner: '/file-cleaner',
   muter: '/video-muter',
@@ -42,6 +45,7 @@ const TAB_TO_PATH: Record<AppTab, string> = {
 
 const PATH_TO_TAB: Record<string, AppTab> = {
   '/': 'home',
+  '/tracker': 'tracker',
   '/metadata': 'studio',
   '/file-cleaner': 'cleaner',
   '/video-muter': 'muter',
@@ -64,22 +68,6 @@ function getInitialTab(): AppTab {
 
 export function App() {
   const isElectron = typeof window !== 'undefined' && Boolean((window as unknown as { electronAPI?: unknown }).electronAPI);
-
-  if (!isElectron) {
-    return (
-      <div className="h-screen w-screen bg-background text-foreground flex flex-col items-center justify-center p-8 text-center font-sans overflow-hidden">
-        <div className="max-w-md p-6 bg-card border border-destructive/30 rounded-xl shadow-lg space-y-4">
-          <div className="w-12 h-12 mx-auto rounded-full bg-destructive/10 flex items-center justify-center text-destructive text-2xl font-bold">
-            !
-          </div>
-          <h1 className="text-xl font-bold text-destructive">Desktop Client Required</h1>
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            StockFlow is a native desktop application. Please launch it via the desktop runtime.
-          </p>
-        </div>
-      </div>
-    );
-  }
 
   const { language, setLanguage, t } = useLanguage();
   const [keys, setKeys] = useState<ApiKeyRecord[]>([]);
@@ -135,6 +123,7 @@ export function App() {
   };
 
   useEffect(() => {
+    if (!isElectron) return;
     const unsub = keyRingScheduler.subscribe((updated) => setKeys([...updated]));
     keyRingScheduler.init();
 
@@ -159,7 +148,23 @@ export function App() {
     });
 
     return () => unsub();
-  }, []);
+  }, [isElectron]);
+
+  if (!isElectron) {
+    return (
+      <div className="h-screen w-screen bg-background text-foreground flex flex-col items-center justify-center p-8 text-center font-sans overflow-hidden">
+        <div className="max-w-md p-6 bg-card border border-destructive/30 rounded-xl shadow-lg space-y-4">
+          <div className="w-12 h-12 mx-auto rounded-full bg-destructive/10 flex items-center justify-center text-destructive text-2xl font-bold">
+            !
+          </div>
+          <h1 className="text-xl font-bold text-destructive">Desktop Client Required</h1>
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            StockFlow is a native desktop application. Please launch it via the desktop runtime.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const navItems: Array<{
     id: AppTab;
@@ -173,10 +178,15 @@ export function App() {
       icon: LayoutGrid,
     },
     {
+      id: 'tracker',
+      label: t.distributionTracker,
+      icon: Database,
+      badge: masterCount > 0 ? masterCount : undefined,
+    },
+    {
       id: 'studio',
       label: t.metadataStudio,
       icon: Wand2,
-      badge: masterCount > 0 ? masterCount : undefined,
     },
     {
       id: 'cleaner',
@@ -427,6 +437,9 @@ export function App() {
                 onOpenKeyRing={() => setIsKeyRingOpen(true)}
                 onOpenTemplates={() => setIsTemplatesOpen(true)}
               />
+            </div>
+            <div className={activeTab === 'tracker' ? 'flex-1 min-h-0 h-full overflow-hidden flex flex-col' : 'hidden'}>
+              <DistributionTrackerView />
             </div>
             <div className={activeTab === 'studio' ? 'flex-1 min-h-0 h-full px-3 sm:px-4 py-3 overflow-hidden flex flex-col' : 'hidden'}>
               <StudioView onOpenVideoMuter={() => handleTabChange('muter')} />

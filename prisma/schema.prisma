@@ -1,0 +1,184 @@
+// StockFlow — Microstock Distribution Tracker Canonical Prisma Schema
+// Paired with native better-sqlite3 (WAL mode) for 100% offline crash-safe performance.
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:../stockflow.sqlite"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+/// Core Master Asset Table — Single source of truth for every deduplicated file in the Master Vault
+model Asset {
+  id                     String   @id @default(uuid())
+  batchId                String?  @map("batch_id")
+
+  // File Identity & Deduplication
+  originalPath           String?  @map("original_path")
+  masterPath             String?  @unique @map("master_path")
+  previewPath            String?  @map("preview_path") // Companion JPG for EPS vectors or poster frame for videos
+  filename               String   @map("filename")
+  originalFilename       String?  @map("original_filename")
+  fileHash               String?  @unique @map("file_hash") // SHA-256 hex digest for strict deduplication
+  perceptualHash         String?  @map("perceptual_hash")   // Future-proof: pHash/dHash for near-duplicate visual detection
+
+  // Media Classification & Technical Specs
+  mediaType              String   @default("image") @map("media_type") // 'image' | 'video' | 'vector'
+  mimeType               String?  @map("mime_type")
+  fileSize               Int?     @map("file_size")
+  compressedSize         Int?     @map("compressed_size")
+  width                  Int?     @map("width")
+  height                 Int?     @map("height")
+  aspectRatio            String?  @map("aspect_ratio")
+  durationSeconds        Float?   @map("duration_seconds")
+  frameRate              Float?   @map("frame_rate")
+  codec                  String?  @map("codec")
+  hasAudio               Boolean  @default(false) @map("has_audio")
+  audioMutedAt           Int?     @map("audio_muted_at")
+  epsExtractedAt         Int?     @map("eps_extracted_at")
+  resolution             String?  @map("resolution")
+  colorSpace             String?  @map("color_space")
+  thumbnailBase64        String?  @map("thumbnail_base64")
+
+  // AI & SEO Metadata (Denormalized JSON + Fast Search Columns)
+  isAiGenerated          Boolean  @default(true) @map("is_ai_generated")
+  aiGeneratorModel       String?  @map("ai_generator_model")
+  baseTitle              String   @default("") @map("base_title")
+  detailedDescription    String   @default("") @map("detailed_description")
+  keywordsJson           String   @default("[]") @map("keywords_json")
+  categoriesJson         String?  @map("categories_json")
+  metadataJson           String?  @map("metadata_json")
+
+  // Pipeline & Future AI Vision QA Telemetry
+  pipelineStage          String   @default("committed") @map("pipeline_stage") // 'hashing' | 'validating' | 'transforming' | 'generating_meta' | 'committed' | 'failed'
+  status                 String   @default("completed") @map("status")
+  errorMessage           String?  @map("error_message")
+  aiVisionScore          Float?   @map("ai_vision_score")
+  aiFlagsJson            String?  @map("ai_flags_json")
+  customAttributesJson   String?  @map("custom_attributes_json")
+  isArchived             Boolean  @default(false) @map("is_archived")
+
+  createdAt              Int      @map("created_at")
+  updatedAt              Int      @map("updated_at")
+
+  agencyTrackings        AgencyTracking[]
+
+  @@index([fileHash], name: "idx_assets_file_hash")
+  @@index([mediaType, isAiGenerated], name: "idx_assets_media_ai")
+  @@index([status, pipelineStage], name: "idx_assets_pipeline")
+  @@index([createdAt], name: "idx_assets_created_at")
+  @@map("assets")
+}
+
+/// Maps each Asset to each of the 6 Stock Agencies with full lifecycle & future automation fields
+model AgencyTracking {
+  id                     String   @id @default(uuid())
+  assetId                String   @map("asset_id")
+  agencyId               String   @map("agency_id") // 'adobe' | 'freepik' | 'vecteezy' | 'shutterstock' | 'dreamstime' | '123rf'
+
+  // Allowed values: 'New' | 'Pending Upload' | 'Uploaded' | 'In Review' | 'Accepted' | 'Rejected'
+  status                 String   @default("New") @map("status")
+
+  // Export Basket & Submission Traceability
+  exportBasketId         String?  @map("export_basket_id")
+  stagedFilePath         String?  @map("staged_file_path")
+  exportedFilename       String?  @map("exported_filename")
+  submissionBatchName    String?  @map("submission_batch_name")
+
+  // Agency Portal Identity
+  agencyAssetId          String?  @map("agency_asset_id")
+  agencyUrl              String?  @map("agency_url")
+
+  // Rejection Tracking
+  rejectionReasonId      String?  @map("rejection_reason_id")
+  customRejectionNote    String?  @map("custom_rejection_note")
+  rejectionCount         Int      @default(0) @map("rejection_count")
+
+  // Lifecycle Timestamps (Epoch ms)
+  exportedAt             Int?     @map("exported_at")
+  uploadedAt             Int?     @map("uploaded_at")
+  reviewedAt             Int?     @map("reviewed_at")
+  acceptedAt             Int?     @map("accepted_at")
+  rejectedAt             Int?     @map("rejected_at")
+
+  // Future-Proof Columns: FTP Sync, Web Scraping & AI Compliance
+  ftpStatus              String?  @map("ftp_status")
+  ftpRemotePath          String?  @map("ftp_remote_path")
+  ftpLastAttemptAt       Int?     @map("ftp_last_attempt_at")
+  ftpErrorMessage        String?  @map("ftp_error_message")
+  scrapedStatusRaw       String?  @map("scraped_status_raw")
+  scrapedDownloads       Int      @default(0) @map("scraped_downloads")
+  scrapedEarningsCents   Int      @default(0) @map("scraped_earnings_cents")
+  scrapedViews           Int      @default(0) @map("scraped_views")
+  lastScrapedAt          Int?     @map("last_scraped_at")
+  aiFlags                String?  @map("ai_flags")
+  agencyMetadataOverride String?  @map("agency_metadata_override")
+  notes                  String?  @map("notes")
+
+  createdAt              Int      @map("created_at")
+  updatedAt              Int      @map("updated_at")
+
+  asset                  Asset                @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  rejectionReason        RejectionDictionary? @relation(fields: [rejectionReasonId], references: [id], onDelete: SetNull)
+  exportBasket           ExportBasket?        @relation(fields: [exportBasketId], references: [id], onDelete: SetNull)
+
+  @@unique([assetId, agencyId], name: "uq_asset_agency")
+  @@index([agencyId, status], name: "idx_tracking_agency_status")
+  @@index([exportBasketId], name: "idx_tracking_export_basket")
+  @@index([rejectionReasonId], name: "idx_tracking_rejection_reason")
+  @@map("agency_tracking")
+}
+
+/// User-populated & pre-seeded dictionary of recurring rejection reasons per agency
+model RejectionDictionary {
+  id                     String   @id @default(uuid())
+  agencyId               String   @map("agency_id") // 'all' | 'adobe' | 'freepik' | 'vecteezy' | 'shutterstock' | 'dreamstime' | '123rf'
+  code                   String?  @map("code")
+  title                  String   @map("title")
+  description            String   @default("") @map("description")
+  severity               String   @default("standard") @map("severity") // 'fixable' | 'standard' | 'permanent_ban_risk'
+  usageCount             Int      @default(0) @map("usage_count")
+  isActive               Boolean  @default(true) @map("is_active")
+  createdAt              Int      @map("created_at")
+  updatedAt              Int      @map("updated_at")
+
+  agencyTrackings        AgencyTracking[]
+
+  @@unique([agencyId, title], name: "uq_rejection_agency_title")
+  @@index([agencyId, isActive], name: "idx_rejection_agency_active")
+  @@map("rejection_dictionary")
+}
+
+/// Tracks every Export Basket created on disk for batch reconciliation
+model ExportBasket {
+  id                     String   @id @default(uuid())
+  agencyId               String   @map("agency_id")
+  basketName             String   @map("basket_name")
+  stagingFolderPath      String   @map("staging_folder_path")
+  csvFilePath            String?  @map("csv_file_path")
+  itemCount              Int      @default(0) @map("item_count")
+  status                 String   @default("pending_reconciliation") @map("status") // 'pending_reconciliation' | 'reconciled' | 'cancelled'
+  createdAt              Int      @map("created_at")
+  reconciledAt           Int?     @map("reconciled_at")
+
+  agencyTrackings        AgencyTracking[]
+
+  @@index([agencyId, status], name: "idx_baskets_agency_status")
+  @@map("export_baskets")
+}
+
+/// Audit log of Event-Driven SQLite Hot Backups
+model BackupLog {
+  id                     String   @id @default(uuid())
+  triggerEvent           String   @map("trigger_event") // 'app_startup' | 'app_quit' | 'batch_ingest' | 'batch_export' | 'batch_reconcile' | 'manual'
+  backupFilePath         String   @map("backup_file_path")
+  fileSizeBytes          Int      @map("file_size_bytes")
+  assetCountSnapshot     Int      @map("asset_count_snapshot")
+  durationMs             Int      @map("duration_ms")
+  createdAt              Int      @map("created_at")
+
+  @@index([createdAt], name: "idx_backup_logs_created_at")
+  @@map("backup_logs")
+}

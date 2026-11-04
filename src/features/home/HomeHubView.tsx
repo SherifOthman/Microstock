@@ -16,7 +16,7 @@ import {
 import { useLanguage } from '../../context/LanguageContext';
 
 export interface HomeHubViewProps {
-  onNavigate?: (tool: 'studio' | 'cleaner' | 'muter' | 'eps') => void;
+  onNavigate?: (tool: 'tracker' | 'studio' | 'cleaner' | 'muter' | 'eps') => void;
   onOpenKeyRing?: () => void;
   onOpenTemplates?: () => void;
 }
@@ -133,6 +133,41 @@ export const HomeHubView: React.FC<HomeHubViewProps> = ({
             {language === 'ar' ? 'معالجة محلية بالكامل 100%' : '100% local file system execution'}
           </p>
         </div>
+      </div>
+
+      {/* Master Brain: Microstock Distribution Tracker Banner */}
+      <div className="p-3.5 rounded-xl border border-primary/30 bg-primary/5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className="w-9 h-9 rounded-lg bg-primary/15 border border-primary/30 flex items-center justify-center text-primary shrink-0">
+            <Database className="w-4 h-4" />
+          </div>
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-2">
+              <h2 className="text-xs font-bold text-foreground">
+                {language === 'ar'
+                  ? 'متتبع التوزيع المركزي (Master Vault)'
+                  : 'Microstock Distribution Tracker (Master Brain)'}
+              </h2>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500 border border-emerald-500/30 font-semibold">
+                {language === 'ar' ? 'نسخ احتياطي فوري (WAL)' : 'Event-Driven Hot Backup'}
+              </span>
+            </div>
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              {language === 'ar'
+                ? 'استيراد ذري آمن (نسخ فقط)، منع التكرار بـ SHA-256، سلات تصدير (Pending Upload)، وتتبع الحالة عبر 6 وكالات.'
+                : 'Copy-only atomic ingestion, SHA-256 deduplication, Export Baskets (Pending Upload), and 6-agency lifecycle reconciliation.'}
+            </p>
+          </div>
+        </div>
+        <Button
+          variant="default"
+          size="sm"
+          onClick={() => onNavigate?.('tracker')}
+          className="h-8 text-xs gap-1.5 cursor-pointer shrink-0"
+        >
+          <Database className="w-3.5 h-3.5" />
+          <span>{language === 'ar' ? 'فتح متتبع التوزيع' : 'Open Distribution Tracker'}</span>
+        </Button>
       </div>
 
       {/* Recommended Production Pipeline Sequence */}
