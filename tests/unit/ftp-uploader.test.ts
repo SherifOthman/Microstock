@@ -166,6 +166,41 @@ describe('Dreamstime FTP Uploader (Plain FTP Port 21, Intelligent Sorting & 5x R
   it('formats transfer bytes, speed, and ETA strings accurately', () => {
     expect(formatBytes(1024 * 1024 * 5.5)).toBe('5.5 MB');
     expect(formatTransferSpeed(1024 * 1024 * 14.2)).toBe('14.2 MB/s');
+    expect(formatTransferSpeed(1024 * 450)).toBe('450 KB/s');
+    expect(formatTransferSpeed(0)).toBe('0 KB/s');
     expect(formatEtaSeconds(125)).toBe('02m 05s');
+  });
+
+  it('supports single-item retry and clear completed queue items', async () => {
+    const orchestrator = new DreamstimeFtpOrchestrator();
+    orchestrator.addFiles([
+      { name: 'photo_success.jpg', size: 1_000_000 },
+      { name: 'photo_failed.jpg', size: 2_000_000 },
+    ]);
+
+    await orchestrator.startBatchUpload({
+      mode: 'dry_run',
+      faultMode: 'persistent_fail_all_5',
+      faultTargetFilenames: ['photo_failed.jpg'],
+      baseBackoffMs: 1,
+      simulatedChunkIntervalMs: 1,
+    });
+
+    const failed = orchestrator.getQueue().find((i) => i.filename === 'photo_failed.jpg');
+    expect(failed?.status).toBe('failed');
+
+    // Retry single item
+    await orchestrator.retrySingleItem(failed!.id, {
+      mode: 'dry_run',
+      faultMode: 'none',
+      baseBackoffMs: 1,
+      simulatedChunkIntervalMs: 1,
+    });
+
+    expect(orchestrator.getQueue().find((i) => i.filename === 'photo_failed.jpg')?.status).toBe('succeeded');
+
+    // Clear completed
+    orchestrator.clearCompleted();
+    expect(orchestrator.getQueue().length).toBe(0);
   });
 });

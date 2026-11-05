@@ -63,6 +63,10 @@ export class DreamstimeFtpOrchestrator {
   private aborted = false;
   private isRunning = false;
   private ipcUnsub: (() => void) | null = null;
+  private lastTickTime = 0;
+  private lastTickBytes = 0;
+  private currentSpeedBps = 0;
+  private keepAwakeActive = false;
 
   constructor() {
     if (typeof window !== 'undefined' && window.electronAPI?.ftp?.onTelemetry) {
@@ -307,6 +311,47 @@ export class DreamstimeFtpOrchestrator {
     this.notify();
   }
 
+  clearCompleted(): void {
+    if (this.isRunning) return;
+    this.queue = this.queue.filter((i) => i.status !== 'succeeded');
+    this.recalculateBatchTelemetry();
+    this.notify();
+  }
+
+  async retrySingleItem(itemId: string, options: FtpBatchRunOptions = {}): Promise<boolean> {
+    const item = this.queue.find((i) => i.id === itemId);
+    if (!item) return false;
+    item.status = 'queued';
+    item.bytesTransferred = 0;
+    item.progressPercent = 0;
+    item.retryCount = 0;
+    item.errorCode = undefined;
+    item.errorMessage = undefined;
+    this.recalculateBatchTelemetry();
+    this.notify();
+    if (!this.isRunning) {
+      await this.startBatchUpload(options);
+    }
+    return true;
+  }
+
+  async setKeepAwake(enable: boolean): Promise<boolean> {
+    this.keepAwakeActive = enable;
+    if (typeof window !== 'undefined' && window.electronAPI?.setPowerSaveBlocker) {
+      try {
+        const res = await window.electronAPI.setPowerSaveBlocker(enable);
+        return res?.active ?? enable;
+      } catch {
+        return enable;
+      }
+    }
+    return enable;
+  }
+
+  isKeepAwakeActive(): boolean {
+    return this.keepAwakeActive || this.isRunning;
+  }
+
   clearQueue(): void {
     if (this.isRunning) return;
     this.queue = [];
@@ -471,7 +516,7 @@ export class DreamstimeFtpOrchestrator {
     };
     this.notify();
 
-    let emaSpeedBps = 14_500_000;
+    let currentSpeedBps = 14_500_000;
     let speedSamplesTotal = 0;
     let speedSamplesCount = 0;
 
@@ -518,7 +563,7 @@ export class DreamstimeFtpOrchestrator {
           const delayMs = this.getRetryDelayMs(retryAttempt, options.baseBackoffMs);
           this.recalculateBatchTelemetry(
             item,
-            emaSpeedBps,
+            currentSpeedBps,
             `Network drop on ${item.filename} — Auto-Retry ${retryAttempt}/${item.maxRetries} in ${Math.round(delayMs / 1000)}s...`
           );
           this.notify();
@@ -529,7 +574,7 @@ export class DreamstimeFtpOrchestrator {
 
         this.recalculateBatchTelemetry(
           item,
-          emaSpeedBps,
+          currentSpeedBps,
           `Uploading ${item.filename} → ${item.remoteFolder}${retryAttempt > 0 ? ` (Retry ${retryAttempt}/${item.maxRetries})` : ''}`
         );
         this.notify();
@@ -557,8 +602,8 @@ export class DreamstimeFtpOrchestrator {
           if (res.success) {
             const elapsedSec = Math.max(0.05, (Date.now() - attemptStart) / 1000);
             const measuredSpeed = Math.round(item.fileSize / elapsedSec);
-            emaSpeedBps = Math.round(0.4 * measuredSpeed + 0.6 * emaSpeedBps);
-            speedSamplesTotal += emaSpeedBps;
+            currentSpeedBps = Math.round(0.4 * measuredSpeed + 0.6 * currentSpeedBps);
+            speedSamplesTotal += currentSpeedBps;
             speedSamplesCount++;
             item.bytesTransferred = item.fileSize;
             item.progressPercent = 100;
@@ -588,12 +633,12 @@ export class DreamstimeFtpOrchestrator {
             item.bytesTransferred = Math.round(item.fileSize * ratio);
             item.progressPercent = Math.round(ratio * 100);
 
-            const instantSpeed = 13_500_000 + ((step * 1_100_000) % 4_500_000);
-            emaSpeedBps = Math.round(0.3 * instantSpeed + 0.7 * emaSpeedBps);
-            speedSamplesTotal += emaSpeedBps;
+            const instantSpeed = 1_200_000 + ((step * 150_000) % 900_000);
+            currentSpeedBps = Math.round(0.3 * instantSpeed + 0.7 * currentSpeedBps);
+            speedSamplesTotal += currentSpeedBps;
             speedSamplesCount++;
 
-            this.recalculateBatchTelemetry(item, emaSpeedBps);
+            this.recalculateBatchTelemetry(item, currentSpeedBps);
             this.notify();
 
             if (shouldFailThisAttempt && step === failAtStep) {
@@ -659,14 +704,14 @@ export class DreamstimeFtpOrchestrator {
         completedAt,
       });
 
-      this.recalculateBatchTelemetry(item, emaSpeedBps);
+      this.recalculateBatchTelemetry(item, currentSpeedBps);
       this.notify();
     }
 
     this.isRunning = false;
     const succeededCount = this.queue.filter((i) => i.status === 'succeeded').length;
     const failedCount = this.queue.filter((i) => i.status === 'failed').length;
-    const avgSpeed = speedSamplesCount > 0 ? Math.round(speedSamplesTotal / speedSamplesCount) : emaSpeedBps;
+    const avgSpeed = speedSamplesCount > 0 ? Math.round(speedSamplesTotal / speedSamplesCount) : currentSpeedBps;
 
     const finalStatus = this.aborted
       ? 'aborted'

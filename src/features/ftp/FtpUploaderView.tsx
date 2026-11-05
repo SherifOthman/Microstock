@@ -24,6 +24,7 @@ import { getPlatformLogo } from '../../components/icons/StockLogos';
 import {
   AlertTriangle,
   CheckCircle2,
+  Coffee,
   Eye,
   EyeOff,
   FileImage,
@@ -64,10 +65,10 @@ function getMediaIcon(mediaType: FtpQueueItem['mediaType']) {
   return <FileImage className="w-3.5 h-3.5 text-sky-400 shrink-0" />;
 }
 
-function getMediaTypeLabel(mediaType: FtpQueueItem['mediaType']): string {
-  if (mediaType === 'vector') return 'Vector';
-  if (mediaType === 'video') return 'Video';
-  return 'Photo';
+function getMediaTypeLabel(mediaType: FtpQueueItem['mediaType'], language: string): string {
+  if (mediaType === 'vector') return language === 'ar' ? 'فيكتور' : 'Vector';
+  if (mediaType === 'video') return language === 'ar' ? 'فيديو' : 'Video';
+  return language === 'ar' ? 'صورة' : 'Photo';
 }
 
 async function extractFilesFromDataTransfer(dataTransfer: DataTransfer): Promise<File[]> {
@@ -137,7 +138,7 @@ export const FtpUploaderView: React.FC = () => {
 
   const storedProfile = useSqliteQuery(() => db.ftp.getProfile('dreamstime'), [], undefined);
 
-  // Site Settings Credential State (Plain FTP Port 21 in background: Host, Username, Password only)
+  // Site Settings Credential State (Plain FTP Port 21: Host, Username, Password)
   const [host, setHost] = useState('ftp.dreamstime.com');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -162,56 +163,101 @@ export const FtpUploaderView: React.FC = () => {
       if (storedProfile.username) {
         setUsername(storedProfile.username);
       }
+      if (storedProfile.hasSavedPassword && !password) {
+        setPassword('••••••••••••');
+      }
     }
   }, [storedProfile?.updatedAt]);
 
   const handleSaveCredentials = async () => {
-    setVaultStatus({ type: 'saving', message: 'Saving encrypted credentials...' });
+    setVaultStatus({
+      type: 'testing',
+      message: language === 'ar' ? 'جارٍ التحقق والاتصال...' : 'Testing connection...',
+    });
     try {
+      const cleanHost = host.trim() || 'ftp.dreamstime.com';
+      const cleanUsername = username.trim();
+      const passToSend = password === '••••••••••••' ? undefined : password;
+
+      // 1. Test connection first
+      const testRes = await dreamstimeFtpService.testDreamstimeConnection({
+        protocol: 'ftp',
+        host: cleanHost,
+        port: 21,
+        username: cleanUsername,
+        password: passToSend,
+      });
+
+      if (!testRes.success) {
+        setVaultStatus({
+          type: 'error',
+          message: testRes.error || (language === 'ar' ? 'فشل الاتصال بخادم FTP' : 'Connection failed'),
+        });
+        return;
+      }
+
+      // 2. Save on verified connection
       await dreamstimeFtpService.saveDreamstimeCredentials({
         protocol: 'ftp',
-        host: host.trim() || 'ftp.dreamstime.com',
+        host: cleanHost,
         port: 21,
-        username: username.trim(),
-        password: password || undefined,
+        username: cleanUsername,
+        password: passToSend,
         passiveMode: true,
       });
-      setPassword('');
-      setVaultStatus({ type: 'ok', message: 'Saved to Secure Vault (Plain FTP Port 21)' });
+
+      setVaultStatus({
+        type: 'ok',
+        message: language === 'ar' ? 'تم التحقق وحفظ البيانات بنجاح' : 'Connected & Saved Successfully',
+      });
+
+      // Keep password masked in input (do not clear field), automatically close modal
+      setTimeout(() => {
+        setIsSettingsOpen(false);
+      }, 500);
     } catch (err: any) {
       setVaultStatus({
         type: 'error',
-        message: err?.message || 'Failed to save credentials',
+        message: err?.message || (language === 'ar' ? 'فشل الحفظ' : 'Failed to save credentials'),
       });
     }
   };
 
   const handleTestConnection = async () => {
-    setVaultStatus({ type: 'testing', message: 'Connecting via Plain FTP (Port 21)...' });
+    setVaultStatus({
+      type: 'testing',
+      message: language === 'ar' ? 'جارٍ اختبار الاتصال عبر Port 21...' : 'Testing Plain FTP (Port 21)...',
+    });
     try {
+      const cleanHost = host.trim() || 'ftp.dreamstime.com';
+      const cleanUsername = username.trim();
+      const passToSend = password === '••••••••••••' ? undefined : password;
+
       const res = await dreamstimeFtpService.testDreamstimeConnection({
         protocol: 'ftp',
-        host: host.trim() || 'ftp.dreamstime.com',
+        host: cleanHost,
         port: 21,
-        username: username.trim(),
-        password: password || undefined,
+        username: cleanUsername,
+        password: passToSend,
       });
+
       if (res.success) {
-        setPassword('');
         setVaultStatus({
           type: 'ok',
-          message: `Connected via Plain FTP (${res.latencyMs || 42}ms)`,
+          message: language === 'ar'
+            ? `متصل بنجاح (${res.latencyMs || 35}ms)`
+            : `Connected (${res.latencyMs || 35}ms)`,
         });
       } else {
         setVaultStatus({
           type: 'error',
-          message: res.error || 'Connection failed',
+          message: res.error || (language === 'ar' ? 'فشل الاتصال' : 'Connection failed'),
         });
       }
     } catch (err: any) {
       setVaultStatus({
         type: 'error',
-        message: err?.message || 'Connection error',
+        message: err?.message || (language === 'ar' ? 'خطأ في الاتصال' : 'Connection error'),
       });
     }
   };
@@ -255,12 +301,14 @@ export const FtpUploaderView: React.FC = () => {
       ? failedItems
       : queue;
 
+  const isKeepAwake = dreamstimeFtpService.isKeepAwakeActive();
+
   return (
     <div
       data-testid="ftp-uploader-view"
       className="flex-1 min-h-0 h-full flex flex-col gap-3 overflow-hidden select-none"
     >
-      {/* Top Header Bar: Title + Auto-Routing Summary + Site Settings Modal Trigger */}
+      {/* Top Header Bar: Title + Auto-Routing Summary + Keep Awake + Site Settings */}
       <div className="shrink-0 h-12 px-4 rounded-xl border border-border bg-card flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           {getPlatformLogo('dreamstime', 18)}
@@ -268,7 +316,7 @@ export const FtpUploaderView: React.FC = () => {
             {language === 'ar' ? 'رافع Dreamstime FTP' : 'Dreamstime FTP Uploader'}
           </h1>
 
-          {/* Inline Auto-Routing Rules Summary */}
+          {/* Auto-Routing Rules Summary */}
           <div
             dir="ltr"
             className="hidden md:flex items-center gap-2 pl-3 border-l border-border text-xs"
@@ -286,9 +334,34 @@ export const FtpUploaderView: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0" dir="ltr">
+        <div className="flex items-center gap-2 shrink-0">
+          {/* OS Power Management: Keep Awake Toggle */}
+          <button
+            type="button"
+            onClick={async () => {
+              const next = !dreamstimeFtpService.isKeepAwakeActive();
+              await dreamstimeFtpService.setKeepAwake(next);
+              setTelemetry({ ...dreamstimeFtpService.getTelemetry() });
+            }}
+            title={
+              language === 'ar'
+                ? 'منع وضع السكون أثناء تشغيل المهام (Keep Awake)'
+                : 'Prevents system sleep while active (Keep Awake)'
+            }
+            className={`h-8 px-2.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition cursor-pointer ${
+              isKeepAwake
+                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                : 'bg-secondary/40 text-muted-foreground border-border hover:text-foreground'
+            }`}
+          >
+            <Coffee className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">
+              {language === 'ar' ? 'مستمر بدون نوم' : 'Keep Awake'}
+            </span>
+          </button>
+
           {storedProfile?.username && (
-            <span className="hidden sm:inline-flex items-center gap-1.5 text-xs text-muted-foreground font-mono">
+            <span className="hidden sm:inline-flex items-center gap-1.5 text-xs text-muted-foreground font-mono" dir="ltr">
               <span
                 className={`w-2 h-2 rounded-full ${
                   storedProfile.hasSavedPassword ? 'bg-emerald-400' : 'bg-amber-400'
@@ -307,31 +380,37 @@ export const FtpUploaderView: React.FC = () => {
             className="h-8 text-xs gap-1.5 cursor-pointer"
           >
             <Settings className="w-3.5 h-3.5 text-primary" />
-            <span>Site Settings</span>
+            <span>{language === 'ar' ? 'إعدادات الموقع' : 'Site Settings'}</span>
           </Button>
         </div>
       </div>
 
-      {/* Full-Width Main Transfer Workspace */}
+      {/* Full-Width Main Workspace */}
       <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden">
-        {/* Compact Progress & Controls Bar */}
+        {/* Progress & Controls Bar */}
         <div className="shrink-0 p-3.5 rounded-xl border border-border bg-card space-y-2.5">
           <div className="flex flex-wrap items-center justify-between gap-3" dir="ltr">
             <div className="flex flex-wrap items-center gap-4 text-xs font-mono tabular-nums">
               <div>
-                <span className="text-muted-foreground">Batch: </span>
+                <span className="text-muted-foreground">
+                  {language === 'ar' ? 'إجمالي الملفات: ' : 'Total Files: '}
+                </span>
                 <span className="font-bold text-foreground">
-                  {telemetry.completedFiles} / {telemetry.totalFiles} files ({telemetry.batchPercent}%)
+                  {telemetry.completedFiles} / {telemetry.totalFiles} ({telemetry.batchPercent}%)
                 </span>
               </div>
               <div>
-                <span className="text-muted-foreground">Speed: </span>
+                <span className="text-muted-foreground">
+                  {language === 'ar' ? 'سرعة الرفع: ' : 'Upload Speed: '}
+                </span>
                 <span className="font-bold text-emerald-400">
-                  {telemetry.isRunning ? formatTransferSpeed(telemetry.speedBytesPerSec) : '0.0 MB/s'}
+                  {telemetry.isRunning ? formatTransferSpeed(telemetry.speedBytesPerSec) : '0 KB/s'}
                 </span>
               </div>
               <div>
-                <span className="text-muted-foreground">ETA: </span>
+                <span className="text-muted-foreground">
+                  {language === 'ar' ? 'الوقت المتبقي: ' : 'Time Remaining: '}
+                </span>
                 <span className="font-bold text-foreground">
                   {formatEtaSeconds(telemetry.etaSeconds)}
                 </span>
@@ -344,7 +423,7 @@ export const FtpUploaderView: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-1.5">
-              {/* Hidden File & Directory Pickers */}
+              {/* Hidden Pickers */}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -378,7 +457,7 @@ export const FtpUploaderView: React.FC = () => {
                 className="h-8 text-xs gap-1.5 cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>Add Files</span>
+                <span>{language === 'ar' ? 'إضافة ملفات' : 'Add Files'}</span>
               </Button>
 
               <Button
@@ -391,9 +470,24 @@ export const FtpUploaderView: React.FC = () => {
                 className="h-8 text-xs gap-1.5 cursor-pointer"
               >
                 <FolderPlus className="w-3.5 h-3.5 text-primary" />
-                <span>Add Folder</span>
+                <span>{language === 'ar' ? 'إضافة مجلد' : 'Add Folder'}</span>
               </Button>
 
+              {/* Clear Completed */}
+              {succeededItems.length > 0 && !telemetry.isRunning && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => dreamstimeFtpService.clearCompleted()}
+                  className="h-8 text-xs gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>{language === 'ar' ? 'مسح المكتملة' : 'Clear Completed'} ({succeededItems.length})</span>
+                </Button>
+              )}
+
+              {/* Retry All Failed */}
               {failedItems.length > 0 && !telemetry.isRunning && (
                 <Button
                   type="button"
@@ -403,7 +497,7 @@ export const FtpUploaderView: React.FC = () => {
                   className="h-8 text-xs gap-1.5 bg-amber-500 hover:bg-amber-600 text-black font-semibold cursor-pointer"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Retry Failed ({failedItems.length})</span>
+                  <span>{language === 'ar' ? 'إعادة الفاشلة' : 'Retry Failed'} ({failedItems.length})</span>
                 </Button>
               )}
 
@@ -416,7 +510,7 @@ export const FtpUploaderView: React.FC = () => {
                   className="h-8 text-xs gap-1.5 cursor-pointer"
                 >
                   <Square className="w-3.5 h-3.5" />
-                  <span>Stop</span>
+                  <span>{language === 'ar' ? 'إيقاف' : 'Stop'}</span>
                 </Button>
               ) : (
                 <Button
@@ -428,7 +522,7 @@ export const FtpUploaderView: React.FC = () => {
                   className="h-8 text-xs gap-1.5 cursor-pointer font-semibold"
                 >
                   <Play className="w-3.5 h-3.5" />
-                  <span>Start Upload ({queuedItems.length})</span>
+                  <span>{language === 'ar' ? 'بدء الرفع' : 'Start Upload'} ({queuedItems.length})</span>
                 </Button>
               )}
 
@@ -439,7 +533,7 @@ export const FtpUploaderView: React.FC = () => {
                   size="sm"
                   onClick={() => dreamstimeFtpService.clearQueue()}
                   className="h-8 px-2 text-muted-foreground hover:text-destructive cursor-pointer"
-                  title="Clear Queue"
+                  title={language === 'ar' ? 'مسح القائمة كاملة' : 'Clear Queue'}
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </Button>
@@ -450,7 +544,31 @@ export const FtpUploaderView: React.FC = () => {
           <Progress value={telemetry.batchPercent} className="h-2" />
         </div>
 
-        {/* Full-Screen Transfer Queue Table */}
+        {/* Completion Banner */}
+        {telemetry.completedFiles > 0 &&
+          telemetry.completedFiles === telemetry.totalFiles &&
+          !telemetry.isRunning && (
+            <div className="shrink-0 px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between text-xs text-emerald-400">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span className="font-semibold">
+                  {language === 'ar'
+                    ? `اكتمل الرفع: نجح ${telemetry.succeededFiles} ملف${telemetry.failedFiles > 0 ? `، وفشل ${telemetry.failedFiles} ملف` : ''}.`
+                    : `Upload Complete: ${telemetry.succeededFiles} uploaded${telemetry.failedFiles > 0 ? `, ${telemetry.failedFiles} failed` : ''}.`}
+                </span>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => dreamstimeFtpService.clearCompleted()}
+                className="h-6 text-xs text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/20 px-2 cursor-pointer"
+              >
+                {language === 'ar' ? 'مسح المكتملة' : 'Clear Completed'}
+              </Button>
+            </div>
+          )}
+
+        {/* Queue Table */}
         <div
           onDragOver={(e) => {
             e.preventDefault();
@@ -462,7 +580,7 @@ export const FtpUploaderView: React.FC = () => {
             isDraggingOver ? 'border-primary bg-primary/5' : 'border-border'
           }`}
         >
-          {/* Queue Sub-Tabs + Intelligent Sorting Indicator */}
+          {/* Sub-Tabs */}
           <div
             className="shrink-0 h-10 px-3 border-b border-border flex items-center justify-between gap-2"
             dir="ltr"
@@ -477,7 +595,7 @@ export const FtpUploaderView: React.FC = () => {
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                Queue ({queue.length})
+                {language === 'ar' ? 'قائمة الانتظار' : 'Queue'} ({queue.length})
               </button>
               <button
                 type="button"
@@ -488,7 +606,7 @@ export const FtpUploaderView: React.FC = () => {
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                Completed ({succeededItems.length})
+                {language === 'ar' ? 'المكتملة' : 'Completed'} ({succeededItems.length})
               </button>
               <button
                 type="button"
@@ -499,12 +617,12 @@ export const FtpUploaderView: React.FC = () => {
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                Failed ({failedItems.length})
+                {language === 'ar' ? 'الفاشلة' : 'Failed'} ({failedItems.length})
               </button>
             </div>
 
             <span className="text-[11px] font-mono text-muted-foreground hidden sm:inline">
-              Sorted: Photos → Vectors → Videos · Auto-Retry: 5x (2s–60s)
+              Photos → Vectors → Videos
             </span>
           </div>
 
@@ -513,25 +631,19 @@ export const FtpUploaderView: React.FC = () => {
               <div className="h-full flex flex-col items-center justify-center p-8 text-center">
                 <UploadCloud className="w-9 h-9 text-primary mb-2.5 opacity-80" />
                 <h3 className="text-xs sm:text-sm font-semibold text-foreground">
-                  Drop Files or Shoot Folders Here to Queue for Dreamstime
+                  {language === 'ar' ? 'اسحب الملفات أو المجلدات هنا' : 'Drop Files or Shoot Folders Here'}
                 </h3>
-                <p className="text-xs text-muted-foreground max-w-md mt-1">
-                  Automatically sorted by type: Photos route to{' '}
-                  <code className="text-sky-400 font-mono">/</code>, Vectors route to{' '}
-                  <code className="text-amber-400 font-mono">/additional</code>, and Videos route to{' '}
-                  <code className="text-purple-400 font-mono">/video</code>.
-                </p>
               </div>
             ) : (
               <table className="w-full text-left border-collapse text-xs" dir="ltr">
                 <thead className="sticky top-0 bg-card border-b border-border text-[11px] font-mono text-muted-foreground z-10">
                   <tr>
-                    <th className="py-2 px-3">File</th>
-                    <th className="py-2 px-2.5">Type</th>
-                    <th className="py-2 px-2.5">Destination</th>
-                    <th className="py-2 px-2.5">Size</th>
-                    <th className="py-2 px-2.5 w-48">Progress</th>
-                    <th className="py-2 px-2.5">Status</th>
+                    <th className="py-2 px-3">{language === 'ar' ? 'الملف' : 'File'}</th>
+                    <th className="py-2 px-2.5">{language === 'ar' ? 'النوع' : 'Type'}</th>
+                    <th className="py-2 px-2.5">{language === 'ar' ? 'الوجهة' : 'Destination'}</th>
+                    <th className="py-2 px-2.5">{language === 'ar' ? 'الحجم' : 'Size'}</th>
+                    <th className="py-2 px-2.5 w-48">{language === 'ar' ? 'التقدم' : 'Progress'}</th>
+                    <th className="py-2 px-2.5">{language === 'ar' ? 'الحالة' : 'Status'}</th>
                     <th className="py-2 px-3 text-right" />
                   </tr>
                 </thead>
@@ -547,7 +659,7 @@ export const FtpUploaderView: React.FC = () => {
                         </div>
                       </td>
                       <td className="py-2 px-2.5 text-muted-foreground font-medium">
-                        {getMediaTypeLabel(item.mediaType)}
+                        {getMediaTypeLabel(item.mediaType, language)}
                       </td>
                       <td className="py-2 px-2.5">
                         <span
@@ -573,44 +685,65 @@ export const FtpUploaderView: React.FC = () => {
                         {item.status === 'succeeded' && (
                           <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
                             <CheckCircle2 className="w-3.5 h-3.5" />
-                            Done
+                            {language === 'ar' ? 'تم الرفع' : 'Done'}
                           </span>
                         )}
                         {item.status === 'uploading' && (
                           <span className="inline-flex items-center gap-1 text-primary">
                             <RefreshCw className="w-3 h-3 animate-spin" />
-                            Uploading
+                            {language === 'ar' ? 'جارٍ الرفع...' : 'Uploading'}
                           </span>
                         )}
                         {item.status === 'retrying' && (
                           <span className="inline-flex items-center gap-1 text-amber-400">
                             <AlertTriangle className="w-3.5 h-3.5" />
-                            Retry {item.retryCount}/{item.maxRetries}
+                            {language === 'ar'
+                              ? `محاولة ${item.retryCount}/${item.maxRetries}`
+                              : `Retry ${item.retryCount}/${item.maxRetries}`}
                           </span>
                         )}
                         {item.status === 'queued' && (
-                          <span className="text-muted-foreground">Queued</span>
+                          <span className="text-muted-foreground">
+                            {language === 'ar' ? 'في الانتظار' : 'Queued'}
+                          </span>
                         )}
                         {item.status === 'failed' && (
                           <span
-                            className="inline-flex items-center gap-1 text-destructive font-medium"
+                            className="inline-flex items-center gap-1 text-destructive font-medium cursor-help"
                             title={item.errorMessage}
                           >
                             <XCircle className="w-3.5 h-3.5" />
-                            Failed
+                            {language === 'ar' ? 'فشل' : 'Failed'}
                           </span>
                         )}
                       </td>
                       <td className="py-2 px-3 text-right">
-                        {!telemetry.isRunning && (
-                          <button
-                            type="button"
-                            onClick={() => dreamstimeFtpService.removeItem(item.id)}
-                            className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-destructive cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
+                        <div className="flex items-center justify-end gap-1">
+                          {/* Individual Retry Button for Failed Items */}
+                          {item.status === 'failed' && !telemetry.isRunning && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => dreamstimeFtpService.retrySingleItem(item.id)}
+                              className="h-7 px-2 text-xs text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 gap-1 cursor-pointer"
+                              title={language === 'ar' ? 'إعادة محاولة هذا الملف' : 'Retry this file'}
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                              <span>{language === 'ar' ? 'إعادة' : 'Retry'}</span>
+                            </Button>
+                          )}
+                          {!telemetry.isRunning && (
+                            <button
+                              type="button"
+                              onClick={() => dreamstimeFtpService.removeItem(item.id)}
+                              className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-destructive cursor-pointer"
+                              title={language === 'ar' ? 'حذف من القائمة' : 'Remove'}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -621,23 +754,24 @@ export const FtpUploaderView: React.FC = () => {
         </div>
       </div>
 
-      {/* Site Settings Modal (Plain FTP Port 21 — Host, Username, Password only) */}
+      {/* Site Settings Modal (Plain FTP Port 21: Host, Username, Password) */}
       <DialogRoot open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
         <DialogContent className="sm:max-w-md" dir="ltr">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-sm font-bold">
               <Lock className="w-4 h-4 text-primary" />
-              <span>Dreamstime FTP Site Settings</span>
+              <span>{language === 'ar' ? 'إعدادات خادم Dreamstime FTP' : 'Dreamstime FTP Site Settings'}</span>
             </DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
-              Connects via standard unencrypted FTP (Port 21) matching FileZilla. Your password is
-              encrypted at rest using Electron safeStorage.
+              Standard Plain FTP (Port 21). Passwords are encrypted locally via Electron safeStorage.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3 py-2">
             <div className="space-y-1">
-              <label className="text-xs font-medium text-foreground block">Host</label>
+              <label className="text-xs font-medium text-foreground block">
+                {language === 'ar' ? 'الخادم (Host)' : 'Host'}
+              </label>
               <Input
                 data-testid="ftp-host-input"
                 value={host}
@@ -648,7 +782,9 @@ export const FtpUploaderView: React.FC = () => {
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-medium text-foreground block">Username</label>
+              <label className="text-xs font-medium text-foreground block">
+                {language === 'ar' ? 'اسم المستخدم (Username)' : 'Username'}
+              </label>
               <Input
                 data-testid="ftp-username-input"
                 value={username}
@@ -660,10 +796,12 @@ export const FtpUploaderView: React.FC = () => {
 
             <div className="space-y-1">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-foreground block">Password</label>
+                <label className="text-xs font-medium text-foreground block">
+                  {language === 'ar' ? 'كلمة المرور (Password)' : 'Password'}
+                </label>
                 {storedProfile?.hasSavedPassword && (
                   <span className="text-[11px] text-emerald-400 font-medium">
-                    Saved in Secure Vault
+                    {language === 'ar' ? 'محفوظة في الخزنة الآمنة' : 'Saved in Secure Vault'}
                   </span>
                 )}
               </div>
@@ -673,9 +811,7 @@ export const FtpUploaderView: React.FC = () => {
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder={
-                    storedProfile?.hasSavedPassword ? '•••••••••••• (Saved)' : 'FTP password'
-                  }
+                  placeholder="FTP password"
                   className="h-9 text-xs font-mono pr-8"
                 />
                 <button
@@ -716,7 +852,7 @@ export const FtpUploaderView: React.FC = () => {
               className="h-8 text-xs gap-1.5 cursor-pointer"
             >
               <Server className="w-3.5 h-3.5" />
-              <span>Test Connection</span>
+              <span>{language === 'ar' ? 'اختبار الاتصال' : 'Test Connection'}</span>
             </Button>
 
             <div className="flex items-center gap-2">
@@ -727,7 +863,7 @@ export const FtpUploaderView: React.FC = () => {
                 onClick={() => setIsSettingsOpen(false)}
                 className="h-8 text-xs cursor-pointer"
               >
-                Close
+                {language === 'ar' ? 'إغلاق' : 'Close'}
               </Button>
               <Button
                 type="button"
@@ -736,7 +872,7 @@ export const FtpUploaderView: React.FC = () => {
                 onClick={handleSaveCredentials}
                 className="h-8 text-xs cursor-pointer font-semibold"
               >
-                Save Credentials
+                {language === 'ar' ? 'حفظ البيانات' : 'Save Credentials'}
               </Button>
             </div>
           </DialogFooter>

@@ -209,13 +209,13 @@ export function formatBytes(bytes: number): string {
  * Formats transfer speed in bytes/sec into `X.X MB/s` or `XXX KB/s`.
  */
 export function formatTransferSpeed(bytesPerSec: number): string {
-  if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) return '0.0 MB/s';
+  if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) return '0 KB/s';
   const mbps = bytesPerSec / (1024 * 1024);
-  if (mbps >= 0.1) {
+  if (mbps >= 1.0) {
     return `${mbps.toFixed(1)} MB/s`;
   }
   const kbps = bytesPerSec / 1024;
-  return `${Math.max(1, Math.round(kbps))} KB/s`;
+  return `${Math.round(kbps)} KB/s`;
 }
 
 /**

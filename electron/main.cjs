@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, protocol, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, protocol, nativeImage, powerSaveBlocker, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -433,6 +433,64 @@ function setupIpcHandlers() {
 
   ipcMain.handle('ftp:selectFolderFiles', async () => {
     return await ftpManager.selectFolderFiles();
+  });
+
+  // OS Power Management (Prevent Sleep Mode During Tasks)
+  let activePowerSaveBlockerId = null;
+
+  ipcMain.handle('power:setBlocker', (_event, enable) => {
+    try {
+      if (enable) {
+        if (
+          activePowerSaveBlockerId === null ||
+          !powerSaveBlocker.isStarted(activePowerSaveBlockerId)
+        ) {
+          activePowerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+        }
+        return { active: true, id: activePowerSaveBlockerId };
+      } else {
+        if (
+          activePowerSaveBlockerId !== null &&
+          powerSaveBlocker.isStarted(activePowerSaveBlockerId)
+        ) {
+          powerSaveBlocker.stop(activePowerSaveBlockerId);
+        }
+        activePowerSaveBlockerId = null;
+        return { active: false, id: null };
+      }
+    } catch (err) {
+      console.error('[PowerSaveBlocker] Failed to set blocker:', err);
+      return { active: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('power:isBlocking', () => {
+    try {
+      return (
+        activePowerSaveBlockerId !== null &&
+        powerSaveBlocker.isStarted(activePowerSaveBlockerId)
+      );
+    } catch {
+      return false;
+    }
+  });
+
+  // Windows Native OS Notification
+  ipcMain.handle('app:showNotification', (_event, payload) => {
+    try {
+      const { title = 'StockFlow', body = '' } = payload || {};
+      if (Notification && Notification.isSupported()) {
+        const notif = new Notification({
+          title,
+          body,
+        });
+        notif.show();
+        return { success: true };
+      }
+    } catch (err) {
+      console.error('[Notification] Failed to show notification:', err);
+    }
+    return { success: false };
   });
 
   // Window Control IPC

@@ -8,6 +8,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   maximizeWindow: () => ipcRenderer.send('window-maximize'),
   closeWindow: () => ipcRenderer.send('window-close'),
   isMaximized: () => ipcRenderer.invoke('window-is-maximized'),
+  setPowerSaveBlocker: (enable) => ipcRenderer.invoke('power:setBlocker', enable),
+  isPowerSaveBlocking: () => ipcRenderer.invoke('power:isBlocking'),
+  showNotification: (options) => ipcRenderer.invoke('app:showNotification', options),
   rasterizeEpsNative: (fileBufferOrOptions, fileName) => {
     if (
       fileBufferOrOptions &&

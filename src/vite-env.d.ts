@@ -12,6 +12,9 @@ interface Window {
     maximizeWindow: () => void;
     closeWindow: () => void;
     isMaximized: () => Promise<boolean>;
+    setPowerSaveBlocker?: (enable: boolean) => Promise<{ active: boolean; id?: number | null; error?: string }>;
+    isPowerSaveBlocking?: () => Promise<boolean>;
+    showNotification?: (options: { title: string; body: string }) => Promise<{ success: boolean }>;
     rasterizeEpsNative: (
       fileBufferOrOptions:
         | ArrayBuffer
