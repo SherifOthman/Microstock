@@ -489,8 +489,12 @@ function setupIpcHandlers() {
     try {
       const succeeded = stats?.succeededCount ?? stats?.succeeded ?? 0;
       const failed = stats?.failedCount ?? stats?.failed ?? 0;
+      const skipped = stats?.skippedCount ?? stats?.skipped ?? 0;
       const duration = stats?.duration || '';
-      const body = `Upload Complete: ${succeeded} succeeded${failed > 0 ? `, ${failed} failed` : ''}.${duration ? ` Total Time: ${duration}` : ''}`;
+      let body = `Upload Complete: ${succeeded} succeeded`;
+      if (failed > 0) body += `, ${failed} failed`;
+      if (skipped > 0) body += `, ${skipped} skipped`;
+      if (duration) body += `. Total Time: ${duration}`;
       if (Notification && Notification.isSupported()) {
         const notif = new Notification({
           title: 'StockFlow - FTP Upload Complete',

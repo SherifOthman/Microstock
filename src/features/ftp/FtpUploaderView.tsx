@@ -36,6 +36,7 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  Search,
   Server,
   Settings,
   Square,
@@ -45,7 +46,7 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
 
-type QueueSubTab = 'all' | 'succeeded' | 'failed';
+type QueueSubTab = 'all' | 'succeeded' | 'failed' | 'skipped';
 
 function getRemoteFolderBadgeStyle(folder: DreamstimeRemoteFolder): string {
   switch (folder) {
@@ -290,6 +291,7 @@ export const FtpUploaderView: React.FC = () => {
 
   const succeededItems = queue.filter((i) => i.status === 'succeeded');
   const failedItems = queue.filter((i) => i.status === 'failed');
+  const skippedItems = queue.filter((i) => i.status === 'skipped');
   const pendingUploadItems = queue.filter(
     (i) => i.status === 'queued' || i.status === 'retry' || i.status === 'retrying'
   );
@@ -299,6 +301,8 @@ export const FtpUploaderView: React.FC = () => {
       ? succeededItems
       : activeSubTab === 'failed'
       ? failedItems
+      : activeSubTab === 'skipped'
+      ? skippedItems
       : queue;
 
   return (
@@ -567,11 +571,15 @@ export const FtpUploaderView: React.FC = () => {
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
                 <span className="font-semibold">
                   {isAr
-                    ? `اكتمل الرفع: نجح ${telemetry.succeededFiles} ملف${
-                        telemetry.failedFiles > 0 ? `، وفشل ${telemetry.failedFiles} ملف` : ''
+                    ? `اكتمل الرفع: ${telemetry.succeededFiles} نجاح${
+                        telemetry.failedFiles > 0 ? `، ${telemetry.failedFiles} فشل` : ''
+                      }${
+                        (telemetry.skippedFiles || 0) > 0 ? `، ${telemetry.skippedFiles} تخطي` : ''
                       }. الوقت الإجمالي: ${formatEtaSeconds(telemetry.totalDurationSeconds || 0)}`
                     : `Upload Complete: ${telemetry.succeededFiles} succeeded${
                         telemetry.failedFiles > 0 ? `, ${telemetry.failedFiles} failed` : ''
+                      }${
+                        (telemetry.skippedFiles || 0) > 0 ? `, ${telemetry.skippedFiles} skipped` : ''
                       }. Total Time: ${formatEtaSeconds(telemetry.totalDurationSeconds || 0)}`}
                 </span>
               </div>
@@ -637,6 +645,17 @@ export const FtpUploaderView: React.FC = () => {
               >
                 {isAr ? 'الفاشلة' : 'Failed'} ({failedItems.length})
               </button>
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('skipped')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer ${
+                  activeSubTab === 'skipped'
+                    ? 'bg-slate-500 text-white font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {isAr ? 'المتخطاة' : 'Skipped'} ({skippedItems.length})
+              </button>
             </div>
 
             <span className="text-[11px] font-mono text-muted-foreground hidden sm:inline" dir="ltr">
@@ -674,12 +693,50 @@ export const FtpUploaderView: React.FC = () => {
                       <td className="py-2 px-3">
                         <div className="flex items-center gap-2 min-w-0">
                           {getMediaIcon(item.mediaType)}
-                          <span
-                            className="font-mono text-xs text-foreground truncate max-w-[340px]"
-                            dir="ltr"
+                          <Tooltip
+                            side="right"
+                            className="p-1.5 bg-popover/95 backdrop-blur-sm border border-border shadow-xl rounded-lg pointer-events-auto"
+                            content={
+                              <div className="flex flex-col items-center gap-1.5 p-1 max-w-[200px]">
+                                {item.fileObject || item.localPath ? (
+                                  <img
+                                    src={
+                                      item.fileObject
+                                        ? URL.createObjectURL(item.fileObject)
+                                        : item.localPath
+                                        ? `stockflow://local?path=${encodeURIComponent(item.localPath)}`
+                                        : ''
+                                    }
+                                    alt={item.filename}
+                                    className="w-44 h-28 object-cover rounded-md border border-border bg-black/40 shadow-inner"
+                                    onError={(e) => {
+                                      (e.currentTarget as HTMLElement).style.display = 'none';
+                                    }}
+                                  />
+                                ) : (
+                                  <div className="w-44 h-28 rounded-md border border-border bg-secondary flex items-center justify-center text-muted-foreground text-xs font-mono">
+                                    No Preview
+                                  </div>
+                                )}
+                                <span
+                                  className="text-[10px] font-mono text-muted-foreground truncate max-w-[170px] text-center"
+                                  dir="ltr"
+                                >
+                                  {item.filename}
+                                </span>
+                              </div>
+                            }
                           >
-                            {item.filename}
-                          </span>
+                            <div className="flex items-center gap-1.5 cursor-pointer group min-w-0">
+                              <span
+                                className="font-mono text-xs text-foreground group-hover:text-primary transition truncate max-w-[320px]"
+                                dir="ltr"
+                              >
+                                {item.filename}
+                              </span>
+                              <Search className="w-3 h-3 text-muted-foreground ml-2 group-hover:text-primary transition shrink-0" />
+                            </div>
+                          </Tooltip>
                         </div>
                       </td>
                       <td className="py-2 px-2.5 text-muted-foreground font-medium">
@@ -736,6 +793,20 @@ export const FtpUploaderView: React.FC = () => {
                           <span className="text-muted-foreground">
                             {isAr ? 'في الانتظار' : 'Queued'}
                           </span>
+                        )}
+                        {item.status === 'skipped' && (
+                          <Tooltip
+                            content={
+                              isAr
+                                ? 'تم التخطي: الملف موجود مسبقاً أو السيرفر يرفض الاستقبال'
+                                : 'Skipped: File already exists or server rejected'
+                            }
+                          >
+                            <span className="inline-flex items-center gap-1 text-slate-400 bg-slate-500/10 border border-slate-500/25 px-2 py-0.5 rounded text-[11px] font-medium cursor-help">
+                              <span>🚫</span>
+                              <span>{isAr ? 'تخطي' : 'Skipped'}</span>
+                            </span>
+                          </Tooltip>
                         )}
                         {item.status === 'failed' && (
                           <Tooltip content={item.errorMessage || (isAr ? 'فشل الرفع' : 'Upload failed')}>

@@ -34,6 +34,7 @@ const INITIAL_TELEMETRY: FtpTelemetryFrame = {
   completedFiles: 0,
   succeededFiles: 0,
   failedFiles: 0,
+  skippedFiles: 0,
   currentFileIndex: 0,
   currentItemId: null,
   currentFilename: '',
@@ -414,6 +415,7 @@ export class DreamstimeFtpOrchestrator {
     const totalFiles = this.queue.length;
     let succeededFiles = 0;
     let failedFiles = 0;
+    let skippedFiles = 0;
     let batchBytesTransferred = 0;
     let batchTotalBytes = 0;
 
@@ -424,6 +426,8 @@ export class DreamstimeFtpOrchestrator {
         batchBytesTransferred += item.fileSize;
       } else if (item.status === 'failed') {
         failedFiles++;
+      } else if (item.status === 'skipped') {
+        skippedFiles++;
       } else if (
         item.status === 'uploading' ||
         item.status === 'retrying' ||
@@ -433,9 +437,15 @@ export class DreamstimeFtpOrchestrator {
       }
     }
 
-    const completedFiles = succeededFiles + failedFiles;
+    const completedFiles = succeededFiles + failedFiles + skippedFiles;
     const batchPercent =
-      batchTotalBytes > 0 ? Math.min(100, Math.round((batchBytesTransferred / batchTotalBytes) * 100)) : 0;
+      totalFiles > 0
+        ? completedFiles === totalFiles
+          ? 100
+          : batchTotalBytes > 0
+          ? Math.min(99, Math.round((batchBytesTransferred / batchTotalBytes) * 100))
+          : 0
+        : 0;
 
     const currentSpeed = speedBps !== undefined ? speedBps : this.telemetry.speedBytesPerSec;
     const remainingBytes = Math.max(0, batchTotalBytes - batchBytesTransferred);
@@ -454,6 +464,7 @@ export class DreamstimeFtpOrchestrator {
       completedFiles,
       succeededFiles,
       failedFiles,
+      skippedFiles,
       currentFileIndex: Math.min(totalFiles, Math.max(0, currentIdx)),
       currentItemId: activeItem ? activeItem.id : null,
       currentFilename: activeItem ? activeItem.filename : '',
@@ -675,7 +686,8 @@ export class DreamstimeFtpOrchestrator {
               shouldInjectFault &&
               ((activeFaultMode === 'transient_recover_on_retry_2' && sweep < 2) ||
                 activeFaultMode === 'persistent_fail_all_3' ||
-                activeFaultMode === 'persistent_fail_all_5');
+                activeFaultMode === 'persistent_fail_all_5' ||
+                activeFaultMode === 'permanent_550_skip');
 
             const totalSteps = 6;
             const failAtStep = 3;
@@ -692,8 +704,13 @@ export class DreamstimeFtpOrchestrator {
               this.notify();
 
               if (shouldFailThisAttempt && step === failAtStep) {
-                lastErrorCode = 'ETIMEDOUT_421';
-                lastErrorMessage = `421 Transfer timeout on ${item.remotePath} (socket drop)`;
+                if (activeFaultMode === 'permanent_550_skip') {
+                  lastErrorCode = '550';
+                  lastErrorMessage = '550 Permission denied: File already exists on server.';
+                } else {
+                  lastErrorCode = 'ETIMEDOUT_421';
+                  lastErrorMessage = `421 Transfer timeout on ${item.remotePath} (socket drop)`;
+                }
                 stepFailed = true;
                 break;
               }
@@ -738,18 +755,22 @@ export class DreamstimeFtpOrchestrator {
               completedAt,
             });
           } else {
-            // Failed this attempt
-            item.retryCount = sweep;
-            item.errorCode = lastErrorCode || 'FTP_ERR';
-            item.errorMessage = lastErrorMessage || 'FTP transfer failed.';
+            // Check for 5xx permanent errors vs 4xx / network temporary drops
+            const errorCombined = `${lastErrorCode} ${lastErrorMessage}`;
+            const is5xxPermanent =
+              /(?:550|552|553|permission denied|overwrite)/i.test(errorCombined) ||
+              /^5\d\d/.test(String(lastErrorCode || ''));
 
-            if (item.retryCount >= item.maxRetries) {
-              // 5th failure: permanently mark as 'failed'
-              item.status = 'failed';
+            if (is5xxPermanent) {
+              // PERMANENT 5xx ERROR: Immediately set to 'skipped', DO NOT put in retry loop!
+              item.status = 'skipped';
               item.bytesTransferred = 0;
               item.progressPercent = 0;
               item.durationMs = durationMs;
               item.completedAt = completedAt;
+              item.errorCode = lastErrorCode || '550';
+              item.errorMessage =
+                lastErrorMessage || 'Skipped: File already exists or server rejected (5xx)';
 
               await db.ftp.logTransfer({
                 sessionId: session.id,
@@ -760,7 +781,7 @@ export class DreamstimeFtpOrchestrator {
                 mediaType: item.mediaType,
                 remoteDirectory: item.remoteFolder,
                 remotePath: item.remotePath,
-                status: 'failed',
+                status: 'skipped',
                 retryCount: item.retryCount,
                 errorCode: item.errorCode,
                 errorMessage: item.errorMessage,
@@ -768,8 +789,39 @@ export class DreamstimeFtpOrchestrator {
                 completedAt,
               });
             } else {
-              // In-place mark as 'retry'. DO NOT wait. Move immediately to next file in array!
-              item.status = 'retry';
+              // Temporary network drop / 4xx -> standard Round-Robin retry logic
+              item.retryCount = sweep;
+              item.errorCode = lastErrorCode || 'FTP_ERR';
+              item.errorMessage = lastErrorMessage || 'FTP transfer failed.';
+
+              if (item.retryCount >= item.maxRetries) {
+                // 5th failure: permanently mark as 'failed'
+                item.status = 'failed';
+                item.bytesTransferred = 0;
+                item.progressPercent = 0;
+                item.durationMs = durationMs;
+                item.completedAt = completedAt;
+
+                await db.ftp.logTransfer({
+                  sessionId: session.id,
+                  agencyId: 'dreamstime',
+                  filename: item.filename,
+                  localPath: item.localPath,
+                  fileSize: item.fileSize,
+                  mediaType: item.mediaType,
+                  remoteDirectory: item.remoteFolder,
+                  remotePath: item.remotePath,
+                  status: 'failed',
+                  retryCount: item.retryCount,
+                  errorCode: item.errorCode,
+                  errorMessage: item.errorMessage,
+                  durationMs,
+                  completedAt,
+                });
+              } else {
+                // In-place mark as 'retry'. DO NOT wait. Move immediately to next file in array!
+                item.status = 'retry';
+              }
             }
           }
 
@@ -793,6 +845,7 @@ export class DreamstimeFtpOrchestrator {
 
     const succeededCount = this.queue.filter((i) => i.status === 'succeeded').length;
     const failedCount = this.queue.filter((i) => i.status === 'failed').length;
+    const skippedCount = this.queue.filter((i) => i.status === 'skipped').length;
 
     const finalStatus = this.aborted
       ? 'aborted'
@@ -808,15 +861,18 @@ export class DreamstimeFtpOrchestrator {
       completedAt: Date.now(),
     });
 
+    const summaryParts: string[] = [`${succeededCount} succeeded`];
+    if (failedCount > 0) summaryParts.push(`${failedCount} failed`);
+    if (skippedCount > 0) summaryParts.push(`${skippedCount} skipped`);
+    const statusMsg = `Upload Complete: ${summaryParts.join(', ')}. Total Time: ${durationFormatted}`;
+
     this.telemetry = {
       ...this.telemetry,
       isRunning: false,
       speedBytesPerSec: 0,
       etaSeconds: 0,
       totalDurationSeconds,
-      statusMessage: this.aborted
-        ? 'Batch upload aborted by user.'
-        : `Upload Complete: ${succeededCount} succeeded${failedCount > 0 ? `, ${failedCount} failed` : ''}. Total Time: ${durationFormatted}`,
+      statusMessage: this.aborted ? 'Batch upload aborted by user.' : statusMsg,
     };
     this.notify();
 
@@ -825,6 +881,7 @@ export class DreamstimeFtpOrchestrator {
       const stats = {
         succeededCount,
         failedCount,
+        skippedCount,
         duration: durationFormatted,
       };
       if (typeof window !== 'undefined' && window.electronAPI?.notifyUploadComplete) {
@@ -832,7 +889,7 @@ export class DreamstimeFtpOrchestrator {
       } else if (typeof window !== 'undefined' && window.electronAPI?.showNotification) {
         window.electronAPI.showNotification({
           title: 'StockFlow - FTP Upload Complete',
-          body: `Upload Complete: ${succeededCount} succeeded${failedCount > 0 ? `, ${failedCount} failed` : ''}. Total Time: ${durationFormatted}`,
+          body: statusMsg,
         });
       }
     }

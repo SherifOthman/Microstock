@@ -203,4 +203,34 @@ describe('Dreamstime FTP Uploader (Plain FTP Port 21, Intelligent Sorting & 5x R
     orchestrator.clearCompleted();
     expect(orchestrator.getQueue().length).toBe(0);
   });
+
+  it('immediately skips files with permanent 5xx errors (550, 552, 553, Permission denied) without retrying and ensures progress reaches 100%', async () => {
+    const orchestrator = new DreamstimeFtpOrchestrator();
+    orchestrator.addFiles([
+      { name: 'photo_good.jpg', size: 1_000_000 },
+      { name: 'photo_exists_550.jpg', size: 2_000_000 },
+    ]);
+
+    const result = await orchestrator.startBatchUpload({
+      mode: 'dry_run',
+      faultMode: 'permanent_550_skip',
+      faultTargetFilenames: ['photo_exists_550.jpg'],
+      baseBackoffMs: 1,
+      simulatedChunkIntervalMs: 1,
+    });
+
+    expect(result.succeededCount).toBe(1);
+    expect(result.failedCount).toBe(0);
+
+    const queue = orchestrator.getQueue();
+    const skippedItem = queue.find((i) => i.filename === 'photo_exists_550.jpg');
+    expect(skippedItem?.status).toBe('skipped');
+    expect(skippedItem?.errorCode).toBe('550');
+
+    const telemetry = orchestrator.getTelemetry();
+    expect(telemetry.completedFiles).toBe(2);
+    expect(telemetry.totalFiles).toBe(2);
+    expect(telemetry.batchPercent).toBe(100);
+    expect(telemetry.skippedFiles).toBe(1);
+  });
 });
