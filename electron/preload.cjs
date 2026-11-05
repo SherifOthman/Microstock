@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setPowerSaveBlocker: (enable) => ipcRenderer.invoke('power:setBlocker', enable),
   isPowerSaveBlocking: () => ipcRenderer.invoke('power:isBlocking'),
   showNotification: (options) => ipcRenderer.invoke('app:showNotification', options),
+  notifyUploadComplete: (stats) => ipcRenderer.send('notify-upload-complete', stats),
   rasterizeEpsNative: (fileBufferOrOptions, fileName) => {
     if (
       fileBufferOrOptions &&

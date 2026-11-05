@@ -288,13 +288,11 @@ export const FtpUploaderView: React.FC = () => {
     }
   };
 
-  const rootCount = queue.filter((i) => i.remoteFolder === '/').length;
-  const vectorCount = queue.filter((i) => i.remoteFolder === '/additional').length;
-  const videoCount = queue.filter((i) => i.remoteFolder === '/video').length;
-
   const succeededItems = queue.filter((i) => i.status === 'succeeded');
   const failedItems = queue.filter((i) => i.status === 'failed');
-  const queuedItems = queue.filter((i) => i.status === 'queued');
+  const pendingUploadItems = queue.filter(
+    (i) => i.status === 'queued' || i.status === 'retry' || i.status === 'retrying'
+  );
 
   const visibleQueue =
     activeSubTab === 'succeeded'
@@ -303,61 +301,35 @@ export const FtpUploaderView: React.FC = () => {
       ? failedItems
       : queue;
 
-  const isKeepAwake = dreamstimeFtpService.isKeepAwakeActive();
-
   return (
     <div
       data-testid="ftp-uploader-view"
       className="flex-1 min-h-0 h-full flex flex-col gap-3 overflow-hidden select-none"
     >
-      {/* Top Header Bar: Title + Auto-Routing Row + Online Status + Keep Awake + Site Settings */}
+      {/* Top Header Bar: Title + Online Status (+ subtle ☕ when active) + Site Settings */}
       <div className="shrink-0 h-12 px-4 rounded-xl border border-border bg-card flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           {getPlatformLogo('dreamstime', 18)}
           <h1 className="text-sm font-bold tracking-tight text-foreground truncate whitespace-nowrap">
             {isAr ? 'رافع خادم Dreamstime FTP' : 'Dreamstime FTP Uploader'}
           </h1>
-
-          {/* Auto-Routing Badges Row (Guaranteed Single Line) */}
-          <div
-            dir="ltr"
-            className="hidden md:flex items-center gap-2 px-3 border-x border-border text-xs whitespace-nowrap"
-          >
-            <span className="text-muted-foreground font-medium">Auto-Routing Rules:</span>
-            <span className="px-2 py-0.5 rounded bg-sky-500/10 border border-sky-500/25 font-mono text-sky-400">
-              Photos → / ({rootCount})
-            </span>
-            <span className="px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/25 font-mono text-amber-400">
-              Vectors → /additional ({vectorCount})
-            </span>
-            <span className="px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/25 font-mono text-purple-400">
-              Videos → /video ({videoCount})
-            </span>
-          </div>
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          {/* OS Power Management: Passive Keep Awake Indicator with Shadcn Tooltip */}
-          <Tooltip
-            content={
-              isAr
-                ? 'حماية الجهاز من السكون نشطة تلقائياً أثناء رفع الملفات'
-                : 'System sleep prevention is active while tasks run'
-            }
-          >
-            <div
-              className={`h-8 px-2.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition select-none ${
-                isKeepAwake
-                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                  : 'bg-secondary/40 text-muted-foreground border-border'
-              }`}
+          {/* Subtle Keep Awake ☕ Icon (Only appears when actively uploading) */}
+          {telemetry.isRunning && (
+            <Tooltip
+              content={
+                isAr
+                  ? 'حماية الجهاز من وضع السكون نشطة أثناء رفع الملفات'
+                  : 'OS sleep prevention is active while uploading'
+              }
             >
-              <Coffee className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">
-                {isAr ? 'منع السكون' : 'Keep Awake'}
-              </span>
-            </div>
-          </Tooltip>
+              <div className="flex items-center justify-center w-7 h-7 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                <Coffee className="w-3.5 h-3.5" />
+              </div>
+            </Tooltip>
+          )}
 
           {/* Compact Connection Status Pill with Shadcn Tooltip */}
           <Tooltip
@@ -403,13 +375,14 @@ export const FtpUploaderView: React.FC = () => {
 
       {/* Full-Width Main Workspace */}
       <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden">
-        {/* Progress & Controls Bar */}
+        {/* Progress & Controls Bar: Fixed Layout to Eliminate UI Shifts */}
         <div className="shrink-0 p-3.5 rounded-xl border border-border bg-card space-y-2.5">
           <div
-            className="flex flex-wrap items-center justify-between gap-3"
+            className="flex items-center justify-between gap-4 h-9"
             dir={isAr ? 'rtl' : 'ltr'}
           >
-            <div className="flex flex-wrap items-center gap-4 text-xs font-mono tabular-nums">
+            {/* Left: Fixed Metrics Strip - shrink-0 so it NEVER shifts */}
+            <div className="flex items-center gap-4 text-xs font-mono tabular-nums shrink-0 select-none">
               <div>
                 <span className="text-muted-foreground">
                   {isAr ? 'إجمالي الملفات: ' : 'Total Files: '}
@@ -451,7 +424,8 @@ export const FtpUploaderView: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex items-center gap-1.5 ms-auto">
+            {/* Right: Actions Container with fixed min-width to prevent any layout shifts */}
+            <div className="flex items-center justify-end gap-1.5 shrink-0 min-w-[340px]">
               {/* Hidden Pickers */}
               <input
                 ref={fileInputRef}
@@ -483,7 +457,7 @@ export const FtpUploaderView: React.FC = () => {
                 data-testid="ftp-add-files-btn"
                 disabled={telemetry.isRunning}
                 onClick={() => fileInputRef.current?.click()}
-                className="h-8 text-xs gap-1.5 cursor-pointer"
+                className="h-8 text-xs gap-1.5 cursor-pointer shrink-0"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>{isAr ? 'إضافة ملفات' : 'Add Files'}</span>
@@ -496,7 +470,7 @@ export const FtpUploaderView: React.FC = () => {
                 data-testid="ftp-add-folder-btn"
                 disabled={telemetry.isRunning}
                 onClick={handleAddFolderClick}
-                className="h-8 text-xs gap-1.5 cursor-pointer"
+                className="h-8 text-xs gap-1.5 cursor-pointer shrink-0"
               >
                 <FolderPlus className="w-3.5 h-3.5 text-primary" />
                 <span>{isAr ? 'إضافة مجلد' : 'Add Folder'}</span>
@@ -509,7 +483,7 @@ export const FtpUploaderView: React.FC = () => {
                   variant="outline"
                   size="sm"
                   onClick={() => dreamstimeFtpService.clearCompleted()}
-                  className="h-8 text-xs gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground"
+                  className="h-8 text-xs gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground shrink-0"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                   <span>
@@ -525,7 +499,7 @@ export const FtpUploaderView: React.FC = () => {
                   variant="default"
                   size="sm"
                   onClick={() => dreamstimeFtpService.retryAllFailed()}
-                  className="h-8 text-xs gap-1.5 bg-amber-500 hover:bg-amber-600 text-black font-semibold cursor-pointer"
+                  className="h-8 text-xs gap-1.5 bg-amber-500 hover:bg-amber-600 text-black font-semibold cursor-pointer shrink-0"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                   <span>
@@ -540,7 +514,7 @@ export const FtpUploaderView: React.FC = () => {
                   variant="destructive"
                   size="sm"
                   onClick={() => dreamstimeFtpService.abortBatch()}
-                  className="h-8 text-xs gap-1.5 cursor-pointer"
+                  className="h-8 text-xs gap-1.5 cursor-pointer shrink-0"
                 >
                   <Square className="w-3.5 h-3.5" />
                   <span>{isAr ? 'إيقاف' : 'Stop'}</span>
@@ -550,13 +524,13 @@ export const FtpUploaderView: React.FC = () => {
                   type="button"
                   variant="default"
                   size="sm"
-                  disabled={queuedItems.length === 0}
+                  disabled={pendingUploadItems.length === 0}
                   onClick={() => dreamstimeFtpService.startBatchUpload()}
-                  className="h-8 text-xs gap-1.5 cursor-pointer font-semibold"
+                  className="h-8 text-xs gap-1.5 cursor-pointer font-semibold shrink-0"
                 >
                   <Play className="w-3.5 h-3.5" />
                   <span>
-                    {isAr ? 'بدء الرفع' : 'Start Upload'} ({queuedItems.length})
+                    {isAr ? 'بدء الرفع' : 'Start Upload'} ({pendingUploadItems.length})
                   </span>
                 </Button>
               )}
@@ -569,7 +543,7 @@ export const FtpUploaderView: React.FC = () => {
                     variant="ghost"
                     size="sm"
                     onClick={() => dreamstimeFtpService.clearQueue()}
-                    className="h-8 px-2 text-muted-foreground hover:text-destructive cursor-pointer gap-1"
+                    className="h-8 px-2 text-muted-foreground hover:text-destructive cursor-pointer gap-1 shrink-0"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                     <span className="hidden sm:inline text-xs">
@@ -581,10 +555,10 @@ export const FtpUploaderView: React.FC = () => {
             </div>
           </div>
 
-          <Progress value={telemetry.batchPercent} className="h-2" />
+          <Progress value={telemetry.batchPercent} className="h-2 w-full" />
         </div>
 
-        {/* Completion Banner */}
+        {/* Completion Banner with Session Summary Duration */}
         {telemetry.completedFiles > 0 &&
           telemetry.completedFiles === telemetry.totalFiles &&
           !telemetry.isRunning && (
@@ -595,10 +569,10 @@ export const FtpUploaderView: React.FC = () => {
                   {isAr
                     ? `اكتمل الرفع: نجح ${telemetry.succeededFiles} ملف${
                         telemetry.failedFiles > 0 ? `، وفشل ${telemetry.failedFiles} ملف` : ''
-                      }.`
-                    : `Upload Complete: ${telemetry.succeededFiles} uploaded${
+                      }. الوقت الإجمالي: ${formatEtaSeconds(telemetry.totalDurationSeconds || 0)}`
+                    : `Upload Complete: ${telemetry.succeededFiles} succeeded${
                         telemetry.failedFiles > 0 ? `, ${telemetry.failedFiles} failed` : ''
-                      }.`}
+                      }. Total Time: ${formatEtaSeconds(telemetry.totalDurationSeconds || 0)}`}
                 </span>
               </div>
               <Button
@@ -612,7 +586,7 @@ export const FtpUploaderView: React.FC = () => {
             </div>
           )}
 
-        {/* Queue Table */}
+        {/* Queue Table (Strictly Static Visual Array) */}
         <div
           onDragOver={(e) => {
             e.preventDefault();
@@ -750,11 +724,11 @@ export const FtpUploaderView: React.FC = () => {
                             {isAr ? 'جارٍ الرفع...' : 'Uploading'}
                           </span>
                         )}
-                        {item.status === 'retrying' && (
+                        {(item.status === 'retrying' || item.status === 'retry') && (
                           <span className="inline-flex items-center gap-1 text-amber-400">
                             <AlertTriangle className="w-3.5 h-3.5" />
                             {isAr
-                              ? `محاولة ${item.retryCount}/${item.maxRetries}`
+                              ? `إعادة محاولة (${item.retryCount}/${item.maxRetries})`
                               : `Retry ${item.retryCount}/${item.maxRetries}`}
                           </span>
                         )}

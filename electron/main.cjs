@@ -7,6 +7,15 @@ const { spawn, spawnSync } = require('child_process');
 const { sqliteDb } = require('./sqliteDb.cjs');
 const { ElectronFtpManager } = require('./ftpManager.cjs');
 
+// Register Windows App User Model ID for reliable native OS toast notifications
+if (process.platform === 'win32') {
+  try {
+    app.setAppUserModelId(process.execPath || 'com.stockflow.app');
+  } catch (err) {
+    console.error('[Main] setAppUserModelId error:', err);
+  }
+}
+
 // Register custom stockflow:// protocol as privileged before app is ready
 // Enables native <img src="stockflow://..."> and <video src="stockflow://..."> streaming
 if (protocol && typeof protocol.registerSchemesAsPrivileged === 'function') {
@@ -476,6 +485,24 @@ function setupIpcHandlers() {
   });
 
   // Windows Native OS Notification
+  ipcMain.on('notify-upload-complete', (_event, stats) => {
+    try {
+      const succeeded = stats?.succeededCount ?? stats?.succeeded ?? 0;
+      const failed = stats?.failedCount ?? stats?.failed ?? 0;
+      const duration = stats?.duration || '';
+      const body = `Upload Complete: ${succeeded} succeeded${failed > 0 ? `, ${failed} failed` : ''}.${duration ? ` Total Time: ${duration}` : ''}`;
+      if (Notification && Notification.isSupported()) {
+        const notif = new Notification({
+          title: 'StockFlow - FTP Upload Complete',
+          body,
+        });
+        notif.show();
+      }
+    } catch (err) {
+      console.error('[Notification] Failed to show notify-upload-complete:', err);
+    }
+  });
+
   ipcMain.handle('app:showNotification', (_event, payload) => {
     try {
       const { title = 'StockFlow', body = '' } = payload || {};

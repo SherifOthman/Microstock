@@ -2,6 +2,7 @@ import { db } from '../../db';
 import { encryptSecret } from '../desktop/secureStorage';
 import {
   DreamstimeRemoteFolder,
+  formatEtaSeconds,
   FTP_MAX_RETRIES_PER_FILE,
   FTP_RETRY_BACKOFF_SCHEDULE_MS,
   FtpCredentialProfile,
@@ -67,6 +68,10 @@ export class DreamstimeFtpOrchestrator {
   private lastTickBytes = 0;
   private currentSpeedBps = 0;
   private keepAwakeActive = false;
+  private speedTimer: ReturnType<typeof setInterval> | null = null;
+  private lastSpeedCheckTime = 0;
+  private lastBatchBytesTransferred = 0;
+  private batchStartTime = 0;
 
   constructor() {
     if (typeof window !== 'undefined' && window.electronAPI?.ftp?.onTelemetry) {
@@ -375,6 +380,22 @@ export class DreamstimeFtpOrchestrator {
     this.notify();
   }
 
+  private calculateBatchTransferredBytes(): number {
+    let total = 0;
+    for (const item of this.queue) {
+      if (item.status === 'succeeded') {
+        total += item.fileSize;
+      } else if (
+        item.status === 'uploading' ||
+        item.status === 'retrying' ||
+        item.status === 'retry'
+      ) {
+        total += item.bytesTransferred;
+      }
+    }
+    return total;
+  }
+
   private handleLiveProgressTick(itemId: string, bytesTransferred: number): void {
     const item = this.queue.find((q) => q.id === itemId);
     if (!item) return;
@@ -403,7 +424,11 @@ export class DreamstimeFtpOrchestrator {
         batchBytesTransferred += item.fileSize;
       } else if (item.status === 'failed') {
         failedFiles++;
-      } else if (item.status === 'uploading' || item.status === 'retrying') {
+      } else if (
+        item.status === 'uploading' ||
+        item.status === 'retrying' ||
+        item.status === 'retry'
+      ) {
         batchBytesTransferred += item.bytesTransferred;
       }
     }
@@ -483,10 +508,10 @@ export class DreamstimeFtpOrchestrator {
       };
     }
 
-    // Ensure queue is sorted Photos -> Vectors -> Videos before starting
-    this.queue = sortFtpQueueByMediaPriority(this.queue);
-
-    const pendingItems = this.queue.filter((i) => i.status === 'queued');
+    // STRICTLY STATIC visual array: Maintain exact indices, zero reordering during upload!
+    const pendingItems = this.queue.filter(
+      (i) => i.status === 'queued' || i.status === 'retry' || i.status === 'retrying'
+    );
     if (pendingItems.length === 0) {
       return { sessionId: '', succeededCount: 0, failedCount: 0 };
     }
@@ -498,6 +523,8 @@ export class DreamstimeFtpOrchestrator {
 
     this.isRunning = true;
     this.aborted = false;
+    this.batchStartTime = Date.now();
+    await this.setKeepAwake(true);
 
     const totalBatchBytes = this.queue.reduce((acc, i) => acc + i.fileSize, 0);
     const session = await db.ftp.createSession({
@@ -516,14 +543,31 @@ export class DreamstimeFtpOrchestrator {
     };
     this.notify();
 
-    let currentSpeedBps = 0;
-    let speedSamplesTotal = 0;
-    let speedSamplesCount = 0;
+    this.currentSpeedBps = 0;
+    this.lastBatchBytesTransferred = this.calculateBatchTransferredBytes();
+    this.lastSpeedCheckTime = Date.now();
+
+    // 1-second interval for accurate speed & ETA calculation from network bytes delta
+    if (this.speedTimer) {
+      clearInterval(this.speedTimer);
+    }
+    this.speedTimer = setInterval(() => {
+      if (!this.isRunning) return;
+      const now = Date.now();
+      const elapsedSec = Math.max(0.5, (now - this.lastSpeedCheckTime) / 1000);
+      const currentBatchBytes = this.calculateBatchTransferredBytes();
+      const deltaBytes = Math.max(0, currentBatchBytes - this.lastBatchBytesTransferred);
+      this.currentSpeedBps = Math.round(deltaBytes / elapsedSec);
+      this.lastBatchBytesTransferred = currentBatchBytes;
+      this.lastSpeedCheckTime = now;
+      this.recalculateBatchTelemetry(undefined, this.currentSpeedBps);
+      this.notify();
+    }, 1000);
 
     const faultTargetIds = new Set<string>();
     if (activeFaultMode !== 'none') {
       if (options.faultTargetFilenames && options.faultTargetFilenames.length > 0) {
-        for (const item of pendingItems) {
+        for (const item of this.queue) {
           if (options.faultTargetFilenames.includes(item.filename)) {
             faultTargetIds.add(item.id);
           }
@@ -540,178 +584,215 @@ export class DreamstimeFtpOrchestrator {
       typeof window !== 'undefined' &&
       Boolean(window.electronAPI?.ftp?.uploadFile);
 
-    for (const item of pendingItems) {
-      if (this.aborted) break;
-
-      const fileStartMs = Date.now();
-      let succeeded = false;
-      let lastErrorCode = '';
-      let lastErrorMessage = '';
-
-      // Initial attempt (attempt = 0) + up to 5 auto-retries (attempts 1, 2, 3, 4, 5)
-      for (let retryAttempt = 0; retryAttempt <= item.maxRetries; retryAttempt++) {
+    try {
+      // ROUND-ROBIN SWEEP RETRY LOOP (Max 5 sweeps)
+      for (let sweep = 1; sweep <= FTP_MAX_RETRIES_PER_FILE; sweep++) {
         if (this.aborted) break;
 
-        item.retryCount = retryAttempt;
-        item.status = retryAttempt === 0 ? 'uploading' : 'retrying';
-        item.bytesTransferred = 0;
-        item.progressPercent = 0;
-        item.errorCode = undefined;
-        item.errorMessage = undefined;
+        const hasEligibleInSweep = this.queue.some((item) => {
+          if (sweep === 1) {
+            return item.status === 'queued' || item.status === 'retry' || item.status === 'retrying';
+          }
+          return item.status === 'retry' || item.status === 'retrying';
+        });
 
-        if (retryAttempt > 0) {
-          const delayMs = this.getRetryDelayMs(retryAttempt, options.baseBackoffMs);
+        if (!hasEligibleInSweep) break;
+
+        // Iterate through array in STRICTLY STATIC order (indices 0..queue.length-1)
+        for (let i = 0; i < this.queue.length; i++) {
+          if (this.aborted) break;
+          const item = this.queue[i];
+
+          const isEligible =
+            sweep === 1
+              ? item.status === 'queued' || item.status === 'retry' || item.status === 'retrying'
+              : item.status === 'retry' || item.status === 'retrying';
+
+          if (!isEligible) continue;
+
+          // Set retryCount to current sweep attempt if it's a retry
+          if (sweep > 1) {
+            item.retryCount = sweep;
+          }
+
+          item.status = 'uploading';
           this.recalculateBatchTelemetry(
             item,
-            currentSpeedBps,
-            `Network drop on ${item.filename} — Auto-Retry ${retryAttempt}/${item.maxRetries} in ${Math.round(delayMs / 1000)}s...`
+            this.currentSpeedBps,
+            `Uploading ${item.filename} → ${item.remoteFolder}${sweep > 1 ? ` (Sweep ${sweep}/${FTP_MAX_RETRIES_PER_FILE})` : ''}`
           );
           this.notify();
-          await new Promise((r) => setTimeout(r, delayMs));
-          if (this.aborted) break;
-          item.status = 'uploading';
-        }
 
-        this.recalculateBatchTelemetry(
-          item,
-          currentSpeedBps,
-          `Uploading ${item.filename} → ${item.remoteFolder}${retryAttempt > 0 ? ` (Retry ${retryAttempt}/${item.maxRetries})` : ''}`
-        );
-        this.notify();
+          const fileStartMs = Date.now();
+          let succeeded = false;
+          let lastErrorCode = '';
+          let lastErrorMessage = '';
 
-        if (useNativeElectronFtp && window.electronAPI?.ftp?.uploadFile) {
-          const attemptStart = Date.now();
-          let fileBuffer: ArrayBuffer | undefined;
-          if (item.fileObject) {
-            try {
-              fileBuffer = await item.fileObject.arrayBuffer();
-            } catch {
-              // ignore buffer read error if localPath is valid
+          if (useNativeElectronFtp && window.electronAPI?.ftp?.uploadFile) {
+            let fileBuffer: ArrayBuffer | undefined;
+            if (item.fileObject) {
+              try {
+                fileBuffer = await item.fileObject.arrayBuffer();
+              } catch {
+                // ignore buffer read error
+              }
             }
-          }
 
-          const res = await window.electronAPI.ftp.uploadFile({
-            agencyId: 'dreamstime',
-            localPath: item.localPath,
-            fileBuffer,
-            remoteFolder: item.remoteFolder,
-            filename: item.filename,
-            itemId: item.id,
-          });
+            const nativeUploadPromise = window.electronAPI.ftp.uploadFile({
+              agencyId: 'dreamstime',
+              localPath: item.localPath,
+              fileBuffer,
+              remoteFolder: item.remoteFolder,
+              filename: item.filename,
+              itemId: item.id,
+            });
 
-          if (res.success) {
-            const elapsedSec = Math.max(0.05, (Date.now() - attemptStart) / 1000);
-            const measuredSpeed = Math.round(item.fileSize / elapsedSec);
-            currentSpeedBps = Math.round(0.4 * measuredSpeed + 0.6 * currentSpeedBps);
-            speedSamplesTotal += currentSpeedBps;
-            speedSamplesCount++;
-            item.bytesTransferred = item.fileSize;
-            item.progressPercent = 100;
-            succeeded = true;
-            break;
+            const timeoutPromise = new Promise<{ success: boolean; errorCode?: string; errorMessage?: string }>(
+              (resolve) =>
+                setTimeout(
+                  () =>
+                    resolve({
+                      success: false,
+                      errorCode: 'ETIMEDOUT',
+                      errorMessage: 'FTP upload socket timed out (35s limit).',
+                    }),
+                  35000
+                )
+            );
+
+            const res = await Promise.race([nativeUploadPromise, timeoutPromise]);
+
+            if (res.success) {
+              succeeded = true;
+            } else {
+              lastErrorCode = res.errorCode || 'ECONNRESET';
+              lastErrorMessage = res.errorMessage || 'FTP connection error during transfer.';
+            }
           } else {
-            lastErrorCode = res.errorCode || 'ECONNRESET';
-            lastErrorMessage = res.errorMessage || 'Connection reset during FTP stream.';
-          }
-        } else {
-          const shouldInjectFault = faultTargetIds.has(item.id);
-          const shouldFailThisAttempt =
-            shouldInjectFault &&
-            ((activeFaultMode === 'transient_recover_on_retry_2' && retryAttempt < 2) ||
-              activeFaultMode === 'persistent_fail_all_3' ||
-              activeFaultMode === 'persistent_fail_all_5');
+            // Simulated upload (dry-run or testing mode)
+            const shouldInjectFault = faultTargetIds.has(item.id);
+            const shouldFailThisAttempt =
+              shouldInjectFault &&
+              ((activeFaultMode === 'transient_recover_on_retry_2' && sweep < 2) ||
+                activeFaultMode === 'persistent_fail_all_3' ||
+                activeFaultMode === 'persistent_fail_all_5');
 
-          const totalSteps = 8;
-          const failAtStep = 4;
-          let stepFailed = false;
+            const totalSteps = 6;
+            const failAtStep = 3;
+            let stepFailed = false;
 
-          for (let step = 1; step <= totalSteps; step++) {
-            if (this.aborted) break;
-            await new Promise((r) => setTimeout(r, chunkIntervalMs));
+            for (let step = 1; step <= totalSteps; step++) {
+              if (this.aborted) break;
+              await new Promise((r) => setTimeout(r, chunkIntervalMs));
 
-            const ratio = step / totalSteps;
-            item.bytesTransferred = Math.round(item.fileSize * ratio);
-            item.progressPercent = Math.round(ratio * 100);
+              const ratio = step / totalSteps;
+              item.bytesTransferred = Math.round(item.fileSize * ratio);
+              item.progressPercent = Math.round(ratio * 100);
+              this.recalculateBatchTelemetry(item, this.currentSpeedBps);
+              this.notify();
 
-            const instantSpeed = 1_200_000 + ((step * 150_000) % 900_000);
-            currentSpeedBps = Math.round(0.3 * instantSpeed + 0.7 * currentSpeedBps);
-            speedSamplesTotal += currentSpeedBps;
-            speedSamplesCount++;
+              if (shouldFailThisAttempt && step === failAtStep) {
+                lastErrorCode = 'ETIMEDOUT_421';
+                lastErrorMessage = `421 Transfer timeout on ${item.remotePath} (socket drop)`;
+                stepFailed = true;
+                break;
+              }
+            }
 
-            this.recalculateBatchTelemetry(item, currentSpeedBps);
-            this.notify();
-
-            if (shouldFailThisAttempt && step === failAtStep) {
-              lastErrorCode = 'ETIMEDOUT_421';
-              lastErrorMessage = `421 Transfer timeout on ${item.remotePath} at ${item.progressPercent}% (socket drop)`;
-              stepFailed = true;
-              break;
+            if (!stepFailed && !this.aborted) {
+              succeeded = true;
             }
           }
 
-          if (!stepFailed && !this.aborted) {
-            item.bytesTransferred = item.fileSize;
-            item.progressPercent = 100;
-            succeeded = true;
+          if (this.aborted) {
+            item.status = 'queued';
+            item.bytesTransferred = 0;
+            item.progressPercent = 0;
             break;
           }
+
+          const durationMs = Math.max(1, Date.now() - fileStartMs);
+          const completedAt = Date.now();
+
+          if (succeeded) {
+            item.status = 'succeeded';
+            item.bytesTransferred = item.fileSize;
+            item.progressPercent = 100;
+            item.durationMs = durationMs;
+            item.completedAt = completedAt;
+            item.errorCode = undefined;
+            item.errorMessage = undefined;
+
+            await db.ftp.logTransfer({
+              sessionId: session.id,
+              agencyId: 'dreamstime',
+              filename: item.filename,
+              localPath: item.localPath,
+              fileSize: item.fileSize,
+              mediaType: item.mediaType,
+              remoteDirectory: item.remoteFolder,
+              remotePath: item.remotePath,
+              status: 'succeeded',
+              retryCount: item.retryCount,
+              durationMs,
+              completedAt,
+            });
+          } else {
+            // Failed this attempt
+            item.retryCount = sweep;
+            item.errorCode = lastErrorCode || 'FTP_ERR';
+            item.errorMessage = lastErrorMessage || 'FTP transfer failed.';
+
+            if (item.retryCount >= item.maxRetries) {
+              // 5th failure: permanently mark as 'failed'
+              item.status = 'failed';
+              item.bytesTransferred = 0;
+              item.progressPercent = 0;
+              item.durationMs = durationMs;
+              item.completedAt = completedAt;
+
+              await db.ftp.logTransfer({
+                sessionId: session.id,
+                agencyId: 'dreamstime',
+                filename: item.filename,
+                localPath: item.localPath,
+                fileSize: item.fileSize,
+                mediaType: item.mediaType,
+                remoteDirectory: item.remoteFolder,
+                remotePath: item.remotePath,
+                status: 'failed',
+                retryCount: item.retryCount,
+                errorCode: item.errorCode,
+                errorMessage: item.errorMessage,
+                durationMs,
+                completedAt,
+              });
+            } else {
+              // In-place mark as 'retry'. DO NOT wait. Move immediately to next file in array!
+              item.status = 'retry';
+            }
+          }
+
+          this.recalculateBatchTelemetry(item, this.currentSpeedBps);
+          this.notify();
         }
       }
-
-      if (this.aborted) {
-        item.status = 'queued';
-        item.bytesTransferred = 0;
-        item.progressPercent = 0;
-        break;
+    } finally {
+      if (this.speedTimer) {
+        clearInterval(this.speedTimer);
+        this.speedTimer = null;
       }
-
-      const durationMs = Math.max(1, Date.now() - fileStartMs);
-      const completedAt = Date.now();
-
-      if (succeeded) {
-        item.status = 'succeeded';
-        item.bytesTransferred = item.fileSize;
-        item.progressPercent = 100;
-        item.durationMs = durationMs;
-        item.completedAt = completedAt;
-        item.errorCode = undefined;
-        item.errorMessage = undefined;
-      } else {
-        item.status = 'failed';
-        item.bytesTransferred = 0;
-        item.progressPercent = 0;
-        item.durationMs = durationMs;
-        item.completedAt = completedAt;
-        item.errorCode = lastErrorCode || 'FTP_MAX_RETRIES';
-        item.errorMessage =
-          lastErrorMessage || `Transfer failed after ${item.maxRetries} automatic retry attempts.`;
-      }
-
-      await db.ftp.logTransfer({
-        sessionId: session.id,
-        agencyId: 'dreamstime',
-        filename: item.filename,
-        localPath: item.localPath,
-        fileSize: item.fileSize,
-        mediaType: item.mediaType,
-        remoteDirectory: item.remoteFolder,
-        remotePath: item.remotePath,
-        status: item.status,
-        retryCount: item.retryCount,
-        errorCode: item.errorCode,
-        errorMessage: item.errorMessage,
-        durationMs,
-        completedAt,
-      });
-
-      this.recalculateBatchTelemetry(item, currentSpeedBps);
-      this.notify();
+      this.isRunning = false;
+      this.currentSpeedBps = 0;
+      await this.setKeepAwake(false);
     }
 
-    this.isRunning = false;
+    const totalDurationMs = Math.max(0, Date.now() - this.batchStartTime);
+    const totalDurationSeconds = Math.round(totalDurationMs / 1000);
+    const durationFormatted = formatEtaSeconds(totalDurationSeconds);
+
     const succeededCount = this.queue.filter((i) => i.status === 'succeeded').length;
     const failedCount = this.queue.filter((i) => i.status === 'failed').length;
-    const avgSpeed = speedSamplesCount > 0 ? Math.round(speedSamplesTotal / speedSamplesCount) : currentSpeedBps;
 
     const finalStatus = this.aborted
       ? 'aborted'
@@ -723,20 +804,38 @@ export class DreamstimeFtpOrchestrator {
       status: finalStatus,
       succeededFiles: succeededCount,
       failedFiles: failedCount,
-      averageSpeedBps: avgSpeed,
+      averageSpeedBps: this.currentSpeedBps,
       completedAt: Date.now(),
     });
 
-    this.recalculateBatchTelemetry(
-      undefined,
-      0,
-      this.aborted
-        ? 'Batch transfer aborted'
-        : failedCount > 0
-        ? `Batch finished: ${succeededCount} succeeded, ${failedCount} moved to Failed Queue`
-        : `All ${succeededCount} Dreamstime files uploaded & verified`
-    );
+    this.telemetry = {
+      ...this.telemetry,
+      isRunning: false,
+      speedBytesPerSec: 0,
+      etaSeconds: 0,
+      totalDurationSeconds,
+      statusMessage: this.aborted
+        ? 'Batch upload aborted by user.'
+        : `Upload Complete: ${succeededCount} succeeded${failedCount > 0 ? `, ${failedCount} failed` : ''}. Total Time: ${durationFormatted}`,
+    };
     this.notify();
+
+    // Trigger Native OS Notification via Electron Main Process
+    if (!this.aborted && this.telemetry.completedFiles > 0) {
+      const stats = {
+        succeededCount,
+        failedCount,
+        duration: durationFormatted,
+      };
+      if (typeof window !== 'undefined' && window.electronAPI?.notifyUploadComplete) {
+        window.electronAPI.notifyUploadComplete(stats);
+      } else if (typeof window !== 'undefined' && window.electronAPI?.showNotification) {
+        window.electronAPI.showNotification({
+          title: 'StockFlow - FTP Upload Complete',
+          body: `Upload Complete: ${succeededCount} succeeded${failedCount > 0 ? `, ${failedCount} failed` : ''}. Total Time: ${durationFormatted}`,
+        });
+      }
+    }
 
     return {
       sessionId: session.id,

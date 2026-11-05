@@ -146,9 +146,7 @@ describe('Step 2 Self-Audit: 50-Asset Seeding & Visual-First UX Verification', (
     expect(screen.getByTestId('ftp-add-files-btn')).toBeTruthy();
     expect(screen.getByTestId('ftp-add-folder-btn')).toBeTruthy();
     expect(container.textContent).toContain('Dreamstime FTP Uploader');
-    expect(container.textContent).toContain('Auto-Routing Rules');
-    expect(container.textContent).toContain('/additional');
-    expect(container.textContent).toContain('/video');
+    expect(container.textContent).not.toContain('Auto-Routing Rules');
 
     // Verify Dry-Run Test, Sample Mix, and FTPS toggles are completely gone
     expect(container.textContent).not.toContain('Dry-Run Test');

@@ -15,6 +15,7 @@ interface Window {
     setPowerSaveBlocker?: (enable: boolean) => Promise<{ active: boolean; id?: number | null; error?: string }>;
     isPowerSaveBlocking?: () => Promise<boolean>;
     showNotification?: (options: { title: string; body: string }) => Promise<{ success: boolean }>;
+    notifyUploadComplete?: (stats: { succeededCount: number; failedCount: number; duration?: string }) => void;
     rasterizeEpsNative: (
       fileBufferOrOptions:
         | ArrayBuffer

@@ -3,7 +3,7 @@ import { MediaType, SupportedPlatform } from '../../types';
 export type FtpProtocolType = 'ftp' | 'ftps' | 'sftp';
 export type DreamstimeRemoteFolder = '/' | '/additional' | '/video';
 export type FtpExecutionMode = 'live' | 'dry_run';
-export type FtpQueueItemStatus = 'queued' | 'uploading' | 'retrying' | 'succeeded' | 'failed';
+export type FtpQueueItemStatus = 'queued' | 'uploading' | 'retrying' | 'retry' | 'succeeded' | 'failed';
 export type SimulatedFaultMode =
   | 'none'
   | 'transient_recover_on_retry_2'
@@ -71,6 +71,7 @@ export interface FtpTelemetryFrame {
   speedBytesPerSec: number;
   etaSeconds: number | null;
   activeRetryAttempt: number;
+  totalDurationSeconds?: number;
   statusMessage?: string;
 }
 
