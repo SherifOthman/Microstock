@@ -12,9 +12,9 @@ import { dreamstimeFtpService } from '../../services/ftp/ftpClientService';
 import { Progress } from '../../components/ui/progress';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { Tooltip } from '../../components/ui/tooltip';
 import {
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogRoot,
@@ -125,6 +125,8 @@ async function extractFilesFromDataTransfer(dataTransfer: DataTransfer): Promise
 
 export const FtpUploaderView: React.FC = () => {
   const { language } = useLanguage();
+  const isAr = language === 'ar';
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -172,7 +174,7 @@ export const FtpUploaderView: React.FC = () => {
   const handleSaveCredentials = async () => {
     setVaultStatus({
       type: 'testing',
-      message: language === 'ar' ? 'جارٍ التحقق والاتصال...' : 'Testing connection...',
+      message: isAr ? 'جارٍ اختبار الاتصال وحفظ البيانات...' : 'Testing connection & saving...',
     });
     try {
       const cleanHost = host.trim() || 'ftp.dreamstime.com';
@@ -191,7 +193,7 @@ export const FtpUploaderView: React.FC = () => {
       if (!testRes.success) {
         setVaultStatus({
           type: 'error',
-          message: testRes.error || (language === 'ar' ? 'فشل الاتصال بخادم FTP' : 'Connection failed'),
+          message: testRes.error || (isAr ? 'فشل الاتصال بخادم FTP' : 'Connection failed'),
         });
         return;
       }
@@ -208,17 +210,17 @@ export const FtpUploaderView: React.FC = () => {
 
       setVaultStatus({
         type: 'ok',
-        message: language === 'ar' ? 'تم التحقق وحفظ البيانات بنجاح' : 'Connected & Saved Successfully',
+        message: isAr ? 'تم الاتصال وحفظ البيانات بنجاح' : 'Connected & Saved Successfully',
       });
 
       // Keep password masked in input (do not clear field), automatically close modal
       setTimeout(() => {
         setIsSettingsOpen(false);
-      }, 500);
+      }, 600);
     } catch (err: any) {
       setVaultStatus({
         type: 'error',
-        message: err?.message || (language === 'ar' ? 'فشل الحفظ' : 'Failed to save credentials'),
+        message: err?.message || (isAr ? 'فشل الحفظ' : 'Failed to save credentials'),
       });
     }
   };
@@ -226,7 +228,7 @@ export const FtpUploaderView: React.FC = () => {
   const handleTestConnection = async () => {
     setVaultStatus({
       type: 'testing',
-      message: language === 'ar' ? 'جارٍ اختبار الاتصال عبر Port 21...' : 'Testing Plain FTP (Port 21)...',
+      message: isAr ? 'جارٍ اختبار الاتصال (Port 21)...' : 'Testing Plain FTP (Port 21)...',
     });
     try {
       const cleanHost = host.trim() || 'ftp.dreamstime.com';
@@ -244,20 +246,20 @@ export const FtpUploaderView: React.FC = () => {
       if (res.success) {
         setVaultStatus({
           type: 'ok',
-          message: language === 'ar'
+          message: isAr
             ? `متصل بنجاح (${res.latencyMs || 35}ms)`
             : `Connected (${res.latencyMs || 35}ms)`,
         });
       } else {
         setVaultStatus({
           type: 'error',
-          message: res.error || (language === 'ar' ? 'فشل الاتصال' : 'Connection failed'),
+          message: res.error || (isAr ? 'فشل الاتصال' : 'Connection failed'),
         });
       }
     } catch (err: any) {
       setVaultStatus({
         type: 'error',
-        message: err?.message || (language === 'ar' ? 'خطأ في الاتصال' : 'Connection error'),
+        message: err?.message || (isAr ? 'خطأ في الاتصال' : 'Connection error'),
       });
     }
   };
@@ -308,18 +310,18 @@ export const FtpUploaderView: React.FC = () => {
       data-testid="ftp-uploader-view"
       className="flex-1 min-h-0 h-full flex flex-col gap-3 overflow-hidden select-none"
     >
-      {/* Top Header Bar: Title + Auto-Routing Summary + Keep Awake + Site Settings */}
+      {/* Top Header Bar: Title + Auto-Routing Row + Online Status + Keep Awake + Site Settings */}
       <div className="shrink-0 h-12 px-4 rounded-xl border border-border bg-card flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           {getPlatformLogo('dreamstime', 18)}
-          <h1 className="text-sm font-bold tracking-tight text-foreground truncate">
-            {language === 'ar' ? 'رافع Dreamstime FTP' : 'Dreamstime FTP Uploader'}
+          <h1 className="text-sm font-bold tracking-tight text-foreground truncate whitespace-nowrap">
+            {isAr ? 'رافع خادم Dreamstime FTP' : 'Dreamstime FTP Uploader'}
           </h1>
 
-          {/* Auto-Routing Rules Summary */}
+          {/* Auto-Routing Badges Row (Guaranteed Single Line) */}
           <div
             dir="ltr"
-            className="hidden md:flex items-center gap-2 pl-3 border-l border-border text-xs"
+            className="hidden md:flex items-center gap-2 px-3 border-x border-border text-xs whitespace-nowrap"
           >
             <span className="text-muted-foreground font-medium">Auto-Routing Rules:</span>
             <span className="px-2 py-0.5 rounded bg-sky-500/10 border border-sky-500/25 font-mono text-sky-400">
@@ -335,41 +337,55 @@ export const FtpUploaderView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          {/* OS Power Management: Keep Awake Toggle */}
-          <button
-            type="button"
-            onClick={async () => {
-              const next = !dreamstimeFtpService.isKeepAwakeActive();
-              await dreamstimeFtpService.setKeepAwake(next);
-              setTelemetry({ ...dreamstimeFtpService.getTelemetry() });
-            }}
-            title={
-              language === 'ar'
-                ? 'منع وضع السكون أثناء تشغيل المهام (Keep Awake)'
-                : 'Prevents system sleep while active (Keep Awake)'
+          {/* OS Power Management: Passive Keep Awake Indicator with Shadcn Tooltip */}
+          <Tooltip
+            content={
+              isAr
+                ? 'حماية الجهاز من السكون نشطة تلقائياً أثناء رفع الملفات'
+                : 'System sleep prevention is active while tasks run'
             }
-            className={`h-8 px-2.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition cursor-pointer ${
-              isKeepAwake
-                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                : 'bg-secondary/40 text-muted-foreground border-border hover:text-foreground'
-            }`}
           >
-            <Coffee className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">
-              {language === 'ar' ? 'مستمر بدون نوم' : 'Keep Awake'}
-            </span>
-          </button>
+            <div
+              className={`h-8 px-2.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition select-none ${
+                isKeepAwake
+                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                  : 'bg-secondary/40 text-muted-foreground border-border'
+              }`}
+            >
+              <Coffee className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">
+                {isAr ? 'منع السكون' : 'Keep Awake'}
+              </span>
+            </div>
+          </Tooltip>
 
-          {storedProfile?.username && (
-            <span className="hidden sm:inline-flex items-center gap-1.5 text-xs text-muted-foreground font-mono" dir="ltr">
+          {/* Compact Connection Status Pill with Shadcn Tooltip */}
+          <Tooltip
+            content={
+              storedProfile?.username
+                ? `${storedProfile.username}@${storedProfile.host || 'ftp.dreamstime.com'} (Port 21)`
+                : isAr
+                ? 'غير متصل - يرجى حفظ بيانات الدخول'
+                : 'Offline - Please configure credentials'
+            }
+          >
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-secondary/50 border border-border text-xs font-medium cursor-help">
               <span
                 className={`w-2 h-2 rounded-full ${
-                  storedProfile.hasSavedPassword ? 'bg-emerald-400' : 'bg-amber-400'
+                  storedProfile?.hasSavedPassword ? 'bg-emerald-400' : 'bg-amber-400'
                 }`}
               />
-              {storedProfile.username}@{storedProfile.host || 'ftp.dreamstime.com'}
-            </span>
-          )}
+              <span className="font-mono">
+                {storedProfile?.hasSavedPassword
+                  ? isAr
+                    ? 'متصل'
+                    : 'Online'
+                  : isAr
+                  ? 'غير متصل'
+                  : 'Offline'}
+              </span>
+            </div>
+          </Tooltip>
 
           <Button
             type="button"
@@ -380,7 +396,7 @@ export const FtpUploaderView: React.FC = () => {
             className="h-8 text-xs gap-1.5 cursor-pointer"
           >
             <Settings className="w-3.5 h-3.5 text-primary" />
-            <span>{language === 'ar' ? 'إعدادات الموقع' : 'Site Settings'}</span>
+            <span>{isAr ? 'إعدادات الموقع' : 'Site Settings'}</span>
           </Button>
         </div>
       </div>
@@ -389,11 +405,14 @@ export const FtpUploaderView: React.FC = () => {
       <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden">
         {/* Progress & Controls Bar */}
         <div className="shrink-0 p-3.5 rounded-xl border border-border bg-card space-y-2.5">
-          <div className="flex flex-wrap items-center justify-between gap-3" dir="ltr">
+          <div
+            className="flex flex-wrap items-center justify-between gap-3"
+            dir={isAr ? 'rtl' : 'ltr'}
+          >
             <div className="flex flex-wrap items-center gap-4 text-xs font-mono tabular-nums">
               <div>
                 <span className="text-muted-foreground">
-                  {language === 'ar' ? 'إجمالي الملفات: ' : 'Total Files: '}
+                  {isAr ? 'إجمالي الملفات: ' : 'Total Files: '}
                 </span>
                 <span className="font-bold text-foreground">
                   {telemetry.completedFiles} / {telemetry.totalFiles} ({telemetry.batchPercent}%)
@@ -401,7 +420,7 @@ export const FtpUploaderView: React.FC = () => {
               </div>
               <div>
                 <span className="text-muted-foreground">
-                  {language === 'ar' ? 'سرعة الرفع: ' : 'Upload Speed: '}
+                  {isAr ? 'سرعة الرفع: ' : 'Upload Speed: '}
                 </span>
                 <span className="font-bold text-emerald-400">
                   {telemetry.isRunning ? formatTransferSpeed(telemetry.speedBytesPerSec) : '0 KB/s'}
@@ -409,20 +428,30 @@ export const FtpUploaderView: React.FC = () => {
               </div>
               <div>
                 <span className="text-muted-foreground">
-                  {language === 'ar' ? 'الوقت المتبقي: ' : 'Time Remaining: '}
+                  {isAr ? 'الوقت المتبقي: ' : 'Time Remaining: '}
                 </span>
                 <span className="font-bold text-foreground">
                   {formatEtaSeconds(telemetry.etaSeconds)}
                 </span>
               </div>
-              {telemetry.statusMessage && (
-                <span className="text-muted-foreground truncate max-w-md hidden xl:inline">
-                  {telemetry.statusMessage}
-                </span>
-              )}
+              <div className="text-muted-foreground font-sans text-xs">
+                {telemetry.isRunning ? (
+                  <span className="text-primary font-medium">
+                    {isAr ? 'جارٍ الرفع...' : 'Uploading...'}
+                  </span>
+                ) : storedProfile?.hasSavedPassword ? (
+                  <span className="text-emerald-400 font-medium">
+                    {isAr ? 'متصل · جاهز للرفع' : 'Connected · Ready'}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">
+                    {isAr ? 'جاهز' : 'Ready'}
+                  </span>
+                )}
+              </div>
             </div>
 
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 ms-auto">
               {/* Hidden Pickers */}
               <input
                 ref={fileInputRef}
@@ -457,7 +486,7 @@ export const FtpUploaderView: React.FC = () => {
                 className="h-8 text-xs gap-1.5 cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>{language === 'ar' ? 'إضافة ملفات' : 'Add Files'}</span>
+                <span>{isAr ? 'إضافة ملفات' : 'Add Files'}</span>
               </Button>
 
               <Button
@@ -470,7 +499,7 @@ export const FtpUploaderView: React.FC = () => {
                 className="h-8 text-xs gap-1.5 cursor-pointer"
               >
                 <FolderPlus className="w-3.5 h-3.5 text-primary" />
-                <span>{language === 'ar' ? 'إضافة مجلد' : 'Add Folder'}</span>
+                <span>{isAr ? 'إضافة مجلد' : 'Add Folder'}</span>
               </Button>
 
               {/* Clear Completed */}
@@ -483,7 +512,9 @@ export const FtpUploaderView: React.FC = () => {
                   className="h-8 text-xs gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>{language === 'ar' ? 'مسح المكتملة' : 'Clear Completed'} ({succeededItems.length})</span>
+                  <span>
+                    {isAr ? 'مسح المكتملة' : 'Clear Completed'} ({succeededItems.length})
+                  </span>
                 </Button>
               )}
 
@@ -497,7 +528,9 @@ export const FtpUploaderView: React.FC = () => {
                   className="h-8 text-xs gap-1.5 bg-amber-500 hover:bg-amber-600 text-black font-semibold cursor-pointer"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
-                  <span>{language === 'ar' ? 'إعادة الفاشلة' : 'Retry Failed'} ({failedItems.length})</span>
+                  <span>
+                    {isAr ? 'إعادة الفاشلة' : 'Retry Failed'} ({failedItems.length})
+                  </span>
                 </Button>
               )}
 
@@ -510,7 +543,7 @@ export const FtpUploaderView: React.FC = () => {
                   className="h-8 text-xs gap-1.5 cursor-pointer"
                 >
                   <Square className="w-3.5 h-3.5" />
-                  <span>{language === 'ar' ? 'إيقاف' : 'Stop'}</span>
+                  <span>{isAr ? 'إيقاف' : 'Stop'}</span>
                 </Button>
               ) : (
                 <Button
@@ -522,21 +555,28 @@ export const FtpUploaderView: React.FC = () => {
                   className="h-8 text-xs gap-1.5 cursor-pointer font-semibold"
                 >
                   <Play className="w-3.5 h-3.5" />
-                  <span>{language === 'ar' ? 'بدء الرفع' : 'Start Upload'} ({queuedItems.length})</span>
+                  <span>
+                    {isAr ? 'بدء الرفع' : 'Start Upload'} ({queuedItems.length})
+                  </span>
                 </Button>
               )}
 
+              {/* Clear All Queue - Isolated at the far end with Shadcn Tooltip */}
               {queue.length > 0 && !telemetry.isRunning && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => dreamstimeFtpService.clearQueue()}
-                  className="h-8 px-2 text-muted-foreground hover:text-destructive cursor-pointer"
-                  title={language === 'ar' ? 'مسح القائمة كاملة' : 'Clear Queue'}
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </Button>
+                <Tooltip content={isAr ? 'مسح كافة الملفات من القائمة' : 'Clear entire queue'}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => dreamstimeFtpService.clearQueue()}
+                    className="h-8 px-2 text-muted-foreground hover:text-destructive cursor-pointer gap-1"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline text-xs">
+                      {isAr ? 'مسح الكل' : 'Clear All'}
+                    </span>
+                  </Button>
+                </Tooltip>
               )}
             </div>
           </div>
@@ -552,9 +592,13 @@ export const FtpUploaderView: React.FC = () => {
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
                 <span className="font-semibold">
-                  {language === 'ar'
-                    ? `اكتمل الرفع: نجح ${telemetry.succeededFiles} ملف${telemetry.failedFiles > 0 ? `، وفشل ${telemetry.failedFiles} ملف` : ''}.`
-                    : `Upload Complete: ${telemetry.succeededFiles} uploaded${telemetry.failedFiles > 0 ? `, ${telemetry.failedFiles} failed` : ''}.`}
+                  {isAr
+                    ? `اكتمل الرفع: نجح ${telemetry.succeededFiles} ملف${
+                        telemetry.failedFiles > 0 ? `، وفشل ${telemetry.failedFiles} ملف` : ''
+                      }.`
+                    : `Upload Complete: ${telemetry.succeededFiles} uploaded${
+                        telemetry.failedFiles > 0 ? `, ${telemetry.failedFiles} failed` : ''
+                      }.`}
                 </span>
               </div>
               <Button
@@ -563,7 +607,7 @@ export const FtpUploaderView: React.FC = () => {
                 onClick={() => dreamstimeFtpService.clearCompleted()}
                 className="h-6 text-xs text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/20 px-2 cursor-pointer"
               >
-                {language === 'ar' ? 'مسح المكتملة' : 'Clear Completed'}
+                {isAr ? 'مسح المكتملة' : 'Clear Completed'}
               </Button>
             </div>
           )}
@@ -583,7 +627,7 @@ export const FtpUploaderView: React.FC = () => {
           {/* Sub-Tabs */}
           <div
             className="shrink-0 h-10 px-3 border-b border-border flex items-center justify-between gap-2"
-            dir="ltr"
+            dir={isAr ? 'rtl' : 'ltr'}
           >
             <div className="flex items-center gap-1.5">
               <button
@@ -595,7 +639,7 @@ export const FtpUploaderView: React.FC = () => {
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                {language === 'ar' ? 'قائمة الانتظار' : 'Queue'} ({queue.length})
+                {isAr ? 'قائمة الانتظار' : 'Queue'} ({queue.length})
               </button>
               <button
                 type="button"
@@ -606,7 +650,7 @@ export const FtpUploaderView: React.FC = () => {
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                {language === 'ar' ? 'المكتملة' : 'Completed'} ({succeededItems.length})
+                {isAr ? 'المكتملة' : 'Completed'} ({succeededItems.length})
               </button>
               <button
                 type="button"
@@ -617,11 +661,11 @@ export const FtpUploaderView: React.FC = () => {
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                {language === 'ar' ? 'الفاشلة' : 'Failed'} ({failedItems.length})
+                {isAr ? 'الفاشلة' : 'Failed'} ({failedItems.length})
               </button>
             </div>
 
-            <span className="text-[11px] font-mono text-muted-foreground hidden sm:inline">
+            <span className="text-[11px] font-mono text-muted-foreground hidden sm:inline" dir="ltr">
               Photos → Vectors → Videos
             </span>
           </div>
@@ -631,20 +675,23 @@ export const FtpUploaderView: React.FC = () => {
               <div className="h-full flex flex-col items-center justify-center p-8 text-center">
                 <UploadCloud className="w-9 h-9 text-primary mb-2.5 opacity-80" />
                 <h3 className="text-xs sm:text-sm font-semibold text-foreground">
-                  {language === 'ar' ? 'اسحب الملفات أو المجلدات هنا' : 'Drop Files or Shoot Folders Here'}
+                  {isAr ? 'اسحب الملفات أو المجلدات هنا' : 'Drop Files or Shoot Folders Here'}
                 </h3>
               </div>
             ) : (
-              <table className="w-full text-left border-collapse text-xs" dir="ltr">
+              <table
+                className={`w-full border-collapse text-xs ${isAr ? 'text-right' : 'text-left'}`}
+                dir={isAr ? 'rtl' : 'ltr'}
+              >
                 <thead className="sticky top-0 bg-card border-b border-border text-[11px] font-mono text-muted-foreground z-10">
                   <tr>
-                    <th className="py-2 px-3">{language === 'ar' ? 'الملف' : 'File'}</th>
-                    <th className="py-2 px-2.5">{language === 'ar' ? 'النوع' : 'Type'}</th>
-                    <th className="py-2 px-2.5">{language === 'ar' ? 'الوجهة' : 'Destination'}</th>
-                    <th className="py-2 px-2.5">{language === 'ar' ? 'الحجم' : 'Size'}</th>
-                    <th className="py-2 px-2.5 w-48">{language === 'ar' ? 'التقدم' : 'Progress'}</th>
-                    <th className="py-2 px-2.5">{language === 'ar' ? 'الحالة' : 'Status'}</th>
-                    <th className="py-2 px-3 text-right" />
+                    <th className="py-2 px-3">{isAr ? 'الملف' : 'File'}</th>
+                    <th className="py-2 px-2.5">{isAr ? 'النوع' : 'Type'}</th>
+                    <th className="py-2 px-2.5">{isAr ? 'الوجهة' : 'Destination'}</th>
+                    <th className="py-2 px-2.5">{isAr ? 'الحجم' : 'Size'}</th>
+                    <th className="py-2 px-2.5 w-48">{isAr ? 'التقدم' : 'Progress'}</th>
+                    <th className="py-2 px-2.5">{isAr ? 'الحالة' : 'Status'}</th>
+                    <th className={`py-2 px-3 ${isAr ? 'text-left' : 'text-right'}`} />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -653,7 +700,10 @@ export const FtpUploaderView: React.FC = () => {
                       <td className="py-2 px-3">
                         <div className="flex items-center gap-2 min-w-0">
                           {getMediaIcon(item.mediaType)}
-                          <span className="font-mono text-xs text-foreground truncate max-w-[340px]">
+                          <span
+                            className="font-mono text-xs text-foreground truncate max-w-[340px]"
+                            dir="ltr"
+                          >
                             {item.filename}
                           </span>
                         </div>
@@ -663,20 +713,26 @@ export const FtpUploaderView: React.FC = () => {
                       </td>
                       <td className="py-2 px-2.5">
                         <span
-                          className={`text-[11px] font-mono px-2 py-0.5 rounded border ${getRemoteFolderBadgeStyle(
+                          dir="ltr"
+                          className={`text-[11px] font-mono px-2 py-0.5 rounded border inline-block ${getRemoteFolderBadgeStyle(
                             item.remoteFolder
                           )}`}
                         >
                           {item.remoteFolder}
                         </span>
                       </td>
-                      <td className="py-2 px-2.5 font-mono text-xs tabular-nums text-muted-foreground">
+                      <td className="py-2 px-2.5 font-mono text-xs tabular-nums text-muted-foreground" dir="ltr">
                         {formatBytes(item.fileSize)}
                       </td>
                       <td className="py-2 px-2.5">
                         <div className="flex items-center gap-2">
                           <Progress value={item.progressPercent} className="h-1.5 flex-1" />
-                          <span className="text-[11px] font-mono tabular-nums text-muted-foreground w-8 text-right">
+                          <span
+                            className={`text-[11px] font-mono tabular-nums text-muted-foreground w-8 ${
+                              isAr ? 'text-left' : 'text-right'
+                            }`}
+                            dir="ltr"
+                          >
                             {item.progressPercent}%
                           </span>
                         </div>
@@ -685,63 +741,64 @@ export const FtpUploaderView: React.FC = () => {
                         {item.status === 'succeeded' && (
                           <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
                             <CheckCircle2 className="w-3.5 h-3.5" />
-                            {language === 'ar' ? 'تم الرفع' : 'Done'}
+                            {isAr ? 'تم الرفع' : 'Done'}
                           </span>
                         )}
                         {item.status === 'uploading' && (
                           <span className="inline-flex items-center gap-1 text-primary">
                             <RefreshCw className="w-3 h-3 animate-spin" />
-                            {language === 'ar' ? 'جارٍ الرفع...' : 'Uploading'}
+                            {isAr ? 'جارٍ الرفع...' : 'Uploading'}
                           </span>
                         )}
                         {item.status === 'retrying' && (
                           <span className="inline-flex items-center gap-1 text-amber-400">
                             <AlertTriangle className="w-3.5 h-3.5" />
-                            {language === 'ar'
+                            {isAr
                               ? `محاولة ${item.retryCount}/${item.maxRetries}`
                               : `Retry ${item.retryCount}/${item.maxRetries}`}
                           </span>
                         )}
                         {item.status === 'queued' && (
                           <span className="text-muted-foreground">
-                            {language === 'ar' ? 'في الانتظار' : 'Queued'}
+                            {isAr ? 'في الانتظار' : 'Queued'}
                           </span>
                         )}
                         {item.status === 'failed' && (
-                          <span
-                            className="inline-flex items-center gap-1 text-destructive font-medium cursor-help"
-                            title={item.errorMessage}
-                          >
-                            <XCircle className="w-3.5 h-3.5" />
-                            {language === 'ar' ? 'فشل' : 'Failed'}
-                          </span>
+                          <Tooltip content={item.errorMessage || (isAr ? 'فشل الرفع' : 'Upload failed')}>
+                            <span className="inline-flex items-center gap-1 text-destructive font-medium cursor-help">
+                              <XCircle className="w-3.5 h-3.5" />
+                              {isAr ? 'فشل' : 'Failed'}
+                            </span>
+                          </Tooltip>
                         )}
                       </td>
-                      <td className="py-2 px-3 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          {/* Individual Retry Button for Failed Items */}
+                      <td className={`py-2 px-3 ${isAr ? 'text-left' : 'text-right'}`}>
+                        <div className={`flex items-center gap-1 ${isAr ? 'justify-start' : 'justify-end'}`}>
+                          {/* Individual Retry Button for Failed Items with Shadcn Tooltip */}
                           {item.status === 'failed' && !telemetry.isRunning && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => dreamstimeFtpService.retrySingleItem(item.id)}
-                              className="h-7 px-2 text-xs text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 gap-1 cursor-pointer"
-                              title={language === 'ar' ? 'إعادة محاولة هذا الملف' : 'Retry this file'}
-                            >
-                              <RotateCcw className="w-3 h-3" />
-                              <span>{language === 'ar' ? 'إعادة' : 'Retry'}</span>
-                            </Button>
+                            <Tooltip content={isAr ? 'إعادة محاولة هذا الملف' : 'Retry this file'}>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => dreamstimeFtpService.retrySingleItem(item.id)}
+                                className="h-7 px-2 text-xs text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 gap-1 cursor-pointer"
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                                <span>{isAr ? 'إعادة' : 'Retry'}</span>
+                              </Button>
+                            </Tooltip>
                           )}
                           {!telemetry.isRunning && (
-                            <button
-                              type="button"
-                              onClick={() => dreamstimeFtpService.removeItem(item.id)}
-                              className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-destructive cursor-pointer"
-                              title={language === 'ar' ? 'حذف من القائمة' : 'Remove'}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            <Tooltip content={isAr ? 'حذف من القائمة' : 'Remove from queue'}>
+                              <button
+                                type="button"
+                                onClick={() => dreamstimeFtpService.removeItem(item.id)}
+                                className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-destructive cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </Tooltip>
                           )}
                         </div>
                       </td>
@@ -754,26 +811,28 @@ export const FtpUploaderView: React.FC = () => {
         </div>
       </div>
 
-      {/* Site Settings Modal (Plain FTP Port 21: Host, Username, Password) */}
+      {/* Site Settings Modal: Plain FTP Port 21 (Host, Username, Password) */}
       <DialogRoot open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
-        <DialogContent className="sm:max-w-md" dir="ltr">
+        <DialogContent className="sm:max-w-md" dir={isAr ? 'rtl' : 'ltr'}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-sm font-bold">
               <Lock className="w-4 h-4 text-primary" />
-              <span>{language === 'ar' ? 'إعدادات خادم Dreamstime FTP' : 'Dreamstime FTP Site Settings'}</span>
+              <span>
+                {isAr
+                  ? 'إعدادات خادم Dreamstime (FTP Site Settings)'
+                  : 'Dreamstime FTP Site Settings'}
+              </span>
             </DialogTitle>
-            <DialogDescription className="text-xs text-muted-foreground">
-              Standard Plain FTP (Port 21). Passwords are encrypted locally via Electron safeStorage.
-            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3 py-2">
             <div className="space-y-1">
               <label className="text-xs font-medium text-foreground block">
-                {language === 'ar' ? 'الخادم (Host)' : 'Host'}
+                {isAr ? 'الخادم (Host)' : 'Host'}
               </label>
               <Input
                 data-testid="ftp-host-input"
+                dir="ltr"
                 value={host}
                 onChange={(e) => setHost(e.target.value)}
                 placeholder="ftp.dreamstime.com"
@@ -783,10 +842,11 @@ export const FtpUploaderView: React.FC = () => {
 
             <div className="space-y-1">
               <label className="text-xs font-medium text-foreground block">
-                {language === 'ar' ? 'اسم المستخدم (Username)' : 'Username'}
+                {isAr ? 'اسم المستخدم (Username)' : 'Username'}
               </label>
               <Input
                 data-testid="ftp-username-input"
+                dir="ltr"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="Dreamstime username"
@@ -797,27 +857,30 @@ export const FtpUploaderView: React.FC = () => {
             <div className="space-y-1">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-medium text-foreground block">
-                  {language === 'ar' ? 'كلمة المرور (Password)' : 'Password'}
+                  {isAr ? 'كلمة المرور (Password)' : 'Password'}
                 </label>
                 {storedProfile?.hasSavedPassword && (
                   <span className="text-[11px] text-emerald-400 font-medium">
-                    {language === 'ar' ? 'محفوظة في الخزنة الآمنة' : 'Saved in Secure Vault'}
+                    {isAr ? 'محفوظة في الخزنة الآمنة' : 'Saved in Secure Vault'}
                   </span>
                 )}
               </div>
               <div className="relative">
                 <Input
                   data-testid="ftp-password-input"
+                  dir="ltr"
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="FTP password"
-                  className="h-9 text-xs font-mono pr-8"
+                  className={`h-9 text-xs font-mono ${isAr ? 'pl-8' : 'pr-8'}`}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword((p) => !p)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+                  className={`absolute top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer ${
+                    isAr ? 'left-2.5' : 'right-2.5'
+                  }`}
                 >
                   {showPassword ? (
                     <EyeOff className="w-3.5 h-3.5" />
@@ -843,7 +906,7 @@ export const FtpUploaderView: React.FC = () => {
             )}
           </div>
 
-          <DialogFooter className="flex items-center justify-between sm:justify-between gap-2">
+          <DialogFooter className="flex items-center justify-between gap-2">
             <Button
               type="button"
               variant="outline"
@@ -852,7 +915,7 @@ export const FtpUploaderView: React.FC = () => {
               className="h-8 text-xs gap-1.5 cursor-pointer"
             >
               <Server className="w-3.5 h-3.5" />
-              <span>{language === 'ar' ? 'اختبار الاتصال' : 'Test Connection'}</span>
+              <span>{isAr ? 'اختبار الاتصال' : 'Test Connection'}</span>
             </Button>
 
             <div className="flex items-center gap-2">
@@ -863,7 +926,7 @@ export const FtpUploaderView: React.FC = () => {
                 onClick={() => setIsSettingsOpen(false)}
                 className="h-8 text-xs cursor-pointer"
               >
-                {language === 'ar' ? 'إغلاق' : 'Close'}
+                {isAr ? 'إغلاق' : 'Close'}
               </Button>
               <Button
                 type="button"
@@ -872,7 +935,7 @@ export const FtpUploaderView: React.FC = () => {
                 onClick={handleSaveCredentials}
                 className="h-8 text-xs cursor-pointer font-semibold"
               >
-                {language === 'ar' ? 'حفظ البيانات' : 'Save Credentials'}
+                {isAr ? 'حفظ البيانات' : 'Save Credentials'}
               </Button>
             </div>
           </DialogFooter>

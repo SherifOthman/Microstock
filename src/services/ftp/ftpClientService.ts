@@ -46,7 +46,7 @@ const INITIAL_TELEMETRY: FtpTelemetryFrame = {
   speedBytesPerSec: 0,
   etaSeconds: null,
   activeRetryAttempt: 0,
-  statusMessage: 'Idle — Ready for Dreamstime Plain FTP transfer (Port 21)',
+  statusMessage: 'Ready',
 };
 
 /**
@@ -512,11 +512,11 @@ export class DreamstimeFtpOrchestrator {
       sessionId: session.id,
       mode: runMode,
       isRunning: true,
-      statusMessage: 'Connecting to ftp.dreamstime.com (Plain FTP Port 21)...',
+      statusMessage: 'Connecting...',
     };
     this.notify();
 
-    let currentSpeedBps = 14_500_000;
+    let currentSpeedBps = 0;
     let speedSamplesTotal = 0;
     let speedSamplesCount = 0;
 

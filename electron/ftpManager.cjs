@@ -88,7 +88,11 @@ class PlainFtpAdapter {
     });
 
     try {
-      const targetName = path.basename(filename || localPath || 'upload.bin');
+      const rawTarget = path.basename(filename || localPath || 'upload.bin');
+      const targetName = rawTarget
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^\x20-\x7E]/g, '_');
       if (hasDiskFile) {
         await this.client.uploadFrom(localPath, targetName);
       } else {
