@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { HomeHubView } from './features/home/HomeHubView';
-import { DistributionTrackerView } from './features/tracker/DistributionTrackerView';
+import { DistributionTrackerView, FixAndRequeueContext } from './features/tracker/DistributionTrackerView';
 import { StudioView } from './features/studio/StudioView';
 import { FileCleanerView } from './features/cleaner/FileCleanerView';
 import { VideoMuterView } from './features/video/VideoMuterView';
@@ -8,7 +8,7 @@ import { EpsConverterView } from './features/eps/EpsConverterView';
 import { batchQueueService } from './services/queue/BatchQueueService';
 import { keyRingScheduler } from './services/scheduler/KeyRingScheduler';
 import { db, getAllApiKeys, updateApiKey, useSqliteQuery } from './db';
-import { ApiKeyRecord } from './types';
+import { ApiKeyRecord, SupportedPlatform } from './types';
 import {
   Wand2,
   Layers,
@@ -82,6 +82,8 @@ export function App() {
   });
   const [isKeyRingOpen, setIsKeyRingOpen] = useState(false);
   const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
+  const [requeueContext, setRequeueContext] = useState<FixAndRequeueContext | null>(null);
+  const [trackerFocusAgency, setTrackerFocusAgency] = useState<SupportedPlatform | undefined>(undefined);
 
   const masterCount = useSqliteQuery(() => db.masterRecords.count(), [], 0) || 0;
 
@@ -438,11 +440,26 @@ export function App() {
                 onOpenTemplates={() => setIsTemplatesOpen(true)}
               />
             </div>
-            <div className={activeTab === 'tracker' ? 'flex-1 min-h-0 h-full overflow-hidden flex flex-col' : 'hidden'}>
-              <DistributionTrackerView />
+            <div className={activeTab === 'tracker' ? 'flex-1 min-h-0 h-full px-4 sm:px-5 py-3.5 overflow-hidden flex flex-col' : 'hidden'}>
+              <DistributionTrackerView
+                initialFocusAgency={trackerFocusAgency}
+                onFixAndRequeue={(ctx) => {
+                  setRequeueContext(ctx);
+                  handleTabChange('studio');
+                }}
+              />
             </div>
             <div className={activeTab === 'studio' ? 'flex-1 min-h-0 h-full px-3 sm:px-4 py-3 overflow-hidden flex flex-col' : 'hidden'}>
-              <StudioView onOpenVideoMuter={() => handleTabChange('muter')} />
+              <StudioView
+                onOpenVideoMuter={() => handleTabChange('muter')}
+                requeueContext={requeueContext}
+                onCompleteRequeue={(agencyId) => {
+                  setRequeueContext(null);
+                  setTrackerFocusAgency(agencyId);
+                  handleTabChange('tracker');
+                }}
+                onDismissRequeue={() => setRequeueContext(null)}
+              />
             </div>
             <div className={activeTab === 'cleaner' ? 'flex-1 min-h-0 h-full px-4 sm:px-6 py-4 overflow-hidden flex flex-col' : 'hidden'}>
               <FileCleanerView

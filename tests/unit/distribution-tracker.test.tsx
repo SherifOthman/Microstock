@@ -284,4 +284,121 @@ describe('Microstock Distribution Tracker (Master Brain) & Event-Driven Hot Back
 
     expect(backupFilesOnDisk.length).toBe(30);
   });
+
+  it('5. evaluates full 6-agency Pre-Flight Warning rules (Adobe, Shutterstock, Freepik, Vecteezy, Dreamstime, 123RF)', async () => {
+    const { evaluateAgencyPreflight } = await import(
+      '../../src/services/tracker/agencyPreflightValidator'
+    );
+
+    const overloadedRecord: any = {
+      id: 'pf-1',
+      filename: 'test.jpg',
+      mediaType: 'image',
+      baseTitle: 'A'.repeat(210), // > 200 chars
+      detailedDescription: 'Short desc', // < 5 words
+      rankedKeywords: Array.from({ length: 53 }, (_, i) => `tag${i + 1}`), // 53 keywords
+      status: 'completed',
+      createdAt: Date.now(),
+    };
+
+    const adobeWarnings = evaluateAgencyPreflight(overloadedRecord, 'adobe');
+    expect(adobeWarnings.map((w) => w.code)).toEqual(
+      expect.arrayContaining(['ADOBE_TITLE_OVER_200', 'ADOBE_KEYWORDS_OVER_49'])
+    );
+
+    const shutterWarnings = evaluateAgencyPreflight(overloadedRecord, 'shutterstock');
+    expect(shutterWarnings.map((w) => w.code)).toContain('SHUTTER_KEYWORDS_OVER_50');
+
+    const freepikWarnings = evaluateAgencyPreflight(overloadedRecord, 'freepik');
+    expect(freepikWarnings.map((w) => w.code)).toEqual(
+      expect.arrayContaining(['FREEPIK_TITLE_OVER_100', 'FREEPIK_KEYWORDS_OVER_50'])
+    );
+
+    const dtWarnings = evaluateAgencyPreflight(overloadedRecord, 'dreamstime');
+    expect(dtWarnings.map((w) => w.code)).toEqual(
+      expect.arrayContaining(['DT_TITLE_OVER_130', 'DT_DESC_SHORT'])
+    );
+
+    const rfWarnings = evaluateAgencyPreflight(overloadedRecord, '123rf');
+    expect(rfWarnings.map((w) => w.code)).toEqual(
+      expect.arrayContaining(['RF_TITLE_OVER_110', 'RF_KEYWORDS_OVER_50'])
+    );
+  });
+
+  it('6. executes Bulk SEO Surgery, 1-Click Auto-Trim Keywords, and Drag-and-Drop File/Hash Reconciliation Matching', async () => {
+    const {
+      autoTrimKeywordsForAgency,
+      applyBulkMetadataSurgery,
+      matchDroppedFilesToPendingAssets,
+    } = await import('../../src/services/tracker/bulkTrackerOperations');
+    const { db } = await import('../../src/db');
+
+    await db.masterRecords.clear();
+    const rec1: any = {
+      id: 'bulk-1',
+      batchId: 'B01',
+      filename: 'B01-AI-PH-001_Solar_Panels.jpg',
+      fileHash: 'sha256_abc12345',
+      mediaType: 'image',
+      baseTitle: 'Golden Hour Solar Panels Commercial Stock Background',
+      detailedDescription: 'Golden Hour Solar Panels Commercial Stock Background for agencies.',
+      rankedKeywords: [
+        'solar',
+        'midjourney',
+        'illustartion',
+        ...Array.from({ length: 50 }, (_, i) => `tag_${i + 1}`),
+      ],
+      status: 'completed',
+      createdAt: Date.now(),
+    };
+    await db.masterRecords.put(rec1);
+
+    // 1. Auto-Trim to Adobe Stock cap (49 keywords)
+    const trimRes = await autoTrimKeywordsForAgency([rec1], 'adobe');
+    expect(trimRes.updatedCount).toBe(1);
+    expect(trimRes.cap).toBe(49);
+    const afterTrim = await db.masterRecords.get('bulk-1');
+    expect(afterTrim?.rankedKeywords).toHaveLength(49);
+
+    // 2. Bulk Keyword Sanitizer: remove 'midjourney' and replace 'illustartion' -> 'illustration'
+    await applyBulkMetadataSurgery([afterTrim!], {
+      mode: 'keywords',
+      keywordAction: 'remove',
+      targetKeywordsRaw: 'midjourney',
+    });
+    const afterRemove = await db.masterRecords.get('bulk-1');
+    expect(afterRemove?.rankedKeywords).not.toContain('midjourney');
+
+    await applyBulkMetadataSurgery([afterRemove!], {
+      mode: 'keywords',
+      keywordAction: 'replace',
+      targetKeywordsRaw: 'illustartion',
+      replacementKeywordRaw: 'illustration',
+    });
+    const afterReplace = await db.masterRecords.get('bulk-1');
+    expect(afterReplace?.rankedKeywords).toContain('illustration');
+    expect(afterReplace?.rankedKeywords).not.toContain('illustartion');
+
+    // 3. Bulk Find & Replace in Title & Description
+    await applyBulkMetadataSurgery([afterReplace!], {
+      mode: 'text',
+      findText: 'Commercial Stock Background',
+      replaceText: 'Renewable Energy Studio Concept',
+      applyToTitle: true,
+      applyToDescription: true,
+    });
+    const afterText = await db.masterRecords.get('bulk-1');
+    expect(afterText?.baseTitle).toContain('Renewable Energy Studio Concept');
+    expect(afterText?.detailedDescription).toContain('Renewable Energy Studio Concept');
+
+    // 4. Drag & Drop File Matching against Pending Upload records
+    const droppedFile = new File(['dummy'], 'B01-AI-PH-001_Solar_Panels.jpg', {
+      type: 'image/jpeg',
+    });
+    const matchRes = await matchDroppedFilesToPendingAssets([droppedFile], [afterText!]);
+    expect(matchRes.matchedIds).toEqual(['bulk-1']);
+    expect(matchRes.unmatchedDroppedNames).toHaveLength(0);
+  });
 });
+
+

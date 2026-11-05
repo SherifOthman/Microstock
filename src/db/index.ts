@@ -182,7 +182,17 @@ const testMemoryStore = {
     DEFAULT_TEST_REJECTION_REASONS.map((r) => [r.id, { ...r }])
   ),
   exportBaskets: new Map<string, ExportBasketRecord>(),
-  backupLogs: [] as BackupLogRecord[],
+  backupLogs: [
+    {
+      id: 'backup_init_startup',
+      triggerEvent: 'app_startup',
+      backupFilePath: '/StockFlow/backups/stockflow_backup_startup.sqlite',
+      fileSizeBytes: 8192,
+      assetCountSnapshot: 0,
+      durationMs: 2,
+      createdAt: Date.now(),
+    },
+  ] as BackupLogRecord[],
   apiKeys: new Map<string, ApiKeyRecord>(),
   batches: new Map<string, BatchRecord>(),
   settings: new Map<string, SettingItem>(),
@@ -237,12 +247,8 @@ function recordTestBackup(triggerEvent: BackupLogRecord['triggerEvent']): Backup
   return log;
 }
 
-async function invokeDbRpc(method: string, ...args: any[]): Promise<any> {
-  if (typeof window !== 'undefined' && window.electronAPI?.db?.invoke) {
-    return await window.electronAPI.db.invoke(method, ...args);
-  }
-
-  // Fallback for Node / Vitest unit test environments
+export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promise<any> {
+  // Fallback for Browser Preview & Node / Vitest unit test environments
   switch (method) {
     case 'getDbInfo':
       return {
@@ -353,7 +359,7 @@ async function invokeDbRpc(method: string, ...args: any[]): Promise<any> {
         }
         h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
         h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-        hexHash = `sha256_${(h2 >>> 0).toString(16).padStart(8, '0')}${(h1 >>> 0).toString(16).padStart(8, '0')}_${fileSize}`;
+        hexHash = `${(h2 >>> 0).toString(16).padStart(8, '0')}${(h1 >>> 0).toString(16).padStart(8, '0')}${fileSize.toString(16).padStart(8, '0')}`;
       } else {
         const seed = String(sourcePath || filename || Date.now());
         fileSize = 1024;
@@ -362,7 +368,7 @@ async function invokeDbRpc(method: string, ...args: any[]): Promise<any> {
           acc ^= seed.charCodeAt(i);
           acc = Math.imul(acc, 16777619);
         }
-        hexHash = `sha256_${(acc >>> 0).toString(16).padStart(8, '0')}`;
+        hexHash = `${(acc >>> 0).toString(16).padStart(8, '0')}a4f19c2e`;
       }
 
       for (const rec of testMemoryStore.masterRecords.values()) {
@@ -481,6 +487,9 @@ async function invokeDbRpc(method: string, ...args: any[]): Promise<any> {
     case 'reconcileAgencyStatuses': {
       const { assetIds = [], agencyId, targetStatus, rejectionReasonId, customRejectionNote } = args[0] || {};
       const now = Date.now();
+      const matchedReason = rejectionReasonId
+        ? testMemoryStore.rejectionDictionary.get(rejectionReasonId)
+        : undefined;
       for (const assetId of assetIds) {
         ensureTestAgencyTracking(assetId, now);
         const key = `${assetId}::${agencyId}`;
@@ -491,6 +500,11 @@ async function invokeDbRpc(method: string, ...args: any[]): Promise<any> {
           ...existing,
           status: targetStatus,
           rejectionReasonId: isRejected ? rejectionReasonId : isReverted ? undefined : existing.rejectionReasonId,
+          rejectionReasonTitle: isRejected
+            ? matchedReason?.title || existing.rejectionReasonTitle
+            : isReverted
+            ? undefined
+            : existing.rejectionReasonTitle,
           customRejectionNote: isRejected ? customRejectionNote : isReverted ? undefined : existing.customRejectionNote,
           rejectionCount: isRejected ? (existing.rejectionCount || 0) + 1 : existing.rejectionCount || 0,
           uploadedAt: targetStatus === 'Uploaded' ? now : existing.uploadedAt,
@@ -499,11 +513,8 @@ async function invokeDbRpc(method: string, ...args: any[]): Promise<any> {
           updatedAt: now,
         });
       }
-      if (targetStatus === 'Rejected' && rejectionReasonId) {
-        const reason = testMemoryStore.rejectionDictionary.get(rejectionReasonId);
-        if (reason) {
-          reason.usageCount += assetIds.length;
-        }
+      if (targetStatus === 'Rejected' && matchedReason) {
+        matchedReason.usageCount += assetIds.length;
       }
       recordTestBackup('batch_reconcile');
       return { updatedCount: assetIds.length };
@@ -625,6 +636,13 @@ async function invokeDbRpc(method: string, ...args: any[]): Promise<any> {
     default:
       return undefined;
   }
+}
+
+async function invokeDbRpc(method: string, ...args: any[]): Promise<any> {
+  if (typeof window !== 'undefined' && window.electronAPI?.db?.invoke) {
+    return await window.electronAPI.db.invoke(method, ...args);
+  }
+  return await invokeFallbackDbRpc(method, ...args);
 }
 
 // ============================================================================

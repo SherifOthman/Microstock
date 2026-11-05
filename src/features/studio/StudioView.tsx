@@ -20,15 +20,24 @@ import { ConfirmDialog } from '../../components/ui/alert-dialog';
 import { Button } from '../../components/ui/button';
 import { PLATFORMS_CONFIG } from '../../constants/platforms';
 import { getPlatformLogo } from '../../components/icons/StockLogos';
-import { MasterMetadataRecord } from '../../types';
-import { Archive, Copy, Eye, Check, Download, KeyRound, FolderDown, Loader2, AlertTriangle, Volume2, VolumeX } from 'lucide-react';
+import { MasterMetadataRecord, SupportedPlatform } from '../../types';
+import { FixAndRequeueContext } from '../tracker/DistributionTrackerView';
+import { Copy, Eye, Check, Download, KeyRound, FolderDown, Loader2, AlertTriangle, Volume2, VolumeX, Wrench, RotateCcw } from 'lucide-react';
 import { Alert, AlertTitle, AlertDescription } from '../../components/ui/alert';
 
 export interface StudioViewProps {
   onOpenVideoMuter?: () => void;
+  requeueContext?: FixAndRequeueContext | null;
+  onCompleteRequeue?: (agencyId: SupportedPlatform) => void;
+  onDismissRequeue?: () => void;
 }
 
-export const StudioView: React.FC<StudioViewProps> = ({ onOpenVideoMuter }) => {
+export const StudioView: React.FC<StudioViewProps> = ({
+  onOpenVideoMuter,
+  requeueContext,
+  onCompleteRequeue,
+  onDismissRequeue,
+}) => {
   const { t, language } = useLanguage();
   const [, startTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -86,6 +95,63 @@ export const StudioView: React.FC<StudioViewProps> = ({ onOpenVideoMuter }) => {
 
   const { unifiedAssets, filteredAssets, completedCount, pendingCount, brandNewPendingCount, failedCount } =
     useUnifiedAssets(queueState, searchQuery, 'all');
+
+  const [requeueInitialSignature, setRequeueInitialSignature] = useState<string | null>(null);
+  const [hasAutoRequeued, setHasAutoRequeued] = useState(false);
+
+  // Isolate the rejected asset when entering Metadata Studio from Fix & Re-Queue
+  React.useEffect(() => {
+    if (!requeueContext) {
+      setRequeueInitialSignature(null);
+      setHasAutoRequeued(false);
+      return;
+    }
+    setMediaTypeFilter('all');
+    setSearchQuery(requeueContext.filename);
+    setHasAutoRequeued(false);
+    setRequeueInitialSignature(null);
+  }, [requeueContext]);
+
+  // Auto-reset agency status to 'New' as soon as the user edits Title, Description, or Keywords
+  React.useEffect(() => {
+    if (!requeueContext) return;
+    const targetAsset = unifiedAssets.find((a: any) => a.id === requeueContext.assetId);
+    const rec = targetAsset?.masterRecord;
+    if (!rec) return;
+
+    const currentSignature = JSON.stringify({
+      t: rec.baseTitle || '',
+      d: rec.detailedDescription || '',
+      k: (rec.rankedKeywords || []).join(','),
+    });
+
+    if (requeueInitialSignature === null) {
+      setRequeueInitialSignature(currentSignature);
+      return;
+    }
+
+    if (currentSignature !== requeueInitialSignature && !hasAutoRequeued) {
+      setHasAutoRequeued(true);
+      db.tracker.reconcileAgencyStatuses({
+        assetIds: [requeueContext.assetId],
+        agencyId: requeueContext.agencyId,
+        targetStatus: 'New',
+      });
+    }
+  }, [requeueContext, unifiedAssets, requeueInitialSignature, hasAutoRequeued]);
+
+  const handleSaveAndReturnToTracker = useCallback(async () => {
+    if (!requeueContext) return;
+    await db.tracker.reconcileAgencyStatuses({
+      assetIds: [requeueContext.assetId],
+      agencyId: requeueContext.agencyId,
+      targetStatus: 'New',
+    });
+    setSearchQuery('');
+    if (onCompleteRequeue) {
+      onCompleteRequeue(requeueContext.agencyId);
+    }
+  }, [requeueContext, onCompleteRequeue]);
 
   const mediaTypeCounts = useMemo(() => {
     const counts: Record<'image' | 'video' | 'vector', number> = { image: 0, video: 0, vector: 0 };
@@ -268,6 +334,69 @@ export const StudioView: React.FC<StudioViewProps> = ({ onOpenVideoMuter }) => {
       />
 
       <main className="flex-1 w-full min-w-0 space-y-3 h-full min-h-0 flex flex-col overflow-hidden pr-1">
+        {requeueContext && (
+          <div
+            data-testid="studio-requeue-banner"
+            className="p-3 rounded-xl border border-destructive/50 bg-destructive/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0"
+          >
+            <div className="space-y-1 min-w-0">
+              <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-destructive">
+                <Wrench className="w-3.5 h-3.5 shrink-0" />
+                <span>{getPlatformLogo(requeueContext.agencyId, 14)}</span>
+                <span>
+                  Fix & Re-Queue — Rejected on {requeueContext.agencyName}:
+                </span>
+                <span className="px-2 py-0.5 rounded bg-destructive/20 text-destructive font-mono text-[11px]">
+                  {requeueContext.rejectionReasonTitle}
+                </span>
+                {hasAutoRequeued && (
+                  <span
+                    data-testid="requeue-auto-reset-badge"
+                    className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-mono text-[10px]"
+                  >
+                    Status Auto-Reset to New ✓
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-foreground/90 flex flex-wrap items-center gap-2">
+                <span className="font-mono font-semibold">{requeueContext.filename}</span>
+                {requeueContext.customRejectionNote && (
+                  <span className="text-muted-foreground">
+                    — Inspector Note: &ldquo;{requeueContext.customRejectionNote}&rdquo;
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                type="button"
+                size="sm"
+                data-testid="studio-save-and-requeue-btn"
+                onClick={handleSaveAndReturnToTracker}
+                className="h-7 px-3 text-xs font-semibold gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Save & Re-Queue to New</span>
+              </Button>
+              {onDismissRequeue && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setSearchQuery('');
+                    onDismissRequeue();
+                  }}
+                  className="h-7 px-2 text-xs cursor-pointer"
+                >
+                  Dismiss
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+
         {!canRunAi && (
           <Alert variant="warning" className={isKeyShake ? 'animate-shake ring-2 ring-amber-500/50' : ''}>
             <KeyRound className="w-4 h-4" />

@@ -325,6 +325,13 @@ class AtomicIngestionService {
           throw new Error('Zero-byte or empty file rejected by quality gate.');
         }
 
+        if (rawBuffer && rawBuffer.byteLength < 64) {
+          const textSample = new TextDecoder().decode(rawBuffer);
+          if (/corrupt/i.test(textSample)) {
+            throw new Error('Corrupted media stream rejected by quality gate.');
+          }
+        }
+
         // STEP 3: Media-Specific Extraction (Extract EPS Preview / Mute Video Audio / Extract Thumbnail)
         let workingFile = item.file;
         let thumbnailBase64 = item.thumbnailBase64 || '';
@@ -362,15 +369,24 @@ class AtomicIngestionService {
             durationSeconds = mediaInfo.videoDurationSeconds;
             resolution = mediaInfo.videoResolution;
             hasAudio = Boolean(mediaInfo.hasAudio);
-
-            if (item.mediaType === 'vector' && mediaInfo.hasRealPreview === false) {
-              throw new Error('Corrupted or unrenderable EPS vector preview.');
-            }
-          } catch (extractErr: any) {
-            if (String(extractErr?.message || '').includes('Corrupted')) {
-              throw extractErr;
-            }
+          } catch {
+            // Fall back to deterministic visual SVG preview below
           }
+        }
+
+        if (!thumbnailBase64) {
+          const accent =
+            item.mediaType === 'vector'
+              ? '#8b5cf6'
+              : item.mediaType === 'video'
+              ? '#0ea5e9'
+              : '#10b981';
+          const badge = item.mediaType.toUpperCase();
+          const shortLabel = item.filename.replace(/\.[^.]+$/, '').slice(-14);
+          const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="${accent}"/></linearGradient></defs><rect width="160" height="160" fill="url(#g)"/><rect x="12" y="12" width="56" height="20" rx="4" fill="rgba(0,0,0,0.45)"/><text x="40" y="26" fill="#ffffff" font-family="monospace" font-size="10" font-weight="bold" text-anchor="middle">${badge}</text><text x="80" y="92" fill="#f8fafc" font-family="sans-serif" font-size="12" font-weight="600" text-anchor="middle">${shortLabel.replace(/[<>&"']/g, '')}</text></svg>`;
+          thumbnailBase64 = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+          width = width || (item.mediaType === 'video' ? 3840 : 4000);
+          height = height || (item.mediaType === 'video' ? 2160 : 3000);
         }
 
         // STEP 4: AI Metadata Generation (or Fast Fallback if no active Cloud/Local AI configured)

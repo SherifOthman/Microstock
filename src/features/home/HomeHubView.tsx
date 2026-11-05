@@ -14,6 +14,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
+import { TrackerAnalyticsCharts } from '../tracker/TrackerAnalyticsCharts';
 
 export interface HomeHubViewProps {
   onNavigate?: (tool: 'tracker' | 'studio' | 'cleaner' | 'muter' | 'eps') => void;
@@ -31,7 +32,9 @@ export const HomeHubView: React.FC<HomeHubViewProps> = ({
 }) => {
   const { language } = useLanguage();
 
-  const masterCount = useSqliteQuery(() => db.masterRecords.count(), [], 0) || 0;
+  const masterRecords = useSqliteQuery(() => db.masterRecords.toArray(), [], []) || [];
+  const masterCount = masterRecords.length;
+  const trackerStats = useSqliteQuery(() => db.tracker.getStats(), [masterCount], undefined);
   const keys = useSqliteQuery(() => db.apiKeys.toArray(), [], []) || [];
   const appSettings = useSqliteQuery(() => getAppSettings(), [], null);
 
@@ -169,6 +172,14 @@ export const HomeHubView: React.FC<HomeHubViewProps> = ({
           <span>{language === 'ar' ? 'فتح متتبع التوزيع' : 'Open Distribution Tracker'}</span>
         </Button>
       </div>
+
+      {/* Live 6-Agency Distribution & Portfolio Analytics Charts */}
+      <TrackerAnalyticsCharts
+        records={masterRecords}
+        stats={trackerStats}
+        onSelectAgency={() => onNavigate?.('tracker')}
+        onSelectStatusFilter={() => onNavigate?.('tracker')}
+      />
 
       {/* Recommended Production Pipeline Sequence */}
       <div className="p-3.5 rounded-xl border border-border bg-card space-y-2.5">
