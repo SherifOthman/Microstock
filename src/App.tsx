@@ -442,9 +442,14 @@ export function App() {
         {/* Right Main Workspace Column (Keep-Alive Workspaces Preserve Batch State Across Tab Switches) */}
         <div className="flex-1 min-w-0 min-h-0 flex flex-col bg-background overflow-hidden">
           <main className="flex-1 min-w-0 min-h-0 overflow-hidden flex flex-col">
-            <div className={activeTab === 'home' ? 'flex-1 overflow-y-auto px-4 sm:px-6 py-5' : 'hidden'}>
+            <div className={activeTab === 'home' ? 'flex-1 overflow-y-auto px-4 sm:px-6 py-4' : 'hidden'}>
               <HomeHubView
-                onNavigate={(tool) => handleTabChange(tool)}
+                onNavigate={(tool, focusAgency) => {
+                  if (focusAgency) {
+                    setTrackerFocusAgency(focusAgency);
+                  }
+                  handleTabChange(tool);
+                }}
                 onOpenKeyRing={() => setIsKeyRingOpen(true)}
                 onOpenTemplates={() => setIsTemplatesOpen(true)}
               />

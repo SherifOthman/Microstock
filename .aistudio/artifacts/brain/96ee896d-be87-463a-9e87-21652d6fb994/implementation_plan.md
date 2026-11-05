@@ -1,164 +1,113 @@
-# Microstock FTP Uploader — Phase 1: Dreamstime Proof of Concept
+# StockFlow UX Redesign Blueprint: Visual-First Contributor Workspace
 
-A hyper-focused, standalone microstock FTP uploader built specifically for high-volume stock contributors—eliminating generic FileZilla directory trees in favor of automated extension routing, hardware-encrypted credentials, 60fps real-time transfer telemetry, resilient exponential-backoff retries, and persistent session audit logs.
+This blueprint replaces the database-admin layout across the **Distribution Tracker**, **Overview (`HomeHubView`)**, and **FTP Uploader** with a clean, visual-first Lightroom-inspired workspace engineered for a high-volume microstock contributor processing 500+ assets daily.
 
 ---
 
 ## User Review & Confirmed Decisions
 
 > [!IMPORTANT]
-> The following architectural decisions were confirmed during Phase 1 planning and govern this Proof of Concept implementation:
+> Both of your hybrid layout decisions are locked in as the foundation of this redesign:
 
-- **Confirmed Decision 1 — Strict Phase 1 Scope (Dreamstime PoC + SFTP-Ready Adapter)**: Phase 1 focuses exclusively on **Dreamstime** (`ftp.dreamstime.com`, Port `21`, standard FTP and Explicit FTPS via `basic-ftp`). We will not clutter the UI with unconfigured agency tabs yet, while designing the underlying transport interface (`StockTransferAdapter`) so SFTP (Port `22` for Adobe Stock) and other agencies plug in cleanly in Phase 2.
-- **Confirmed Decision 2 — Resilient Auto-Retry & Failed Queue**: Network blips during unattended overnight batches will automatically retry up to **3 times per file** using exponential backoff (`1.5s` → `3s` → `6s`), reconnecting the control/data socket if dropped. Only after 3 exhausted attempts is the file moved to the **Failed Queue** with its exact FTP error code/reason and a 1-click **Retry All Failed** action.
-- **Confirmed Decision 3 — Dual Execution Mode (Live `basic-ftp` + Built-In Dry-Run Simulator)**: Includes a toggleable **Dry-Run Simulator** alongside the real `basic-ftp` engine so you can safely test 60fps progress bars, speed/ETA math, Dreamstime folder routing (`/`, `/additional`, `/video`), and simulated mid-batch network drops without uploading dummy files to your live Dreamstime account.
-
----
-
-## 1. Overview & Core Concept
-
-- **What It Does**: Provides a dedicated **FTP Uploader** workspace tab where contributors configure their Dreamstime FTP credentials once (encrypted at rest via OS keychain/DPAPI), drop or select a heterogeneous batch of files (JPEGs, EPS/AI vectors, MP4/MOV videos), preview the automatic destination folder routing, and execute high-speed unattended transfers with real-time telemetry and persistent SQLite logs.
-- **Target Audience / Persona**: High-volume microstock contributors uploading hundreds of photos, vectors, and 4K videos who need zero-friction routing and rock-solid overnight reliability without babysitting manual remote folders.
-- **Key Value**: Replaces manual drag-and-drop into separate `/`, `/additional`, and `/video` remote directories with deterministic extension routing, smooth 60fps telemetry, automatic socket recovery, and a permanent audit trail ready for future background automation.
+- **Confirmed Decision 1 — Dual View Mode (`Grid` / `List`) with Strict Single-Agency Gallery Cards**:
+  - **Visual Gallery Grid Mode (Default)**: Large, clear `4:3` aspect thumbnails (`180px+` tall) in a responsive multi-column photo gallery. Each card displays **ONLY** the clean human-readable title/name, the large image, and the **single active agency's status dropdown** (plus a 1-click `Fix` button if `Rejected`, and a subtle `Metadata` inspect icon on hover). Zero 6-agency matrix clutter, zero raw uncleaned filenames, and zero inline keyword walls.
+  - **Clean Compact List View Mode**: Accessed via a 1-click `[Grid | List]` toggle in the toolbar for heavy administrative auditing. Compressed `44px` single-line rows showing a crisp thumbnail, clean title, granular 1-click Copy buttons (`Title`, `Description`, `Keywords`), and the 6-agency status matrix.
+- **Confirmed Decision 2 — Actionable Morning Overview Hub (`HomeHubView`)**:
+  - **Top Priority — 6 Agency Readiness Cards**: Displays all 6 agencies (`Adobe Stock`, `Freepik`, `Shutterstock`, `Vecteezy`, `Dreamstime`, `123RF`) right at the top with live `New` (ready to export), `Pending Upload`, and `Rejected` counts. Clicking any agency card **instantly jumps into the Distribution Tracker with that agency active in Focus Mode**.
+  - **Clean Portfolio Analytics Below**: Below the 6 Agency Readiness Cards sit the clean Shadcn Analytics Charts (Submission Progress, Media Mix, and Rejection Breakdown).
+  - **100% Zero Fluff**: All text-heavy "Step 01–04" tutorials, local AI telemetry banners, and "Master Brain" marketing callouts are deleted.
+- **Confirmed Decision 3 — Minimalist FTP Uploader**:
+  - Stripped down to the essentials: a collapsible/compact **Dreamstime Connection Bar**, a clean **Dropzone + Auto-Router Summary** (`/` for JPG, `/additional` for EPS/AI, `/video` for MP4/MOV), a **Live Progress & Speed/ETA Bar**, and the **Transfer Queue** with 1-click `Retry Failed`. Fault injection debuggers and SQLite log tables are tucked away or removed from the primary viewport.
 
 ---
 
-## 2. User Experience & Visual Design (Shadcn Architecture)
+## 1. What We Are Deleting, Hiding & Redesigning
 
-### Visual Identity & Workspace Layout
-- **Aesthetic Direction**: Utilitarian, high-density dark/light studio console matching StockFlow's existing design system. Zero file-tree clutter—no dual-pane local/remote explorer browsers.
-- **Typography & Tabular Discipline**: Crisp sans-serif UI controls paired with strict monospace tabular numerals (`font-mono tabular-nums`) for all byte counters, transfer speeds (`MB/s`), percentages, destination paths, and ETA countdowns so numbers never jitter during 60fps updates.
-- **Color & Status Semantics**:
-  - **60% Neutral Canvas**: Clean `bg-background` and `bg-card` surfaces with `1px` `border-border` hairlines.
-  - **Semantic Telemetry Accents**: Primary brand accent for active transfer progress bars, Emerald (`text-emerald-500`) for verified remote deliveries and encrypted vault lock indicators, Amber (`text-amber-500`) for active auto-retry backoff states, and Crimson (`text-destructive`) for exhausted transfer failures.
+### A. Distribution Tracker (`DistributionTrackerView`)
 
-### Spatial Layout Blueprint (1440px Desktop Viewport)
+| Legacy Clutter Element | Action | New Contributor-First Replacement |
+| :--- | :--- | :--- |
+| **Giant "Atomic Ingestion" Log Box** | **DELETE** | Replaced with a single slim top progress bar (`Ingesting 12 / 50... 24%`) that **automatically disappears** the instant ingestion finishes. |
+| **50 Keywords & Long Descriptions in Rows** | **HIDE** | Completely removed from cards and rows. Clicking a photo thumbnail or the subtle `Metadata` icon opens a clean **Lightbox & Metadata Inspector Modal** with 1-click Copy (`Title`, `Description`, `Keywords`) and inline editing. |
+| **Raw Uncleaned Filenames (`B01_AI_PH_001_...`)** | **CLEAN** | Cards and rows display the clean human-readable title (or auto-cleaned filename stripped of `B01_AI_PH_001_` prefixes and underscores). Raw filename is shown only inside the Inspector Modal. |
+| **"Auto-Fill" & Redundant Row Buttons** | **DELETE** | Removed completely. Imported assets already have metadata; editing happens via the Inspector Modal or Metadata Studio. |
+| **Scattered Secondary Buttons** | **CONSOLIDATE** | `Bulk Edit SEO`, `Auto-Trim Keywords`, `Reconcile Baskets`, `Load Sample Batch`, and `Clear Vault` are grouped inside a single clean **`(...) More`** dropdown menu. |
+| **Hidden OS Storage Location** | **ADD** | Added a prominent 1-click **`Open Master Folder`** button directly in the toolbar that opens `/StockFlow/Master_Vault` in Windows File Explorer (`shell.openPath`). |
+
+---
+
+### B. Overview Screen (`HomeHubView`)
+
+| Legacy Clutter Element | Action | New Contributor-First Replacement |
+| :--- | :--- | :--- |
+| **3 Technical Telemetry Cards (SQLite WAL, KeyRing RPM, Ghostscript Pool)** | **DELETE** | Replaced by a clean **Global Portfolio KPI Strip** (`Total Vault Assets`, `Ready to Export`, `Pending Reconciliation`, `Needs Fix / Rejected`) + quick `AI Keys` & `CSV Specs` header buttons. |
+| **"Master Brain" Promotional Banner** | **DELETE** | Removed entirely. |
+| **"Production Pipeline Step 01–04" Tutorial Cards** | **DELETE** | Removed entirely. Navigation already lives in the left sidebar rail. |
+| **"Supported Stock Agencies (UTF-8)" Footer Grid** | **REPLACE** | Upgraded into the **Top 6 Agency Readiness Cards** (`Adobe Stock`, `Freepik`, `Shutterstock`, `Vecteezy`, `Dreamstime`, `123RF`) showing exact `New`, `Pending`, and `Rejected` counts. Clicking any card jumps straight to the Tracker focused on that agency. |
+
+---
+
+### C. Minimalist FTP Uploader (`FtpUploaderView`)
+
+| Legacy Clutter Element | Action | New Contributor-First Replacement |
+| :--- | :--- | :--- |
+| **Dry-Run Fault Injection Card** | **REMOVE FROM UI** | Removed from the visible sidebar so the UI stays 100% focused on real contributor execution (fault injection remains available programmatically for automated unit tests). |
+| **4-Box Telemetry Cockpit & Dual Progress Bars** | **SIMPLIFY** | Condensed into a single sleek **Live Transfer Header** showing `File X of N`, a single smooth progress bar, `Speed (MB/s)`, and `ETA`, plus the 3 auto-route counters (`/` · `/additional` · `/video`). |
+
+---
+
+## 2. Visual Architecture & Layout Blueprint
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────────┐
-│ Top Command Strip: [Dreamstime PoC Badge]  [Mode: Live FTP | Dry-Run Sim]  [Session Logs]│
-├───────────────────────────┬──────────────────────────────────────────────────────────────┤
-│ LEFT COLUMN (320px Fixed) │ RIGHT MAIN EXECUTION CANVAS (Flex-1, ~82% Viewport Width)    │
-│                           │                                                              │
-│ 1. Credential Vault Card  │ 1. Live Telemetry Cockpit (Shadcn Card + Progress)           │
-│  ┌─────────────────────┐  │  ┌────────────────────────────────────────────────────────┐  │
-│  │ Host: ftp.dreams... │  │  │ Batch: 14 / 50 Files (28%)     Speed: 6.4 MB/s         │  │
-│  │ Port: 21  [FTPS ✓]  │  │  │ [██████████░░░░░░░░░░░░░░░░░░] ETA: 02m 18s            │  │
-│  │ User: [..........]  │  │  │ Active: B01_Drone_4K.mp4 → /video  [██████░░] 74%      │  │
-│  │ Pass: [••••••••••]  │  │  └────────────────────────────────────────────────────────┘  │
-│  │ 🔒 OS DPAPI Secured │  │                                                              │
-│  │ [Save] [Test Conn]  │  │ 2. Compact Dropzone & Action Bar                             │
-│  └─────────────────────┘  │  ┌────────────────────────────────────────────────────────┐  │
-│                           │  │ [+ Add Files / Drop Batch]  [Start Upload] [Pause/Stop]│  │
-│ 2. Dreamstime Auto-Router │  └────────────────────────────────────────────────────────┘  │
-│  ┌─────────────────────┐  │                                                              │
-│  │ • JPG/PNG  → /      │  │ 3. Segmented Queue Tabs (Queued | Succeeded | Failed | Logs) │
-│  │   (32 queued)       │  │  ┌────────────────────────────────────────────────────────┐  │
-│  │ • EPS/AI   → /add.. │  │  │ [All (50)] [Pending (35)] [Succeeded (14)] [Failed (1)]│  │
-│  │   (10 queued)       │  │  ├────────────────────────────────────────────────────────┤  │
-│  │ • MP4/MOV  → /video │  │  │ File               Size    Route        Status / Info  │  │
-│  │   (8 queued)        │  │  │ B01_Solar.jpg      8.2 MB  /            ✓ 100% (1.2s)  │  │
-│  └─────────────────────┘  │  │ B01_Icon.eps       4.1 MB  /additional  ↻ Retry 2/3... │  │
-│                           │  │ B02_Highway.mp4    142 MB  /video       ✕ 550 Timeout  │  │
-│ 3. Simulator Fault Inject │  │                                         [Retry Failed] │  │
-│  (Visible in Dry-Run)     │  └────────────────────────────────────────────────────────┘  │
-└───────────────────────────┴──────────────────────────────────────────────────────────────┘
-```
+│ OVERVIEW (HomeHubView) — Morning Contributor Command Center                              │
+├──────────────────────────────────────────────────────────────────────────────────────────┤
+│ [StockFlow Overview]                       [Total: 50] [New: 20] [Pending: 15] [Fix: 5]  │
+├──────────────────────────────────────────────────────────────────────────────────────────┤
+│ 6 AGENCY READINESS CARDS (1-Click Jump -> Opens Tracker Focused on Selected Agency)      │
+│ ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐      │
+│ │ Adobe Stock   -> │ │ Freepik       -> │ │ Shutterstock  -> │ │ Vecteezy      -> │ ...  │
+│ │ 20 New · 8 Pend  │ │ 24 New · 5 Pend  │ │ 18 New · 4 Pend  │ │ 22 New · 2 Rej   │      │
+│ └──────────────────┘ └──────────────────┘ └──────────────────┘ └──────────────────┘      │
+├──────────────────────────────────────────────────────────────────────────────────────────┤
+│ PORTFOLIO ANALYTICS CHARTS (Submission Progress · Media Mix · Rejection Reasons)         │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
 
-### Key User Flows
-1. **Vault Configuration & Connection Test**:
-   - In the left **Credential Vault** card, the Host defaults to `ftp.dreamstime.com` (Port `21`, Explicit TLS/FTPS toggleable).
-   - The contributor enters their Dreamstime FTP Username and Password and clicks **Save to Secure Vault**.
-   - Electron encrypts the password via `safeStorage.encryptString()` (Windows DPAPI / macOS Keychain) and stores the `enc:<hex>` ciphertext in SQLite. A lock badge confirms `Encrypted at rest via OS Keychain`.
-   - Clicking **Test Connection** performs a handshake (`connect` → `login` → `pwd` → `close`) and displays connection latency (e.g., `Connected · 118ms`).
-2. **Batch Selection & Smart Routing Preview**:
-   - Dropping files or clicking **Add Files** inspects each file's extension and immediately assigns its remote target path according to Dreamstime's specification:
-     - `.jpg`, `.jpeg`, `.png`, `.webp` $\longrightarrow$ `/` (Root directory)
-     - `.eps`, `.ai`, `.svg` $\longrightarrow$ `/additional`
-     - `.mp4`, `.mov`, `.webm` $\longrightarrow$ `/video`
-   - The **Dreamstime Auto-Router** summary card updates live counts per target folder so the contributor can verify the mix before starting.
-3. **Live Execution & 60fps Telemetry**:
-   - Clicking **Start Upload** initiates sequential streaming transfers (or simulated transfers in Dry-Run mode).
-   - The **Live Telemetry Cockpit** displays two synchronized Shadcn `Progress` bars:
-     1. **Overall Batch Progress**: `File X of N` + total bytes transferred vs. total batch bytes, paired with a smoothed **Live Upload Speed (`MB/s`)** and **Batch ETA (`mm:ss`)**.
-     2. **Current File Progress**: Active filename, target remote directory badge (`/` | `/additional` | `/video`), byte progress, and percentage (`0%–100%`).
-4. **Exception Recovery & Persistent Session Logs**:
-   - If a transfer encounters a socket drop or timeout, its row badge transitions to `Retrying (1/3)...` in amber.
-   - If all 3 retries fail, the row moves to the **Failed (`N`)** tab with the exact server error message, while the batch continues uninterrupted.
-   - Clicking **Retry Failed (N)** re-queues only the failed items. Every session and per-file outcome is written to SQLite and viewable in the **Session Logs** tab.
+┌──────────────────────────────────────────────────────────────────────────────────────────┐
+│ DISTRIBUTION TRACKER — Visual Gallery Grid (Default) & Compact List Toggle               │
+├──────────────────────────────────────────────────────────────────────────────────────────┤
+│ [Search...]  [Adobe | Freepik | Shutter | Vecteezy | Dreams | 123RF]  [Filter] [Grid|List]│
+│              [+ Import] [Open Master Folder] [Export Adobe (20)] [...]                   │
+├──────────────────────────────────────────────────────────────────────────────────────────┤
+│ VISUAL GALLERY GRID MODE (Shows ONLY Active Agency Status per Photo Card)                │
+│ ┌─────────────────────────┐ ┌─────────────────────────┐ ┌─────────────────────────┐      │
+│ │ [✓]              [🔍]   │ │ [ ]              [🔍]   │ │ [ ]              [🔍]   │      │
+│ │      LARGE 4:3          │ │      LARGE 4:3          │ │      LARGE 4:3          │      │
+│ │    PHOTO THUMBNAIL      │ │    PHOTO THUMBNAIL      │ │    PHOTO THUMBNAIL      │      │
+│ │                         │ │                         │ │                         │      │
+│ ├─────────────────────────┤ ├─────────────────────────┤ ├─────────────────────────┤      │
+│ │ Luxury Marble Kitchen   │ │ Aerial Mountain Sunrise │ │ Neon Cyberpunk Street   │      │
+│ │ [ ▾ New (Ready)       ] │ │ [ ▾ Pending Upload    ] │ │ [ ▾ Rejected ] [Fix ->] │      │
+│ └─────────────────────────┘ └─────────────────────────┘ └─────────────────────────┘      │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## 3. Key Product Decisions & Trade-Offs
+## 3. Step 2 Execution & Self-Correction Simulation Protocol
 
-- **Decision 1: Throttled 60fps Telemetry Bridge (`16ms–50ms` Rolling Window) vs. Raw Socket Chunk Events**
-  - *Chosen Approach*: `basic-ftp`'s `client.trackProgress()` fires on every raw TCP socket buffer chunk (potentially thousands of times per second on gigabit connections). The Node.js main process will aggregate bytes in memory, calculate an Exponential Moving Average (EMA) transfer speed, and emit `ftp:telemetry` IPC frames to the React renderer at a capped interval (`~30–60Hz` / every `25ms`), plus immediate emission on file state transitions (`started`, `retrying`, `succeeded`, `failed`).
-  - *Why*: Prevents Electron IPC saturation and React render thrashing, guaranteeing buttery-smooth 60fps progress bars even when uploading 500MB 4K ProRes/MP4 files.
-- **Decision 2: Main-Process Password Decryption Only**
-  - *Chosen Approach*: When saving credentials, the plaintext password is encrypted via Electron `safeStorage` and stored in SQLite. When starting an FTP session, the Node.js FTP worker reads the ciphertext from SQLite and decrypts it via `safeStorage.decryptString()` strictly inside the Electron Main process memory—never sending the decrypted password back to the React renderer.
-  - *Why*: Eliminates credential exposure in DevTools or renderer memory dumps while keeping 1-click connection seamless.
-- **Decision 3: SQLite Persistent FTP Session & Item Audit Tables**
-  - *Chosen Approach*: Store all FTP sessions (`ftp_sessions`) and file transfer events (`ftp_transfer_logs`) in our existing `better-sqlite3` WAL database (with IndexedDB fallback in browser preview), triggering our Event-Driven Hot Backup upon batch completion.
-  - *Why*: Structured relational logs allow querying historical upload speeds, failure rates, and unattended overnight runs, and will link directly to `agency_tracking` in Phase 2.
+Immediately upon your approval of this blueprint, I will execute the following steps:
 
----
-
-## 4. Technical Architecture & Data Strategy *(Technical Reference)*
-
-### System Architecture & Telemetry Bridge Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                       REACT RENDERER (Shadcn FTP Workspace)                     │
-│                                                                                 │
-│  ┌──────────────────────┐   ┌────────────────────────┐   ┌───────────────────┐  │
-│  │ CredentialVaultPanel │   │  LiveTelemetryCockpit  │   │ TransferQueueGrid │  │
-│  │ (Host, User, DPAPI)  │   │ (Batch %, File %, ETA) │   │ (Queued/OK/Failed)│  │
-│  └──────────┬───────────┘   └───────────▲────────────┘   └─────────▲─────────┘  │
-└─────────────┼───────────────────────────┼──────────────────────────┼────────────┘
-              │ ipcRenderer.invoke        │ ipcRenderer.on           │
-              │ ('ftp:saveCreds' /        │ ('ftp:telemetry'         │
-              │  'ftp:startBatch')        │  throttled @ 40Hz)       │
-==============▼===========================┼==========================┼============
-              │                           │                          │
-┌─────────────▼───────────────────────────┴──────────────────────────┴────────────┐
-│                        ELECTRON MAIN PROCESS (Node.js)                          │
-│                                                                                 │
-│  ┌───────────────────────────────────────────────────────────────────────────┐  │
-│  │ FtpTransferOrchestrator (Queue Runner, Exponential Backoff 3x, EMA Speed) │  │
-│  └──────┬───────────────────────────────┬─────────────────────────────┬──────┘  │
-│         │                               │                             │         │
-│         ▼                               ▼                             ▼         │
-│  ┌──────────────────┐         ┌────────────────────┐       ┌─────────────────┐  │
-│  │ OS safeStorage   │         │ StockTransferEngine│       │ SQLite WAL DB   │  │
-│  │ (DPAPI/Keychain) │         │ ├─ BasicFtpAdapter │       │ ├─ ftp_profiles │  │
-│  │ Decrypts in Main │         │ └─ DryRunSimulator │       │ ├─ ftp_sessions │  │
-│  └──────────────────┘         └─────────┬──────────┘       │ └─ ftp_logs     │  │
-│                                         │                  └─────────────────┘  │
-└─────────────────────────────────────────┼───────────────────────────────────────┘
-                                          │ FTP / Explicit FTPS (Port 21)
-                                          ▼
-                         ┌─────────────────────────────────┐
-                         │   Dreamstime FTP Server         │
-                         │   ├── /            (JPG/PNG)    │
-                         │   ├── /additional  (EPS/AI)     │
-                         │   └── /video       (MP4/MOV)    │
-                         └─────────────────────────────────┘
-```
-
-### Data Model & SQLite Persistence Schema
-1. **`ftp_profiles` Table (Credential Vault)**:
-   - `agency_id` (`PRIMARY KEY`, e.g., `'dreamstime'`), `protocol` (`'ftp' | 'ftps' | 'sftp'`), `host` (`'ftp.dreamstime.com'`), `port` (`21`), `username`, `encrypted_password` (`enc:<hex>` via `safeStorage`), `passive_mode` (`1`), `last_verified_at`, `updated_at`.
-2. **`ftp_sessions` Table (Batch Session Audit)**:
-   - `id` (`UUID`), `agency_id` (`'dreamstime'`), `mode` (`'live' | 'dry_run'`), `started_at`, `completed_at`, `status` (`'running' | 'completed' | 'partial_failure' | 'aborted'`), `total_files`, `succeeded_files`, `failed_files`, `total_bytes`, `average_speed_bps`.
-3. **`ftp_transfer_logs` Table (Per-File Resiliency & Telemetry Log)**:
-   - `id` (`UUID`), `session_id`, `filename`, `local_path`, `file_size`, `media_type`, `remote_directory` (`'/' | '/additional' | '/video'`), `remote_path`, `status` (`'queued' | 'uploading' | 'retrying' | 'succeeded' | 'failed'`), `retry_count` (`0–3`), `error_code`, `error_message`, `duration_ms`, `completed_at`.
-
-### Interactive Component & State Mapping
-- **Dreamstime Extension Router (`resolveDreamstimeRoute(filename)`)**:
-  - Pure, deterministic mapper that inspects file extensions on ingest: raster images route to `/`, vector sources (`.eps`, `.ai`, `.svg`) route to `/additional`, and video clips (`.mp4`, `.mov`, `.webm`) route to `/video`.
-- **60fps EMA Speed & ETA Calculator**:
-  - Tracks a rolling 3-second sliding window of transferred byte deltas to compute instantaneous speed and smooth it via Exponential Moving Average ($S_t = \alpha \cdot S_{\text{instant}} + (1 - \alpha) \cdot S_{t-1}$).
-  - Computes $\text{ETA (seconds)} = \frac{\text{Remaining Batch Bytes}}{\max(S_t, 1)}$ so the countdown remains steady and accurate across mixed file sizes.
-- **Dry-Run Simulator Controls**:
-  - When **Dry-Run Mode** is active, contributors can toggle a **"Simulate Network Drop on Next File"** switch to watch the engine trigger `Retry 1/3` $\rightarrow$ `Retry 2/3` $\rightarrow$ `Retry 3/3` with backoff timers, or let it exhaust all 3 retries to test the **Failed Queue** and **1-Click Retry Failed** workflow before connecting to live Dreamstime servers.
+1. **Implement the Redesigned Views**:
+   - Rewrite `HomeHubView.tsx` with the **6 Agency Readiness Cards** (wired to jump directly into `DistributionTrackerView` with `activeAgency` focused) and the **Portfolio Analytics Charts**.
+   - Rewrite `DistributionTrackerView.tsx` with **Visual Gallery Grid Mode (Default)** (large thumbnails, clean titles, single active agency status dropdown, hover metadata inspector modal, 1-click copy buttons, `Open Master Folder` button, auto-hiding ingestion progress bar, and `(...) More` menu) plus the **Clean Compact List View Mode** toggle.
+   - Streamline `FtpUploaderView.tsx` into a clean, minimalist layout containing only the Dreamstime Credential Vault, Smart Auto-Router badges (`/`, `/additional`, `/video`), Live Progress/Speed/ETA bar, and Transfer Queue.
+2. **Seed 50 Realistic Heterogeneous Mock Assets**:
+   - Create a rich 50-asset generator covering every real-world contributor state across all 6 agencies:
+     - **20 `New` assets** (ready for export across photos, vectors, and 4K videos)
+     - **15 `Pending Upload` assets** (with active Export Baskets ready for Drag & Drop or `Shift+Click` reconciliation)
+     - **10 `Uploaded` / `Accepted` assets**
+     - **5 `Rejected` assets** (with specific rejection reasons like *Technical Quality / Artifacts*, *Similar / Duplicate Submission*, and *Missing Model Release* so the `Fix & Re-Queue` button is immediately testable)
+     - Crisp, high-resolution SVG/Canvas data-URI photography/vector/video thumbnails so every single card in the gallery looks like a real studio shoot.
+3. **Automated Layout & Visual Self-Audit**:
+   - Inspect the rendered DOM & visual hierarchy across `Overview`, `Tracker (Gallery Grid)`, `Tracker (Compact List)`, and `FTP Uploader`, verifying zero text overlap, zero horizontal overflow, clean spacing, and passing all unit/integration tests, TypeScript compilation, and ESLint checks.

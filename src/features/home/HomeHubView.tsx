@@ -1,29 +1,44 @@
-import React from 'react';
-import { db, useSqliteQuery, getAppSettings } from '../../db';
+import React, { useState } from 'react';
+import { db, useSqliteQuery } from '../../db';
+import { SupportedPlatform } from '../../types';
 import { AppLogo } from '../../components/icons/AppLogo';
 import { getPlatformLogo } from '../../components/icons/StockLogos';
-import { PLATFORMS_CONFIG } from '../../constants/platforms';
 import { Button } from '../../components/ui/button';
 import {
-  Activity,
-  CheckCircle2,
-  Cpu,
-  Database,
+  ArrowUpRight,
   FileSpreadsheet,
   KeyRound,
-  ShieldCheck,
+  RefreshCw,
+  Sparkles,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
 import { TrackerAnalyticsCharts } from '../tracker/TrackerAnalyticsCharts';
+import { seedMassiveContributorPortfolio } from '../../services/tracker/portfolioSeeder';
 
 export interface HomeHubViewProps {
-  onNavigate?: (tool: 'tracker' | 'studio' | 'cleaner' | 'muter' | 'eps' | 'ftp') => void;
+  onNavigate?: (
+    tool: 'tracker' | 'studio' | 'cleaner' | 'muter' | 'eps' | 'ftp',
+    focusAgency?: SupportedPlatform
+  ) => void;
   onOpenKeyRing?: () => void;
   onOpenTemplates?: () => void;
 }
 
+const AGENCY_CARDS: Array<{
+  id: SupportedPlatform;
+  name: string;
+}> = [
+  { id: 'adobe', name: 'Adobe Stock' },
+  { id: 'freepik', name: 'Freepik' },
+  { id: 'shutterstock', name: 'Shutterstock' },
+  { id: 'vecteezy', name: 'Vecteezy' },
+  { id: 'dreamstime', name: 'Dreamstime' },
+  { id: '123rf', name: '123RF' },
+];
+
 /**
- * Clean StockFlow System Status & Workflow Overview
+ * Contributor Morning Command Center (Overview)
+ * 100% data-driven: 6 Agency Readiness Cards (1-click jump to Tracker Focus Mode) + Portfolio Analytics Charts.
  */
 export const HomeHubView: React.FC<HomeHubViewProps> = ({
   onNavigate,
@@ -31,264 +46,205 @@ export const HomeHubView: React.FC<HomeHubViewProps> = ({
   onOpenTemplates,
 }) => {
   const { language } = useLanguage();
+  const [isSeeding, setIsSeeding] = useState(false);
 
   const masterRecords = useSqliteQuery(() => db.masterRecords.toArray(), [], []) || [];
   const masterCount = masterRecords.length;
   const trackerStats = useSqliteQuery(() => db.tracker.getStats(), [masterCount], undefined);
-  const keys = useSqliteQuery(() => db.apiKeys.toArray(), [], []) || [];
-  const appSettings = useSqliteQuery(() => getAppSettings(), [], null);
 
-  const isLocalAi = appSettings?.aiExecutionMode === 'local';
-  const localModelName = appSettings?.localAiConfig?.modelId?.trim() || 'LM Studio (Local VLM)';
-  const healthyKeys = keys.filter((k) => k.status === 'healthy');
-  const totalRpm = healthyKeys.reduce((acc, k) => acc + (k.rpmLimit || 15), 0);
+  const handleSeedDemoPortfolio = async () => {
+    if (isSeeding) return;
+    setIsSeeding(true);
+    try {
+      await seedMassiveContributorPortfolio(50);
+    } finally {
+      setIsSeeding(false);
+    }
+  };
 
   return (
-    <div className="max-w-5xl mx-auto space-y-3.5">
-      {/* Compact Top Status Bar */}
+    <div className="max-w-7xl mx-auto space-y-4">
+      {/* Compact Top Command Bar with Global Portfolio Counters */}
       <div className="px-4 py-3 rounded-xl border border-border bg-card flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <AppLogo size={32} className="shrink-0" />
-          <div className="flex items-center gap-2">
-            <h1 className="text-sm sm:text-base font-semibold tracking-tight text-foreground">
-              StockFlow
+          <AppLogo size={28} className="shrink-0" />
+          <div>
+            <h1 className="text-sm sm:text-base font-bold tracking-tight text-foreground">
+              {language === 'ar' ? 'مركز عمليات المساهم' : 'Contributor Overview'}
             </h1>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-secondary border border-border text-muted-foreground">
-              v2.4 Desktop
-            </span>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono tabular-nums">
+              <span>{masterCount} Assets in Vault</span>
+              <span aria-hidden="true">·</span>
+              <span className="text-emerald-400">
+                {trackerStats?.acceptedCount ?? 0} Accepted
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className="text-amber-400">
+                {trackerStats?.pendingUploadCount ?? 0} Pending
+              </span>
+              {(trackerStats?.rejectedCount ?? 0) > 0 && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="text-destructive font-semibold">
+                    {trackerStats?.rejectedCount} Needs Fix
+                  </span>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          {onOpenKeyRing && (
-            <Button variant="outline" size="sm" onClick={onOpenKeyRing} className="h-8 text-xs gap-1.5 cursor-pointer">
-              {isLocalAi ? <Cpu className="w-3.5 h-3.5 text-primary" /> : <KeyRound className="w-3.5 h-3.5 text-primary" />}
-              <span>{language === 'ar' ? 'إعدادات الذكاء والمفاتيح' : 'AI & API Keys'}</span>
-            </Button>
-          )}
-          {onOpenTemplates && (
-            <Button variant="outline" size="sm" onClick={onOpenTemplates} className="h-8 text-xs gap-1.5 cursor-pointer">
-              <FileSpreadsheet className="w-3.5 h-3.5 text-primary" />
-              <span>{language === 'ar' ? 'قوالب CSV' : 'CSV Templates'}</span>
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {/* Live Local Environment Telemetry Strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="p-3.5 rounded-xl border border-border bg-card space-y-1">
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>{language === 'ar' ? 'سجلات الاستوديو المحفوظة' : 'Indexed Studio Assets'}</span>
-            <Database className="w-3.5 h-3.5 text-primary" />
-          </div>
-          <div className="text-lg font-semibold font-mono tabular-nums text-foreground">
-            {masterCount}
-          </div>
-          <p className="text-[11px] text-muted-foreground">
-            {language === 'ar' ? 'مخزنة محلياً في SQLite' : 'Persisted locally in SQLite (WAL)'}
-          </p>
-        </div>
-
-        <div className="p-3.5 rounded-xl border border-border bg-card space-y-1">
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <Button
+            type="button"
+            variant={masterCount === 0 ? 'default' : 'outline'}
+            size="sm"
+            disabled={isSeeding}
+            onClick={handleSeedDemoPortfolio}
+            data-testid="seed-50-portfolio-btn"
+            className="h-8 text-xs gap-1.5 cursor-pointer"
+          >
+            {isSeeding ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="w-3.5 h-3.5 text-primary" />
+            )}
             <span>
-              {isLocalAi
-                ? language === 'ar' ? 'محرك الذكاء المحلي' : 'Local AI Engine'
-                : language === 'ar' ? 'مفاتيح API النشطة' : 'Cloud KeyRing Capacity'}
+              {masterCount === 0 ? 'Load 50 Sample Assets' : 'Reset 50 Sample Assets'}
             </span>
-            {isLocalAi ? <Cpu className="w-3.5 h-3.5 text-primary" /> : <Activity className="w-3.5 h-3.5 text-primary" />}
-          </div>
-          {isLocalAi ? (
-            <>
-              <div dir="ltr" className="text-sm font-semibold font-mono text-foreground truncate text-start pt-0.5">
-                {localModelName}
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                {language === 'ar' ? 'طابور تسلسلي (1 تلو الآخر) · 45+ كلمة' : 'Strict 1-by-1 queue · 45+ keywords'}
-              </p>
-            </>
-          ) : (
-            <>
-              <div dir="ltr" className="text-lg font-semibold font-mono tabular-nums text-foreground text-start">
-                {healthyKeys.length}{' '}
-                <span className="text-xs font-normal text-muted-foreground">
-                  / {keys.length} {language === 'ar' ? 'مفتاح' : 'keys'} ({totalRpm} RPM)
-                </span>
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                {language === 'ar' ? 'تشفير محلي وتبديل تلقائي عند 429' : 'DPAPI encrypted · 429 auto-failover'}
-              </p>
-            </>
+          </Button>
+
+          {onOpenKeyRing && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onOpenKeyRing}
+              className="h-8 text-xs gap-1.5 cursor-pointer"
+            >
+              <KeyRound className="w-3.5 h-3.5 text-primary" />
+              <span>{language === 'ar' ? 'مفاتيح AI' : 'AI Keys'}</span>
+            </Button>
+          )}
+
+          {onOpenTemplates && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onOpenTemplates}
+              className="h-8 text-xs gap-1.5 cursor-pointer"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-primary" />
+              <span>{language === 'ar' ? 'قوالب CSV' : 'CSV Specs'}</span>
+            </Button>
           )}
         </div>
-
-        <div className="p-3.5 rounded-xl border border-border bg-card space-y-1">
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>{language === 'ar' ? 'حالة محرك سطح المكتب' : 'Native Desktop Bridge'}</span>
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-          </div>
-          <div className="text-sm font-semibold text-foreground flex items-center gap-1.5 pt-0.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-            <span>{language === 'ar' ? 'متصل (نظام الملفات + Ghostscript)' : 'Online (FS + Ghostscript Pool)'}</span>
-          </div>
-          <p className="text-[11px] text-muted-foreground">
-            {language === 'ar' ? 'معالجة محلية بالكامل 100%' : '100% local file system execution'}
-          </p>
-        </div>
       </div>
 
-      {/* Master Brain: Microstock Distribution Tracker Banner */}
-      <div className="p-3.5 rounded-xl border border-primary/30 bg-primary/5 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <div className="w-9 h-9 rounded-lg bg-primary/15 border border-primary/30 flex items-center justify-center text-primary shrink-0">
-            <Database className="w-4 h-4" />
-          </div>
-          <div className="space-y-0.5">
-            <div className="flex items-center gap-2">
-              <h2 className="text-xs font-bold text-foreground">
-                {language === 'ar'
-                  ? 'متتبع التوزيع المركزي (Master Vault)'
-                  : 'Microstock Distribution Tracker (Master Brain)'}
-              </h2>
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500 border border-emerald-500/30 font-semibold">
-                {language === 'ar' ? 'نسخ احتياطي فوري (WAL)' : 'Event-Driven Hot Backup'}
-              </span>
-            </div>
-            <p className="text-[11px] text-muted-foreground leading-relaxed">
-              {language === 'ar'
-                ? 'استيراد ذري آمن (نسخ فقط)، منع التكرار بـ SHA-256، سلات تصدير (Pending Upload)، وتتبع الحالة عبر 6 وكالات.'
-                : 'Copy-only atomic ingestion, SHA-256 deduplication, Export Baskets (Pending Upload), and 6-agency lifecycle reconciliation.'}
-            </p>
-          </div>
+      {/* Section 1: 6 Agency Readiness Cards (1-Click Jump -> Opens Tracker Focused on Selected Agency) */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between px-0.5">
+          <h2 className="text-xs font-semibold text-foreground">
+            {language === 'ar'
+              ? 'جاهزية الوكالات الست (اضغط للفتح والتصدير فوراً)'
+              : 'Agency Upload Readiness — Click any agency to jump to Tracker'}
+          </h2>
+          <span className="text-xs text-muted-foreground">
+            {language === 'ar' ? 'توجيه فوري بضغطة واحدة' : '1-Click Focus Mode Jump'}
+          </span>
         </div>
-        <Button
-          variant="default"
-          size="sm"
-          onClick={() => onNavigate?.('tracker')}
-          className="h-8 text-xs gap-1.5 cursor-pointer shrink-0"
+
+        <div
+          data-testid="agency-readiness-grid"
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-2.5"
         >
-          <Database className="w-3.5 h-3.5" />
-          <span>{language === 'ar' ? 'فتح متتبع التوزيع' : 'Open Distribution Tracker'}</span>
-        </Button>
+          {AGENCY_CARDS.map((agency) => {
+            const agStats = trackerStats?.perAgencyStats?.[agency.id] || {
+              New: 0,
+              'Pending Upload': 0,
+              Uploaded: 0,
+              'In Review': 0,
+              Accepted: 0,
+              Rejected: 0,
+            };
+            const newReady = agStats.New;
+            const pending = agStats['Pending Upload'];
+            const accepted = agStats.Accepted + agStats.Uploaded + agStats['In Review'];
+            const rejected = agStats.Rejected;
+            const total = Math.max(1, masterCount);
+            const sentPct = Math.min(100, Math.round((accepted / total) * 100));
+
+            return (
+              <button
+                key={agency.id}
+                type="button"
+                data-testid={`agency-readiness-card-${agency.id}`}
+                onClick={() => onNavigate?.('tracker', agency.id)}
+                className="group p-3.5 rounded-xl border border-border bg-card hover:border-primary/50 hover:bg-secondary/30 transition-all text-start flex flex-col justify-between gap-3 cursor-pointer"
+              >
+                {/* Agency Header */}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="shrink-0">{getPlatformLogo(agency.id, 18)}</span>
+                    <span className="text-xs font-bold text-foreground truncate">
+                      {agency.name}
+                    </span>
+                  </div>
+                  <ArrowUpRight className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform shrink-0" />
+                </div>
+
+                {/* Primary Hero Metric: Ready to Export (New) */}
+                <div className="space-y-0.5">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-xl font-bold font-mono tabular-nums text-foreground">
+                      {newReady}
+                    </span>
+                    <span className="text-[11px] font-medium text-primary">
+                      Ready to Export
+                    </span>
+                  </div>
+
+                  {/* Secondary Unboxed Metrics Line */}
+                  <div className="flex items-center gap-1.5 text-[11px] font-mono tabular-nums text-muted-foreground pt-0.5">
+                    <span className={pending > 0 ? 'text-amber-400 font-medium' : ''}>
+                      {pending} Pending
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span className={rejected > 0 ? 'text-destructive font-semibold' : ''}>
+                      {rejected > 0 ? `${rejected} Rejected` : `${accepted} Sent`}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Slim Completion Bar */}
+                <div className="w-full h-1.5 rounded-full bg-secondary overflow-hidden flex">
+                  {sentPct > 0 && (
+                    <div
+                      style={{ width: `${sentPct}%` }}
+                      className="h-full bg-emerald-500 transition-all"
+                    />
+                  )}
+                  {pending > 0 && (
+                    <div
+                      style={{ width: `${Math.min(100 - sentPct, Math.round((pending / total) * 100))}%` }}
+                      className="h-full bg-amber-500 transition-all"
+                    />
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Live 6-Agency Distribution & Portfolio Analytics Charts */}
+      {/* Section 2: Portfolio Health & Distribution Analytics Charts */}
       <TrackerAnalyticsCharts
         records={masterRecords}
         stats={trackerStats}
-        onSelectAgency={() => onNavigate?.('tracker')}
+        onSelectAgency={(agency) => onNavigate?.('tracker', agency)}
         onSelectStatusFilter={() => onNavigate?.('tracker')}
       />
-
-      {/* Recommended Production Pipeline Sequence */}
-      <div className="p-3.5 rounded-xl border border-border bg-card space-y-2.5">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-semibold text-foreground">
-            {language === 'ar' ? 'مسار العمل القياسي' : 'Production Pipeline'}
-          </h2>
-          <span className="text-[11px] text-muted-foreground">
-            {language === 'ar' ? 'اضغط للانتقال السريع' : 'Click any step to open'}
-          </span>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 text-xs">
-          <button
-            type="button"
-            onClick={() => onNavigate?.('cleaner')}
-            className="p-3 rounded-lg bg-secondary/40 hover:bg-secondary/80 border border-border space-y-1 text-start transition cursor-pointer"
-          >
-            <span className="text-[10px] font-mono font-bold text-primary block">STEP 01</span>
-            <p className="font-semibold text-foreground">
-              {language === 'ar' ? '1. منظم الملفات' : '1. File Cleaner'}
-            </p>
-            <p className="text-[11px] text-muted-foreground leading-snug">
-              {language === 'ar'
-                ? 'فصل دفعات الأصلي (Real) عن AI وترقيم مجلدات B01.'
-                : 'Isolate Real vs AI batches and route into B01 folders.'}
-            </p>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onNavigate?.('eps')}
-            className="p-3 rounded-lg bg-secondary/40 hover:bg-secondary/80 border border-border space-y-1 text-start transition cursor-pointer"
-          >
-            <span className="text-[10px] font-mono font-bold text-primary block">STEP 02</span>
-            <p className="font-semibold text-foreground">
-              {language === 'ar' ? '2. محرك EPS / الصوت' : '2. EPS / Audio Prep'}
-            </p>
-            <p className="text-[11px] text-muted-foreground leading-snug">
-              {language === 'ar'
-                ? 'توليد معاينات JPG بدقة 300 DPI أو كتم صوت الفيديوهات.'
-                : 'Render 300 DPI JPG previews or strip video audio.'}
-            </p>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onNavigate?.('studio')}
-            className="p-3 rounded-lg bg-secondary/40 hover:bg-secondary/80 border border-border space-y-1 text-start transition cursor-pointer"
-          >
-            <span className="text-[10px] font-mono font-bold text-primary block">STEP 03</span>
-            <p className="font-semibold text-foreground">
-              {language === 'ar' ? '3. استوديو Metadata' : '3. Metadata Studio'}
-            </p>
-            <p className="text-[11px] text-muted-foreground leading-snug">
-              {language === 'ar'
-                ? 'توليد العناوين والوصف و 45+ كلمة مفتاحية مرتبة.'
-                : 'Generate titles, descriptions, and 45+ ranked keywords.'}
-            </p>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onOpenTemplates ? onOpenTemplates() : onNavigate?.('studio')}
-            className="p-3 rounded-lg bg-secondary/40 hover:bg-secondary/80 border border-border space-y-1 text-start transition cursor-pointer"
-          >
-            <span className="text-[10px] font-mono font-bold text-primary block">STEP 04</span>
-            <p className="font-semibold text-foreground">
-              {language === 'ar' ? '4. تصدير CSV' : '4. Agency CSV Export'}
-            </p>
-            <p className="text-[11px] text-muted-foreground leading-snug">
-              {language === 'ar'
-                ? 'تصدير ملفات CSV مطابقة للمنصات الست بضغطة واحدة.'
-                : 'Export compliant CSVs for all 6 stock agencies.'}
-            </p>
-          </button>
-        </div>
-      </div>
-
-      {/* Supported Stock Agencies Bar */}
-      <div className="p-3.5 rounded-xl border border-border bg-card space-y-2.5">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-semibold text-foreground">
-            {language === 'ar' ? 'منصات التصدير المدعومة (CSV)' : 'Supported Stock Agencies'}
-          </h2>
-          <span dir="ltr" className="text-[11px] font-mono text-muted-foreground">
-            UTF-8 (No BOM) · Auto-Split
-          </span>
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
-          {Object.values(PLATFORMS_CONFIG).map((p: any) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={onOpenTemplates}
-              className="p-2 rounded-lg border border-border bg-secondary/40 hover:bg-secondary/80 flex items-center gap-2 min-w-0 transition cursor-pointer text-start"
-            >
-              <span className="shrink-0">{getPlatformLogo(p.id, 16)}</span>
-              <div className="min-w-0">
-                <span className="text-xs font-medium text-foreground truncate block">{p.name}</span>
-                <span dir="ltr" className="text-[10px] font-mono text-muted-foreground truncate block">
-                  {p.id === 'dreamstime' ? 'images / videos' : p.filenameSuffix}
-                </span>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
     </div>
   );
 };
-

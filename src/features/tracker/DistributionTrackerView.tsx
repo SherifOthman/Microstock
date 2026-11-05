@@ -20,6 +20,10 @@ import {
   AGENCY_KEYWORD_CAPS,
   autoTrimKeywordsForAgency,
 } from '../../services/tracker/bulkTrackerOperations';
+import {
+  getCleanAssetDisplayTitle,
+  seedMassiveContributorPortfolio,
+} from '../../services/tracker/portfolioSeeder';
 import { RejectionReasonModal } from './RejectionReasonModal';
 import { ExportBasketReconcileModal } from './ExportBasketReconcileModal';
 import { BulkMetadataSurgeryModal } from './BulkMetadataSurgeryModal';
@@ -27,7 +31,7 @@ import { getPlatformLogo } from '../../components/icons/StockLogos';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Checkbox } from '../../components/ui/checkbox';
-import { Tooltip } from '../../components/ui/tooltip';
+import { Progress } from '../../components/ui/progress';
 import { Dialog } from '../../components/ui/dialog';
 import {
   DropdownMenu,
@@ -38,30 +42,18 @@ import {
   DropdownMenuSeparator,
 } from '../../components/ui/dropdown-menu';
 import {
-  Database,
-  FolderPlus,
   UploadCloud,
   CheckCircle2,
-  AlertCircle,
   AlertTriangle,
-  Clock,
-  RotateCcw,
   Search,
-  HardDrive,
   FolderOpen,
-  XCircle,
   PackageCheck,
-  ShieldCheck,
   Film,
   PenTool,
   Image as ImageIcon,
-  ArrowUpRight,
   Sparkles,
-  Copy,
   Check,
-  Archive,
   Eye,
-  Layers,
   Wrench,
   FileText,
   Tag,
@@ -71,6 +63,10 @@ import {
   Focus,
   Filter,
   MoreHorizontal,
+  LayoutGrid,
+  List,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
 
@@ -124,6 +120,23 @@ const STATUS_SHORT_LABELS: Record<TrackerAgencyStatus, string> = {
   Rejected: 'Rejected',
 };
 
+function getStatusBadgeClasses(status: TrackerAgencyStatus): string {
+  switch (status) {
+    case 'Accepted':
+      return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25';
+    case 'Uploaded':
+    case 'In Review':
+      return 'bg-sky-500/15 text-sky-400 border-sky-500/30 hover:bg-sky-500/25';
+    case 'Pending Upload':
+      return 'bg-amber-500/15 text-amber-400 border-amber-500/30 hover:bg-amber-500/25';
+    case 'Rejected':
+      return 'bg-destructive/15 text-destructive border-destructive/40 hover:bg-destructive/25';
+    case 'New':
+    default:
+      return 'bg-secondary text-foreground border-border hover:bg-secondary/80';
+  }
+}
+
 function resolveAssetBatchGroup(rec: MasterMetadataRecord): string {
   if (rec.batchId && rec.batchId.trim()) {
     return rec.batchId.trim().toUpperCase();
@@ -165,7 +178,10 @@ export const DistributionTrackerView: React.FC<DistributionTrackerViewProps> = (
   const workspacePaths = useSqliteQuery(() => db.tracker.getWorkspacePaths(), [], undefined);
   const exportBaskets = useSqliteQuery(() => db.tracker.getExportBaskets(), [masterRecords.length], []) || [];
 
-  // Live Atomic Ingestion Pipeline state
+  // View Mode: Visual Gallery Grid (default) vs Clean Compact List
+  const [viewMode, setViewMode] = useState<'gallery' | 'list'>('gallery');
+
+  // Auto-disappearing Ingestion Progress Bar state
   const [ingestionItems, setIngestionItems] = useState<IngestionQueueItem[]>([]);
   const [isIngesting, setIsIngesting] = useState(false);
 
@@ -178,9 +194,110 @@ export const DistributionTrackerView: React.FC<DistributionTrackerViewProps> = (
   const [mediaFilter, setMediaFilter] = useState<MediaType | 'ALL'>('ALL');
   const [originFilter, setOriginFilter] = useState<'ALL' | 'AI' | 'REAL'>('ALL');
   const [batchFilter, setBatchFilter] = useState<string>('ALL');
-  const [isFocusMode, setIsFocusMode] = useState(false);
+  const [isFocusMode, setIsFocusMode] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastSelectedIdx, setLastSelectedIdx] = useState<number | null>(null);
+
+  // Modals & Copy Feedback State
+  const [isBasketsModalOpen, setIsBasketsModalOpen] = useState(false);
+  const [isBulkSeoModalOpen, setIsBulkSeoModalOpen] = useState(false);
+  const [inspectedAssetId, setInspectedAssetId] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Editable state inside Metadata Inspector Modal
+  const [editTitle, setEditTitle] = useState('');
+  const [editDesc, setEditDesc] = useState('');
+  const [editKeywords, setEditKeywords] = useState('');
+
+  useEffect(() => {
+    if (initialFocusAgency) {
+      setActiveAgency(initialFocusAgency);
+      setIsFocusMode(true);
+    }
+  }, [initialFocusAgency]);
+
+  const [rejectionModalState, setRejectionModalState] = useState<{
+    open: boolean;
+    agencyId: SupportedPlatform;
+    assetIds: string[];
+    allAgencies?: boolean;
+  }>({
+    open: false,
+    agencyId: 'adobe',
+    assetIds: [],
+  });
+
+  const [actionBanner, setActionBanner] = useState<{
+    type: 'success' | 'warning' | 'error';
+    message: string;
+    folderPath?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    const unsub = atomicIngestionService.subscribe((items, running) => {
+      setIngestionItems(items);
+      setIsIngesting(running);
+    });
+    return () => unsub();
+  }, []);
+
+  const batchGroups = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const rec of masterRecords) {
+      const b = resolveAssetBatchGroup(rec);
+      counts.set(b, (counts.get(b) || 0) + 1);
+    }
+    return Array.from(counts.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [masterRecords]);
+
+  const preflightByAssetId = useMemo(() => {
+    const map = new Map<string, AgencyPreflightWarning[]>();
+    for (const rec of masterRecords) {
+      const warnings = evaluateAgencyPreflight(rec, activeAgency);
+      if (warnings.length > 0) {
+        map.set(rec.id, warnings);
+      }
+    }
+    return map;
+  }, [masterRecords, activeAgency]);
+
+  const filteredRecords = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return masterRecords.filter((rec) => {
+      if (mediaFilter !== 'ALL' && (rec.mediaType || 'image') !== mediaFilter) return false;
+      if (originFilter === 'AI' && !rec.isAiGenerated) return false;
+      if (originFilter === 'REAL' && rec.isAiGenerated) return false;
+      if (batchFilter !== 'ALL' && resolveAssetBatchGroup(rec) !== batchFilter) return false;
+
+      if (statusFilter !== 'ALL') {
+        const agencyTrack = rec.agencyTrackings?.[activeAgency];
+        const currentSt = agencyTrack?.status || 'New';
+        if (currentSt !== statusFilter) return false;
+      }
+
+      if (onlyWarningsFilter && !preflightByAssetId.has(rec.id)) {
+        return false;
+      }
+
+      if (q) {
+        const matchFile = rec.filename.toLowerCase().includes(q);
+        const matchTitle = (rec.baseTitle || '').toLowerCase().includes(q);
+        const matchKw = (rec.rankedKeywords || []).some((k) => k.toLowerCase().includes(q));
+        if (!matchFile && !matchTitle && !matchKw) return false;
+      }
+      return true;
+    });
+  }, [
+    masterRecords,
+    searchQuery,
+    mediaFilter,
+    originFilter,
+    batchFilter,
+    statusFilter,
+    onlyWarningsFilter,
+    activeAgency,
+    preflightByAssetId,
+  ]);
 
   const activeFilterCount =
     (statusFilter !== 'ALL' ? 1 : 0) +
@@ -197,149 +314,94 @@ export const DistributionTrackerView: React.FC<DistributionTrackerViewProps> = (
     setOnlyWarningsFilter(false);
   };
 
-  // Modals & Copy Feedback State
-  const [isBasketsModalOpen, setIsBasketsModalOpen] = useState(false);
-  const [isBulkSeoModalOpen, setIsBulkSeoModalOpen] = useState(false);
-  const [inspectedAssetId, setInspectedAssetId] = useState<string | null>(null);
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (initialFocusAgency) {
-      setActiveAgency(initialFocusAgency);
-    }
-  }, [initialFocusAgency]);
-
-  // Rejection Modal State
-  const [rejectionModalState, setRejectionModalState] = useState<{
-    open: boolean;
-    agencyId: SupportedPlatform;
-    assetIds: string[];
-    allAgencies?: boolean;
-  }>({
-    open: false,
-    agencyId: 'adobe',
-    assetIds: [],
+  // Virtualizer for Compact List Mode (44px compressed rows)
+  const rowVirtualizer = useVirtualizer({
+    count: filteredRecords.length,
+    getScrollElement: () => parentScrollRef.current,
+    estimateSize: () => 44,
+    overscan: 14,
   });
-
-  // Feedback banner
-  const [actionBanner, setActionBanner] = useState<{
-    type: 'success' | 'warning' | 'error';
-    message: string;
-    folderPath?: string;
-  } | null>(null);
-
-  useEffect(() => {
-    const unsub = atomicIngestionService.subscribe((items, running) => {
-      setIngestionItems(items);
-      setIsIngesting(running);
-    });
-    return () => unsub();
-  }, []);
-
-  // Smart Batch / Shoot Groups extracted from masterRecords
-  const batchGroups = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const rec of masterRecords) {
-      const b = resolveAssetBatchGroup(rec);
-      counts.set(b, (counts.get(b) || 0) + 1);
-    }
-    return Array.from(counts.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [masterRecords]);
-
-  // Pre-compute 6-Agency Pre-Flight Warnings for the active agency
-  const preflightByAssetId = useMemo(() => {
-    const map = new Map<string, AgencyPreflightWarning[]>();
-    for (const rec of masterRecords) {
-      const warnings = evaluateAgencyPreflight(rec, activeAgency);
-      if (warnings.length > 0) {
-        map.set(rec.id, warnings);
-      }
-    }
-    return map;
-  }, [masterRecords, activeAgency]);
-
-  const activeAgencyWarningCount = preflightByAssetId.size;
-  const activeAgencyCap = AGENCY_KEYWORD_CAPS[activeAgency] || 50;
-  const overKeywordCapRecords = useMemo(
-    () => masterRecords.filter((r) => (r.rankedKeywords || []).length > activeAgencyCap),
-    [masterRecords, activeAgencyCap]
-  );
-
-  // Filtered records for the Virtualized Grid
-  const filteredRecords = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-    return masterRecords.filter((rec) => {
-      if (mediaFilter !== 'ALL' && (rec.mediaType || 'image') !== mediaFilter) {
-        return false;
-      }
-      if (originFilter !== 'ALL') {
-        const isAi = Boolean(rec.isAiGenerated);
-        if (originFilter === 'AI' && !isAi) return false;
-        if (originFilter === 'REAL' && isAi) return false;
-      }
-      if (batchFilter !== 'ALL') {
-        if (batchFilter === 'TODAY') {
-          if ((rec.createdAt || 0) < oneDayAgo) return false;
-        } else if (resolveAssetBatchGroup(rec) !== batchFilter) {
-          return false;
-        }
-      }
-      if (statusFilter !== 'ALL') {
-        const agencySt = rec.agencyTrackings?.[activeAgency]?.status || 'New';
-        if (agencySt !== statusFilter) return false;
-      }
-      if (onlyWarningsFilter && !preflightByAssetId.has(rec.id)) {
-        return false;
-      }
-      if (q) {
-        const inName = rec.filename.toLowerCase().includes(q);
-        const inTitle = (rec.baseTitle || '').toLowerCase().includes(q);
-        const inDesc = (rec.detailedDescription || '').toLowerCase().includes(q);
-        const inHash = (rec.fileHash || '').toLowerCase().includes(q);
-        const inTags = (rec.rankedKeywords || []).some((k) => k.toLowerCase().includes(q));
-        if (!inName && !inTitle && !inDesc && !inHash && !inTags) return false;
-      }
-      return true;
-    });
-  }, [
-    masterRecords,
-    mediaFilter,
-    originFilter,
-    batchFilter,
-    statusFilter,
-    onlyWarningsFilter,
-    preflightByAssetId,
-    activeAgency,
-    searchQuery,
-  ]);
 
   const inspectedAsset = useMemo(
     () => masterRecords.find((r) => r.id === inspectedAssetId) || null,
     [masterRecords, inspectedAssetId]
   );
 
-  // Target records for Bulk SEO Surgery (selected rows if any, otherwise filtered rows)
-  const surgeryTargetRecords = useMemo(() => {
-    if (selectedIds.size > 0) {
-      return masterRecords.filter((r) => selectedIds.has(r.id));
+  useEffect(() => {
+    if (inspectedAsset) {
+      setEditTitle(inspectedAsset.baseTitle || getCleanAssetDisplayTitle(inspectedAsset));
+      setEditDesc(inspectedAsset.detailedDescription || '');
+      setEditKeywords((inspectedAsset.rankedKeywords || []).join(', '));
     }
-    return filteredRecords;
-  }, [masterRecords, filteredRecords, selectedIds]);
+  }, [inspectedAsset?.id]);
 
-  // Virtualizer for 60fps scrolling on 50,000+ rows
-  const rowVirtualizer = useVirtualizer({
-    count: filteredRecords.length,
-    getScrollElement: () => parentScrollRef.current,
-    estimateSize: () => 82,
-    overscan: 12,
-  });
+  const handleSaveInspectedMetadata = async () => {
+    if (!inspectedAsset) return;
+    const cleanedKeywords = editKeywords
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean);
+    await db.masterRecords.update(inspectedAsset.id, {
+      baseTitle: editTitle.trim(),
+      detailedDescription: editDesc.trim(),
+      rankedKeywords: cleanedKeywords,
+      updatedAt: Date.now(),
+    });
+    setInspectedAssetId(null);
+    setActionBanner({
+      type: 'success',
+      message: `Saved metadata updates for "${editTitle.trim()}".`,
+    });
+  };
 
-  // Native Shift+Click (Range Select) and Ctrl/Meta+Click (Multi-Toggle Select)
-  const handleToggleSelectRow = (id: string, index: number, shiftKey = false) => {
+  // Granular 1-Click Copy Helpers (Title, Description, Keywords)
+  const copyField = async (key: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    setCopiedKey(key);
+    setTimeout(() => {
+      setCopiedKey((prev) => (prev === key ? null : prev));
+    }, 1500);
+  };
+
+  // Open Master Vault Folder in OS File Explorer
+  const handleOpenMasterVaultFolder = async () => {
+    const folder = workspacePaths?.masterVaultDir || '/StockFlow/Master_Vault';
+    if (typeof window !== 'undefined' && window.electronAPI?.openPath) {
+      const res = await window.electronAPI.openPath(folder);
+      if (!res?.success) {
+        setActionBanner({
+          type: 'warning',
+          message: `Master Vault folder path: ${folder}`,
+          folderPath: folder,
+        });
+      }
+    } else {
+      setActionBanner({
+        type: 'success',
+        message: `Master Vault Location: ${folder}`,
+        folderPath: folder,
+      });
+    }
+  };
+
+  // Selection with Shift+Click range & Ctrl/Cmd+Click multi-select
+  const handleToggleItemSelect = (
+    id: string,
+    index: number,
+    event?: React.MouseEvent
+  ) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (shiftKey && lastSelectedIdx !== null && filteredRecords.length > 0) {
+      if (event?.shiftKey && lastSelectedIdx !== null && filteredRecords.length > 0) {
         const start = Math.min(lastSelectedIdx, index);
         const end = Math.max(lastSelectedIdx, index);
         for (let i = start; i <= end; i++) {
@@ -355,1090 +417,397 @@ export const DistributionTrackerView: React.FC<DistributionTrackerViewProps> = (
     setLastSelectedIdx(index);
   };
 
-  const handleSelectAllFiltered = (checked: boolean) => {
-    if (checked) {
-      setSelectedIds(new Set(filteredRecords.map((r) => r.id)));
-    } else {
+  const handleToggleSelectAll = () => {
+    if (selectedIds.size === filteredRecords.length && filteredRecords.length > 0) {
       setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredRecords.map((r) => r.id)));
     }
   };
 
-  const handleAutoSelectNextAgencyBatch = () => {
-    const limit = DEFAULT_PLATFORM_LIMITS[activeAgency]?.defaultBatchLimit || 50;
-    const eligible = filteredRecords
-      .filter((r) => {
-        const st = r.agencyTrackings?.[activeAgency]?.status || 'New';
-        if (st !== 'New') return false;
-        if (activeAgency === 'freepik' && r.mediaType === 'video') return false;
-        return true;
-      })
-      .slice(0, limit);
-
-    setSelectedIds(new Set(eligible.map((r) => r.id)));
-    setActionBanner({
-      type: 'success',
-      message:
-        language === 'ar'
-          ? `تم تحديد ${eligible.length} ملف جاهز للتصدير إلى ${AGENCY_DISPLAY_NAMES[activeAgency].full}`
-          : `Selected ${eligible.length} 'New' assets ready for ${AGENCY_DISPLAY_NAMES[activeAgency].full} export (batch limit: ${limit}).`,
-    });
-  };
-
-  const handleSelectByStatusForActiveAgency = (targetSt: TrackerAgencyStatus) => {
-    const matching = masterRecords.filter(
-      (r) => (r.agencyTrackings?.[activeAgency]?.status || 'New') === targetSt
-    );
-    setStatusFilter(targetSt);
-    setSelectedIds(new Set(matching.map((r) => r.id)));
-  };
-
-  const handleQuickAutoTrimKeywords = async () => {
-    const targetPool =
-      selectedIds.size > 0
-        ? masterRecords.filter((r) => selectedIds.has(r.id))
-        : overKeywordCapRecords;
-    const res = await autoTrimKeywordsForAgency(targetPool, activeAgency);
-    setActionBanner({
-      type: 'success',
-      message: `Auto-trimmed ${res.updatedCount} asset(s) to ${AGENCY_DISPLAY_NAMES[activeAgency].full} maximum keyword cap (${res.cap} tags).`,
-    });
-  };
-
-  // Sample Demo Batch Seeder (Seeds across B01 and B02 batches with realistic Pre-Flight edge cases)
-  const handleLoadSampleBatch = async () => {
-    const batch1Definitions = [
-      {
-        name: 'B01-AI-PH-001_Golden_Hour_Solar_Panels.jpg',
-        mime: 'image/jpeg',
-        payload: `sample-solar-panel-001-${Date.now()}`,
-      },
-      {
-        name: 'B01-AI-PH-002_Minimalist_Nordic_Office_Desk.jpg',
-        mime: 'image/jpeg',
-        payload: `sample-nordic-office-002-${Date.now()}`,
-      },
-      {
-        name: 'B01-AI-PH-005_Luxury_Marble_Cosmetic_Podium.jpg',
-        mime: 'image/jpeg',
-        payload: `sample-marble-podium-005-${Date.now()}`,
-      },
-    ];
-
-    const batch2Definitions = [
-      {
-        name: 'B02-AI-VC-003_Geometric_Abstract_Brand_Icons.svg',
-        mime: 'image/svg+xml',
-        payload: `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="#1e293b"/><circle cx="100" cy="100" r="60" fill="#38bdf8"/></svg><!--${Date.now()}-->`,
-      },
-      {
-        name: 'B02-AI-VD-004_Aerial_Mountain_Highway_Drone.mp4',
-        mime: 'video/mp4',
-        payload: `sample-aerial-drone-video-004-${Date.now()}`,
-      },
-      {
-        name: 'B02-AI-VC-006_Isometric_Cloud_Security_Infographic.eps',
-        mime: 'application/postscript',
-        payload: `%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 500 500\n% sample-cloud-vector-006-${Date.now()}`,
-      },
-    ];
-
-    const filesB01 = batch1Definitions.map(
-      (d) => new File([d.payload], d.name, { type: d.mime })
-    );
-    const filesB02 = batch2Definitions.map(
-      (d) => new File([d.payload], d.name, { type: d.mime })
-    );
-
-    const res1 = await atomicIngestionService.enqueueFiles(filesB01, {
-      isAiGenerated: true,
-      useAiMetadata: false,
-      batchId: 'B01',
-    });
-    const res2 = await atomicIngestionService.enqueueFiles(filesB02, {
-      isAiGenerated: true,
-      useAiMetadata: false,
-      batchId: 'B02',
-    });
-
-    // Enrich 2 sample records so contributors can immediately test Pre-Flight Warnings & 1-Click Auto-Trim
-    const allRecs = await db.masterRecords.toArray();
-    const solarRec = allRecs.find((r) => r.filename.includes('Golden_Hour_Solar_Panels'));
-    if (solarRec) {
-      const fiftyThreeTags = Array.from({ length: 53 }, (_, idx) =>
-        idx < (solarRec.rankedKeywords || []).length
-          ? solarRec.rankedKeywords[idx]
-          : `renewable_tag_${idx + 1}`
-      );
-      await db.masterRecords.update(solarRec.id, {
-        rankedKeywords: fiftyThreeTags,
-      });
-    }
-
-    const nordicRec = allRecs.find((r) => r.filename.includes('Minimalist_Nordic_Office_Desk'));
-    if (nordicRec) {
-      await db.masterRecords.update(nordicRec.id, {
-        baseTitle:
-          'Minimalist Nordic Home Office Wooden Desk With Ergonomic Chair Natural Window Daylight Scandinavian Interior Architecture Commercial Workspace Studio Photography High Resolution Background Banner For Corporate Presentations',
-      });
-    }
-
-    const totalCommitted = res1.committedCount + res2.committedCount;
-    setActionBanner({
-      type: 'success',
-      message:
-        language === 'ar'
-          ? `تم استيراد ${totalCommitted} ملفات تجريبية عبر دفعتين (B01 و B02) إلى Master Vault بنجاح.`
-          : `Ingested ${totalCommitted} sample assets across Batches B01 & B02 with SHA-256 verification and 6-agency Pre-Flight checks.`,
-    });
-  };
-
-  // Export Basket Creation -> Marks as 'Pending Upload' + Downloads CSV
-  const handleCreateExportBasket = async () => {
-    const targetRecords = masterRecords.filter((r) => selectedIds.has(r.id));
-    if (targetRecords.length === 0) return;
-
-    const batchStamp = `${activeAgency}_${new Date().toISOString().slice(0, 10)}`;
-    const csvResult = generatePlatformCsv(activeAgency, targetRecords, batchStamp);
-
-    if (csvResult.isBlocked) {
-      setActionBanner({
-        type: 'error',
-        message: csvResult.blockedReason || 'Export blocked for selected agency.',
+  // Update agency status (single or bulk)
+  const handleStatusChange = async (
+    assetIds: string[],
+    agencyId: SupportedPlatform,
+    targetStatus: TrackerAgencyStatus,
+    allAgencies = false
+  ) => {
+    if (assetIds.length === 0) return;
+    if (targetStatus === 'Rejected') {
+      setRejectionModalState({
+        open: true,
+        agencyId,
+        assetIds,
+        allAgencies,
       });
       return;
     }
 
-    const basket = await db.tracker.createExportBasket({
-      agencyId: activeAgency,
-      basketName: batchStamp,
-      assetIds: targetRecords.map((r) => r.id),
-      csvFilename: csvResult.filename,
-      csvContent: csvResult.csvString,
-      additionalCsvs: csvResult.additionalResults?.map((ar) => ({
-        filename: ar.filename,
-        csvString: ar.csvString,
-      })),
-    });
+    const targets = allAgencies ? AGENCIES : [agencyId];
+    for (const ag of targets) {
+      await db.tracker.reconcileAgencyStatuses({
+        assetIds,
+        agencyId: ag,
+        targetStatus,
+      });
+    }
+  };
 
-    if (csvResult.csvString) {
-      triggerBrowserCsvDownload(csvResult.filename, csvResult.csvString);
+  // Export Basket for Active Agency (New assets or selected assets)
+  const handleExportActiveAgencyBasket = async () => {
+    const candidates =
+      selectedIds.size > 0
+        ? filteredRecords.filter((r) => selectedIds.has(r.id))
+        : filteredRecords.filter((r) => (r.agencyTrackings?.[activeAgency]?.status || 'New') === 'New');
+
+    if (candidates.length === 0) {
+      setActionBanner({
+        type: 'warning',
+        message: `No "New" or selected assets available to export for ${AGENCY_DISPLAY_NAMES[activeAgency].full}.`,
+      });
+      return;
     }
 
+    const limit = DEFAULT_PLATFORM_LIMITS[activeAgency]?.defaultBatchLimit || 50;
+    const batchSlice = candidates.slice(0, limit);
+    const csvOut = generatePlatformCsv(activeAgency, batchSlice);
+
+    const basket = await db.tracker.createExportBasket({
+      agencyId: activeAgency,
+      basketName: `${activeAgency}_batch_${new Date().toISOString().slice(0, 10)}`,
+      assetIds: batchSlice.map((r) => r.id),
+      csvFilename: csvOut.filename,
+      csvContent: csvOut.csvString,
+    });
+
+    triggerBrowserCsvDownload(csvOut.filename, csvOut.csvString);
+
     setActionBanner({
-      type: 'warning',
-      message:
-        language === 'ar'
-          ? `تم إنشاء سلة التصدير (${basket.itemCount} ملف) وتحميل CSV وتحديث الحالة إلى Pending Upload.`
-          : `Export Basket staged (${basket.itemCount} files + ${csvResult.filename}). Status set to Pending Upload awaiting portal confirmation.`,
+      type: 'success',
+      message: `Exported ${batchSlice.length} assets to ${AGENCY_DISPLAY_NAMES[activeAgency].full} CSV & staged in Pending Upload Basket.`,
       folderPath: basket.stagingFolderPath,
     });
   };
 
-  // Reconciliation Actions (Supports Single Agency OR All 6 Agencies)
-  const handleBulkReconcileStatus = async (
-    targetStatus: TrackerAgencyStatus,
-    overrideAssetIds?: string[],
-    overrideAgencyId?: SupportedPlatform,
-    forceAllAgencies?: boolean
-  ) => {
-    const useAll = forceAllAgencies ?? (overrideAgencyId ? false : applyToAllAgencies);
-    const targetAgency = overrideAgencyId || activeAgency;
-    const ids = overrideAssetIds || Array.from(selectedIds);
-    if (ids.length === 0) return;
-
-    if (targetStatus === 'Rejected') {
-      setRejectionModalState({
-        open: true,
-        agencyId: targetAgency,
-        assetIds: ids,
-        allAgencies: useAll,
-      });
-      return;
-    }
-
-    if (useAll) {
-      for (const ag of AGENCIES) {
-        await db.tracker.reconcileAgencyStatuses({
-          assetIds: ids,
-          agencyId: ag,
-          targetStatus,
-        });
-      }
-      setActionBanner({
-        type: 'success',
-        message:
-          language === 'ar'
-            ? `تم تحديث حالة ${ids.length} ملف عبر جميع المنصات الست إلى ${targetStatus}`
-            : `Updated ${ids.length} ${ids.length === 1 ? 'asset' : 'assets'} across ALL 6 agencies → ${targetStatus}.`,
-      });
-    } else {
-      await db.tracker.reconcileAgencyStatuses({
-        assetIds: ids,
-        agencyId: targetAgency,
-        targetStatus,
-      });
-      setActionBanner({
-        type: 'success',
-        message:
-          language === 'ar'
-            ? `تم تحديث حالة ${ids.length} ملف في ${AGENCY_DISPLAY_NAMES[targetAgency].full} إلى ${targetStatus}`
-            : `Updated ${ids.length} ${ids.length === 1 ? 'asset' : 'assets'} on ${AGENCY_DISPLAY_NAMES[targetAgency].full} → ${targetStatus}.`,
-      });
-    }
-  };
-
-  const handleConfirmRejection = async (payload: {
-    rejectionReasonId?: string;
-    customRejectionNote?: string;
-  }) => {
-    const { agencyId, assetIds, allAgencies } = rejectionModalState;
-    const targetAgencies = allAgencies ? AGENCIES : [agencyId];
-
-    for (const ag of targetAgencies) {
-      await db.tracker.reconcileAgencyStatuses({
-        assetIds,
-        agencyId: ag,
-        targetStatus: 'Rejected',
-        rejectionReasonId: payload.rejectionReasonId || null,
-        customRejectionNote: payload.customRejectionNote || null,
-      });
-    }
-
-    setActionBanner({
-      type: 'error',
-      message:
-        language === 'ar'
-          ? `تم تسجيل رفض ${assetIds.length} ملف في ${AGENCY_DISPLAY_NAMES[agencyId].full} وحفظ النسخة الاحتياطية.`
-          : `Logged ${assetIds.length} Rejected ${assetIds.length === 1 ? 'asset' : 'assets'} on ${
-              allAgencies ? 'All 6 Agencies' : AGENCY_DISPLAY_NAMES[agencyId].full
-            }.`,
-    });
-  };
-
-  const handleTriggerFixAndRequeue = (rec: MasterMetadataRecord, agencyId: SupportedPlatform) => {
-    const tracking = rec.agencyTrackings?.[agencyId];
-    const context: FixAndRequeueContext = {
-      assetId: rec.id,
-      filename: rec.filename,
-      agencyId,
-      agencyName: AGENCY_DISPLAY_NAMES[agencyId].full,
-      rejectionReasonTitle:
-        tracking?.rejectionReasonTitle || 'Agency Quality / Metadata Rejection',
-      customRejectionNote: tracking?.customRejectionNote,
-    };
-
-    if (onFixAndRequeue) {
-      onFixAndRequeue(context);
-    } else {
-      setInspectedAssetId(rec.id);
-    }
-  };
-
-  const handleSplitReconcileBasket = async (payload: {
-    agencyId: SupportedPlatform;
-    revertToNewIds: string[];
-    markUploadedIds: string[];
-  }) => {
-    const { agencyId, revertToNewIds, markUploadedIds } = payload;
-    if (revertToNewIds.length > 0) {
-      await db.tracker.reconcileAgencyStatuses({
-        assetIds: revertToNewIds,
-        agencyId,
-        targetStatus: 'New',
-      });
-    }
-    if (markUploadedIds.length > 0) {
-      await db.tracker.reconcileAgencyStatuses({
-        assetIds: markUploadedIds,
-        agencyId,
-        targetStatus: 'Uploaded',
-      });
-    }
+  // Auto-trim keywords for active agency cap
+  const handleAutoTrimForActiveAgency = async () => {
+    const targets =
+      selectedIds.size > 0
+        ? filteredRecords.filter((r) => selectedIds.has(r.id))
+        : filteredRecords;
+    const res = await autoTrimKeywordsForAgency(targets, activeAgency);
     setActionBanner({
       type: 'success',
-      message: `Reconciled ${AGENCY_DISPLAY_NAMES[agencyId].full}: ${revertToNewIds.length} failed item(s) reverted to New · ${markUploadedIds.length} item(s) confirmed Uploaded.`,
+      message: `Trimmed ${res.updatedCount} assets to ${AGENCY_DISPLAY_NAMES[activeAgency].short}'s ${res.cap}-keyword limit.`,
     });
   };
 
-  const handleManualHotBackup = async () => {
-    const log = await db.tracker.performHotBackup('manual');
-    if (log) {
-      setActionBanner({
-        type: 'success',
-        message:
-          language === 'ar'
-            ? `تم حفظ نسخة احتياطية فورية لقاعدة البيانات (${log.assetCountSnapshot} ملف).`
-            : `Event-driven SQLite snapshot saved (${log.assetCountSnapshot} assets · Rolling 30-file retention).`,
-        folderPath: workspacePaths?.backupsDir,
-      });
-    }
+  // Ingestion progress metrics (only visible while isIngesting === true)
+  const ingestionPercent = useMemo(() => {
+    if (!isIngesting || ingestionItems.length === 0) return 0;
+    const done = ingestionItems.filter(
+      (i) => i.stage === 'committed' || i.stage === 'duplicate_skipped' || i.stage === 'failed'
+    ).length;
+    return Math.round((done / ingestionItems.length) * 100);
+  }, [isIngesting, ingestionItems]);
+
+  const activeAgencyStats = trackerStats?.perAgencyStats?.[activeAgency] || {
+    New: 0,
+    'Pending Upload': 0,
+    Uploaded: 0,
+    'In Review': 0,
+    Accepted: 0,
+    Rejected: 0,
   };
 
-  const handleOpenFolder = async (folderPath?: string) => {
-    if (!folderPath) return;
-    if (typeof window !== 'undefined' && (window as any).electronAPI?.openPath) {
-      await (window as any).electronAPI.openPath(folderPath);
-    }
-  };
-
-  const handleFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const fileList = e.target.files;
-    if (!fileList || fileList.length === 0) return;
-    const files = Array.from(fileList);
-    e.target.value = '';
-    const res = await atomicIngestionService.enqueueFiles(files, {
-      isAiGenerated: true,
-      useAiMetadata: true,
-    });
-    setActionBanner({
-      type: res.failedCount > 0 ? 'warning' : 'success',
-      message: `Ingestion complete: ${res.committedCount} committed to Master Vault, ${res.duplicateCount} duplicates skipped, ${res.failedCount} rolled back.`,
-    });
-  };
-
-  const handleCopyText = (key: string, text: string) => {
-    navigator.clipboard?.writeText(text);
-    setCopiedKey(key);
-    setTimeout(() => setCopiedKey(null), 1500);
-  };
-
-  const renderAgencyStatusCell = (rec: MasterMetadataRecord, agencyId: SupportedPlatform) => {
-    const tracking = rec.agencyTrackings?.[agencyId];
-    const status: TrackerAgencyStatus = tracking?.status || 'New';
-    const isFocusedAgency = activeAgency === agencyId;
-
-    let colorClasses =
-      'bg-secondary/60 text-muted-foreground border-border/80 hover:border-primary/50 hover:text-foreground';
-    if (status === 'Pending Upload') {
-      colorClasses =
-        'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/40 font-semibold';
-    } else if (status === 'Uploaded' || status === 'In Review') {
-      colorClasses =
-        'bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/40 font-semibold';
-    } else if (status === 'Accepted') {
-      colorClasses =
-        'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/40 font-semibold';
-    } else if (status === 'Rejected') {
-      colorClasses = 'bg-destructive/15 text-destructive border-destructive/40 font-semibold';
-    }
-
-    return (
-      <DropdownMenu key={agencyId}>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            data-testid={`agency-cell-${rec.id}-${agencyId}`}
-            onClick={(e) => e.stopPropagation()}
-            title={
-              status === 'Rejected'
-                ? `${AGENCY_DISPLAY_NAMES[agencyId].full}: Rejected — ${
-                    tracking?.rejectionReasonTitle || 'Unspecified Reason'
-                  }`
-                : `${AGENCY_DISPLAY_NAMES[agencyId].full}: ${status} (Click to set status)`
-            }
-            className={`h-7 w-full px-1.5 rounded-md border text-[10px] font-mono flex items-center justify-center gap-1 transition cursor-pointer whitespace-nowrap ${colorClasses} ${
-              isFocusedAgency ? 'ring-1 ring-primary/35' : ''
-            }`}
-          >
-            <span className="shrink-0">{getPlatformLogo(agencyId, 11)}</span>
-            <span className="truncate">{STATUS_SHORT_LABELS[status]}</span>
-          </button>
-        </DropdownMenuTrigger>
-
-        <DropdownMenuContent align="end" className="w-60">
-          <DropdownMenuLabel className="flex items-center justify-between gap-2">
-            <span className="flex items-center gap-1.5 truncate">
-              {getPlatformLogo(agencyId, 13)}
-              <span>{AGENCY_DISPLAY_NAMES[agencyId].full}</span>
-            </span>
-            <span className="text-[10px] font-mono font-normal text-muted-foreground truncate max-w-[95px]">
-              {rec.filename}
-            </span>
-          </DropdownMenuLabel>
-
-          {status === 'Rejected' && (
-            <div className="mx-1.5 my-1 p-2 rounded-md bg-destructive/10 border border-destructive/30 text-[11px] text-destructive space-y-1.5">
-              <div className="font-semibold">
-                {tracking?.rejectionReasonTitle || 'Rejected by Agency'}
-              </div>
-              {tracking?.customRejectionNote && (
-                <div className="text-[10px] opacity-90">{tracking.customRejectionNote}</div>
-              )}
-              <Button
-                type="button"
-                size="sm"
-                data-testid={`menu-fix-requeue-${rec.id}-${agencyId}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleTriggerFixAndRequeue(rec, agencyId);
-                }}
-                className="w-full h-6 text-[10px] font-semibold gap-1 bg-destructive text-destructive-foreground hover:bg-destructive/90 cursor-pointer"
-              >
-                <Wrench className="w-3 h-3" />
-                <span>Fix & Re-Queue in Studio</span>
-              </Button>
-            </div>
-          )}
-
-          <DropdownMenuSeparator />
-
-          {ALL_STATUSES.map((st) => {
-            const isCurrent = status === st;
-            return (
-              <DropdownMenuItem
-                key={st}
-                data-testid={`cell-menu-status-${rec.id}-${agencyId}-${st}`}
-                onSelect={() => {
-                  handleBulkReconcileStatus(st, [rec.id], agencyId, false);
-                }}
-                className={`flex items-center justify-between ${
-                  isCurrent
-                    ? 'bg-primary/15 text-primary font-semibold'
-                    : st === 'Rejected'
-                    ? 'text-destructive focus:text-destructive'
-                    : ''
-                }`}
-              >
-                <span>{st === 'Rejected' ? 'Rejected (Log Reason...)' : st}</span>
-                {isCurrent && <Check className="w-3.5 h-3.5 text-primary" />}
-              </DropdownMenuItem>
-            );
-          })}
-
-          <DropdownMenuSeparator />
-
-          <DropdownMenuItem
-            data-testid="popover-mark-all-agencies-uploaded"
-            onSelect={() => {
-              handleBulkReconcileStatus('Uploaded', [rec.id], undefined, true);
-            }}
-            className="text-blue-500 focus:text-blue-500 font-medium gap-1.5"
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>Mark Uploaded on All 6 Agencies</span>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    );
-  };
-
-  // Proposal 3: Single-Agency Focus Mode Cell Renderer
-  const renderFocusedAgencyControlCell = (rec: MasterMetadataRecord) => {
-    const tracking = rec.agencyTrackings?.[activeAgency];
-    const status: TrackerAgencyStatus = tracking?.status || 'New';
-    const otherSentCount = AGENCIES.filter((ag) => {
-      if (ag === activeAgency) return false;
-      const st = rec.agencyTrackings?.[ag]?.status || 'New';
-      return st === 'Uploaded' || st === 'In Review' || st === 'Accepted';
-    }).length;
-
-    return (
-      <div className="flex items-center justify-between gap-2 w-full">
-        <div className="w-28 shrink-0">{renderAgencyStatusCell(rec, activeAgency)}</div>
-
-        <div className="flex items-center gap-1 shrink-0">
-          {(['Uploaded', 'Accepted', 'Rejected', 'New'] as TrackerAgencyStatus[]).map((st) => {
-            const isCurrent = status === st;
-            return (
-              <button
-                key={st}
-                type="button"
-                data-testid={`focus-quick-status-${rec.id}-${st}`}
-                onClick={() => handleBulkReconcileStatus(st, [rec.id], activeAgency, false)}
-                className={`h-6 px-2 rounded text-[10px] font-mono border transition cursor-pointer ${
-                  isCurrent
-                    ? 'bg-primary text-primary-foreground border-primary font-semibold'
-                    : st === 'Rejected'
-                    ? 'border-destructive/40 text-destructive hover:bg-destructive/10'
-                    : 'border-border bg-secondary/40 text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                {STATUS_SHORT_LABELS[st]}
-              </button>
-            );
-          })}
-        </div>
-
-        <span
-          className="text-[10px] font-mono tabular-nums text-muted-foreground shrink-0"
-          title="Accepted/Uploaded count across the other 5 agencies"
-        >
-          Other 5: {otherSentCount}/5
-        </span>
-      </div>
-    );
-  };
-
-  const pendingForActiveAgency =
-    trackerStats?.perAgencyStats?.[activeAgency]?.['Pending Upload'] || 0;
-  const newForActiveAgency = trackerStats?.perAgencyStats?.[activeAgency]?.New || 0;
+  const pendingBasketsForAgency = exportBaskets.filter(
+    (b) => b.agencyId === activeAgency && b.status === 'pending_reconciliation'
+  );
 
   return (
-    <div className="h-full flex flex-col gap-1.5 overflow-hidden">
-      {/* Hidden File & Folder Inputs for Atomic Copy-First Ingestion */}
+    <div className="flex-1 min-h-0 h-full flex flex-col gap-2.5 overflow-hidden select-none">
+      {/* Hidden File/Folder Inputs */}
       <input
         ref={fileInputRef}
         type="file"
         multiple
-        accept=".jpg,.jpeg,.png,.webp,.eps,.ai,.svg,.mp4,.mov,.webm"
-        onChange={handleFilesSelected}
+        accept=".jpg,.jpeg,.png,.webp,.eps,.ai,.mp4,.mov"
         className="hidden"
+        onChange={(e) => {
+          if (e.target.files && e.target.files.length > 0) {
+            atomicIngestionService.enqueueFiles(Array.from(e.target.files));
+            e.currentTarget.value = '';
+          }
+        }}
       />
       <input
         ref={folderInputRef}
         type="file"
         multiple
         // @ts-expect-error webkitdirectory is supported in Chromium/Electron
-        webkitdirectory=""
-        onChange={handleFilesSelected}
+        webkitdirectory="true"
         className="hidden"
+        onChange={(e) => {
+          if (e.target.files && e.target.files.length > 0) {
+            atomicIngestionService.enqueueFiles(Array.from(e.target.files));
+            e.currentTarget.value = '';
+          }
+        }}
       />
 
-      {/* Ultra-Slim Single-Line KPI & Hot Backup Ribbon */}
-      <div
-        data-testid="tracker-slim-kpi-ribbon"
-        className="px-2.5 py-1 rounded-lg border border-border bg-card/80 flex flex-wrap items-center justify-between gap-2 text-[11px] shrink-0"
-      >
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            onClick={handleResetAllFilters}
-            className={`h-6 px-2 rounded-md border inline-flex items-center gap-1.5 font-mono transition cursor-pointer ${
-              activeFilterCount === 0
-                ? 'border-primary/50 bg-primary/10 text-foreground font-semibold'
-                : 'border-border bg-background/60 text-muted-foreground hover:text-foreground'
-            }`}
-            title="Show All Master Vault Assets (SHA-256 Deduplicated)"
-          >
-            <Database className="w-3 h-3 text-primary shrink-0" />
-            <span>Vault:</span>
-            <span data-testid="tracker-kpi-total" className="font-bold text-foreground tabular-nums">
-              {trackerStats?.totalAssets ?? masterRecords.length}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setStatusFilter(statusFilter === 'New' ? 'ALL' : 'New')}
-            className={`h-6 px-2 rounded-md border inline-flex items-center gap-1.5 font-mono transition cursor-pointer ${
-              statusFilter === 'New'
-                ? 'border-primary bg-primary/15 text-primary font-semibold'
-                : 'border-border bg-background/60 text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <UploadCloud className="w-3 h-3 shrink-0" />
-            <span>New ({AGENCY_DISPLAY_NAMES[activeAgency].short}):</span>
-            <span data-testid="tracker-kpi-new" className="font-bold text-foreground tabular-nums">
-              {newForActiveAgency}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              if (statusFilter === 'Pending Upload') {
-                setStatusFilter('ALL');
-              } else {
-                handleSelectByStatusForActiveAgency('Pending Upload');
-              }
-            }}
-            className={`h-6 px-2 rounded-md border inline-flex items-center gap-1.5 font-mono transition cursor-pointer ${
-              statusFilter === 'Pending Upload'
-                ? 'border-amber-500 bg-amber-500/20 text-amber-500 font-semibold'
-                : pendingForActiveAgency > 0
-                ? 'border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                : 'border-border bg-background/60 text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <Clock className="w-3 h-3 shrink-0" />
-            <span>Pending:</span>
-            <span data-testid="tracker-kpi-pending" className="font-bold tabular-nums">
-              {pendingForActiveAgency}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setStatusFilter(statusFilter === 'Uploaded' ? 'ALL' : 'Uploaded')}
-            className={`h-6 px-2 rounded-md border inline-flex items-center gap-1.5 font-mono transition cursor-pointer ${
-              statusFilter === 'Uploaded'
-                ? 'border-blue-500 bg-blue-500/15 text-blue-500 font-semibold'
-                : 'border-border bg-background/60 text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <CheckCircle2 className="w-3 h-3 text-blue-500 shrink-0" />
-            <span>Live:</span>
-            <span data-testid="tracker-kpi-uploaded" className="font-bold text-foreground tabular-nums">
-              {(trackerStats?.perAgencyStats?.[activeAgency]?.Uploaded ?? 0) +
-                (trackerStats?.perAgencyStats?.[activeAgency]?.Accepted ?? 0)}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setStatusFilter(statusFilter === 'Rejected' ? 'ALL' : 'Rejected')}
-            className={`h-6 px-2 rounded-md border inline-flex items-center gap-1.5 font-mono transition cursor-pointer ${
-              statusFilter === 'Rejected'
-                ? 'border-destructive bg-destructive/15 text-destructive font-semibold'
-                : 'border-border bg-background/60 text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <XCircle className="w-3 h-3 text-destructive shrink-0" />
-            <span>Rejected:</span>
-            <span data-testid="tracker-kpi-rejected" className="font-bold text-foreground tabular-nums">
-              {trackerStats?.perAgencyStats?.[activeAgency]?.Rejected ?? 0}
-            </span>
-          </button>
-
-          {overKeywordCapRecords.length > 0 && (
-            <button
-              type="button"
-              data-testid="bulk-autotrim-keywords-btn"
-              onClick={handleQuickAutoTrimKeywords}
-              className="h-6 px-2 rounded-md text-[10px] font-mono inline-flex items-center gap-1 bg-primary/15 text-primary border border-primary/30 hover:bg-primary/25 font-semibold transition cursor-pointer"
-              title={`1-Click trim keywords on ${overKeywordCapRecords.length} asset(s) down to ${activeAgencyCap} tags`}
-            >
-              <Scissors className="w-3 h-3 shrink-0" />
-              <span>
-                Trim &gt;{activeAgencyCap} Tags ({overKeywordCapRecords.length})
-              </span>
-            </button>
-          )}
-
-          {activeAgencyWarningCount > 0 && (
-            <button
-              type="button"
-              data-testid="preflight-warnings-filter-pill"
-              onClick={() => setOnlyWarningsFilter((prev) => !prev)}
-              className={`h-6 px-2 rounded-md text-[10px] font-mono inline-flex items-center gap-1 transition cursor-pointer border ${
-                onlyWarningsFilter
-                  ? 'bg-amber-500 text-black border-amber-500 font-semibold'
-                  : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/40 hover:bg-amber-500/25'
-              }`}
-              title={`Filter ${activeAgencyWarningCount} assets with ${AGENCY_DISPLAY_NAMES[activeAgency].full} Pre-Flight rule warnings`}
-            >
-              <AlertTriangle className="w-3 h-3 shrink-0" />
-              <span>
-                {AGENCY_DISPLAY_NAMES[activeAgency].short} Warnings ({activeAgencyWarningCount})
-              </span>
-            </button>
-          )}
-        </div>
-
-        {/* Right of Slim Ribbon: Inline Action Banner OR Event-Driven Hot Backup Status */}
-        <div className="flex items-center gap-2">
-          {actionBanner && (
-            <div
-              className={`h-6 px-2 rounded-md border text-[10px] inline-flex items-center gap-1.5 ${
-                actionBanner.type === 'error'
-                  ? 'border-destructive/40 bg-destructive/10 text-destructive'
-                  : actionBanner.type === 'warning'
-                  ? 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                  : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-              }`}
-            >
-              <span className="truncate max-w-[320px] font-medium">{actionBanner.message}</span>
-              <button
-                type="button"
-                onClick={() => setActionBanner(null)}
-                className="underline opacity-80 hover:opacity-100 cursor-pointer"
-              >
-                ×
-              </button>
-            </div>
-          )}
-
-          <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground">
-            <ShieldCheck className="w-3 h-3 text-emerald-500 shrink-0" />
-            <span data-testid="last-backup-trigger" className="hidden xl:inline" dir="ltr">
-              {trackerStats?.lastBackup
-                ? `WAL: ${trackerStats.lastBackup.triggerEvent} (${trackerStats?.backupCount ?? 0}/30)`
-                : `WAL (${trackerStats?.backupCount ?? 0}/30)`}
-            </span>
-            <button
-              type="button"
-              data-testid="manual-hot-backup-btn"
-              onClick={handleManualHotBackup}
-              className="h-5 px-1.5 rounded border border-border bg-secondary/50 hover:bg-secondary text-foreground transition cursor-pointer inline-flex items-center gap-1"
-              title="Trigger immediate SQLite WAL hot backup"
-            >
-              <HardDrive className="w-2.5 h-2.5" />
-              <span>Backup</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Real-Time Atomic Ingestion Pipeline Stream (Only shown while active) */}
-      {ingestionItems.length > 0 && (
+      {/* Auto-Disappearing Slim Ingestion Progress Bar (ONLY visible during active import) */}
+      {isIngesting && (
         <div
-          data-testid="atomic-ingestion-pipeline-panel"
-          className="px-2.5 py-1.5 rounded-lg border border-primary/30 bg-primary/5 flex flex-wrap items-center justify-between gap-2 shrink-0 text-xs"
+          data-testid="slim-ingestion-progress"
+          className="shrink-0 px-3.5 py-2 rounded-xl border border-primary/40 bg-primary/10 flex items-center justify-between gap-4"
         >
-          <div className="flex items-center gap-2 font-semibold text-foreground">
-            <span>Atomic Ingestion ({ingestionItems.length} files)</span>
-            {isIngesting && <span className="text-[10px] font-mono text-primary">Running...</span>}
+          <div className="flex items-center gap-2 text-xs font-medium text-foreground shrink-0">
+            <UploadCloud className="w-4 h-4 text-primary animate-bounce" />
+            <span>
+              Importing into Master Vault ({ingestionPercent}%)
+            </span>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5 max-h-14 overflow-y-auto">
-            {ingestionItems.map((item) => {
-              const isFailed = item.stage === 'failed';
-              const isDone = item.stage === 'committed';
-              const isDup = item.stage === 'duplicate_skipped';
-              return (
-                <div
-                  key={item.id}
-                  data-testid={`ingestion-row-${item.filename}`}
-                  className="px-2 py-0.5 rounded bg-background border border-border inline-flex items-center gap-1.5 text-[10px] font-mono"
-                >
-                  <span className="truncate max-w-[140px]">{item.filename}</span>
-                  <span
-                    data-testid={`ingestion-stage-badge-${item.filename}`}
-                    className={`px-1.5 py-0.2 rounded font-semibold ${
-                      isFailed
-                        ? 'bg-destructive/15 text-destructive'
-                        : isDone
-                        ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                        : isDup
-                        ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                        : 'bg-primary/15 text-primary'
-                    }`}
-                  >
-                    {item.stageLabel}
-                  </span>
-                </div>
-              );
-            })}
-            {!isIngesting && (
-              <button
-                type="button"
-                onClick={() => atomicIngestionService.clearCompletedAndDuplicates()}
-                className="text-[10px] text-muted-foreground hover:text-foreground underline cursor-pointer ml-1"
-              >
-                Clear
-              </button>
-            )}
-          </div>
+          <Progress value={ingestionPercent} className="h-2 flex-1 max-w-md" />
         </div>
       )}
 
-      {/* Flattened Single-Row Primary Command Bar */}
-      <div
-        data-testid="tracker-primary-command-bar"
-        className="px-2.5 py-1.5 rounded-xl border border-border bg-card flex flex-wrap items-center justify-between gap-2 shrink-0"
-      >
-        {/* Left: Search + Consolidated Filter Dropdown + Active Filter Chips */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          <div className="relative w-40 sm:w-48">
-            <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" />
+      {/* Single Flattened Command & Agency Bar */}
+      <div className="shrink-0 px-3 py-2 rounded-xl border border-border bg-card flex flex-wrap items-center justify-between gap-2">
+        {/* Left Zone: Search + 6-Agency Focus Switcher */}
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
+          {/* Search Input */}
+          <div className="relative w-48 sm:w-56">
+            <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={
-                language === 'ar' ? 'بحث بالاسم أو الكلمات...' : 'Search file, title, tag...'
-              }
-              className="h-7 pl-8 text-xs bg-background"
+              placeholder={language === 'ar' ? 'بحث في العناوين...' : 'Search clean titles or tags...'}
+              className="h-8 pl-8 pr-2.5 text-xs"
             />
           </div>
 
-          {/* Consolidated Filter Dropdown (Media, AI/Real, Batch/Shoot, Status) */}
+          {/* 6-Agency Switcher Bar */}
+          <div
+            dir="ltr"
+            className="inline-flex items-center rounded-lg bg-secondary/70 p-0.5 border border-border"
+          >
+            {AGENCIES.map((ag) => {
+              const isSelected = activeAgency === ag;
+              const newCount = trackerStats?.perAgencyStats?.[ag]?.New ?? 0;
+              return (
+                <button
+                  key={ag}
+                  type="button"
+                  data-testid={`agency-tab-${ag}`}
+                  onClick={() => setActiveAgency(ag)}
+                  className={`h-7 px-2.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
+                    isSelected
+                      ? 'bg-card text-foreground shadow-2xs font-semibold'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <span className="shrink-0">{getPlatformLogo(ag, 13)}</span>
+                  <span className="hidden xl:inline">{AGENCY_DISPLAY_NAMES[ag].short}</span>
+                  <span className="text-[10px] font-mono tabular-nums text-muted-foreground">
+                    {newCount}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Consolidated Filters Dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
                 type="button"
                 variant={activeFilterCount > 0 ? 'default' : 'outline'}
                 size="sm"
-                data-testid="tracker-filters-dropdown-btn"
-                className="h-7 px-2.5 text-xs gap-1.5 cursor-pointer"
+                className="h-8 text-xs gap-1.5 cursor-pointer"
               >
                 <Filter className="w-3.5 h-3.5" />
                 <span>Filters</span>
                 {activeFilterCount > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full bg-background/20 text-[10px] font-mono font-bold">
+                  <span className="text-[10px] font-mono tabular-nums px-1.5 py-0.2 rounded bg-black/20">
                     {activeFilterCount}
                   </span>
                 )}
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-64 p-2 space-y-2 text-xs">
-              <div className="flex items-center justify-between px-1">
-                <span className="font-semibold text-foreground">Filter Distribution Grid</span>
+            <DropdownMenuContent align="start" className="w-64 p-2 space-y-2">
+              <DropdownMenuLabel className="text-[11px] font-mono text-muted-foreground flex items-center justify-between">
+                <span>STATUS ({AGENCY_DISPLAY_NAMES[activeAgency].short})</span>
                 {activeFilterCount > 0 && (
                   <button
                     type="button"
                     onClick={handleResetAllFilters}
-                    className="text-[11px] text-primary hover:underline cursor-pointer"
+                    className="text-primary hover:underline cursor-pointer"
                   >
                     Reset All
                   </button>
                 )}
+              </DropdownMenuLabel>
+              <div className="grid grid-cols-2 gap-1 px-1">
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('ALL')}
+                  className={`px-2 py-1 rounded text-xs text-start cursor-pointer ${
+                    statusFilter === 'ALL'
+                      ? 'bg-primary text-primary-foreground font-semibold'
+                      : 'hover:bg-secondary text-muted-foreground'
+                  }`}
+                >
+                  All ({masterRecords.length})
+                </button>
+                {ALL_STATUSES.map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    onClick={() => setStatusFilter(st)}
+                    className={`px-2 py-1 rounded text-xs text-start cursor-pointer truncate ${
+                      statusFilter === st
+                        ? 'bg-primary text-primary-foreground font-semibold'
+                        : 'hover:bg-secondary text-muted-foreground'
+                    }`}
+                  >
+                    {STATUS_SHORT_LABELS[st]} ({activeAgencyStats[st] ?? 0})
+                  </button>
+                ))}
               </div>
 
               <DropdownMenuSeparator />
-
-              {/* Status Filter */}
-              <div className="space-y-1 px-1">
-                <span className="text-[10px] font-mono uppercase text-muted-foreground">
-                  {AGENCY_DISPLAY_NAMES[activeAgency].short} Status
-                </span>
-                <div className="flex flex-wrap gap-1">
-                  {(['ALL', ...ALL_STATUSES] as const).map((st) => (
-                    <button
-                      key={st}
-                      type="button"
-                      data-testid={`status-filter-pill-${st}`}
-                      onClick={() => setStatusFilter(st)}
-                      className={`h-6 px-2 rounded text-[10px] font-mono transition cursor-pointer ${
-                        statusFilter === st
-                          ? 'bg-primary text-primary-foreground font-semibold'
-                          : 'bg-secondary/60 text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      {st === 'ALL' ? 'All' : STATUS_SHORT_LABELS[st]}
-                    </button>
-                  ))}
-                </div>
+              <DropdownMenuLabel className="text-[11px] font-mono text-muted-foreground">
+                MEDIA & SHOOT BATCH
+              </DropdownMenuLabel>
+              <div className="flex flex-wrap gap-1 px-1">
+                {(['ALL', 'image', 'vector', 'video'] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setMediaFilter(m)}
+                    className={`px-2 py-1 rounded text-xs cursor-pointer ${
+                      mediaFilter === m
+                        ? 'bg-primary text-primary-foreground font-semibold'
+                        : 'bg-secondary/60 text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {m === 'ALL' ? 'All Media' : m === 'image' ? 'Photos' : m === 'vector' ? 'Vectors' : 'Videos'}
+                  </button>
+                ))}
               </div>
 
-              {/* Shoot / Batch Filter */}
-              <div className="space-y-1 px-1">
-                <span className="text-[10px] font-mono uppercase text-muted-foreground">
-                  Shoot / Batch Group
-                </span>
-                <div className="flex flex-wrap gap-1">
+              {batchGroups.length > 0 && (
+                <div className="flex flex-wrap gap-1 px-1 pt-1">
                   <button
                     type="button"
-                    data-testid="batch-pill-ALL"
                     onClick={() => setBatchFilter('ALL')}
-                    className={`h-6 px-2 rounded text-[10px] font-mono transition cursor-pointer ${
+                    className={`px-2 py-0.5 rounded text-[11px] font-mono cursor-pointer ${
                       batchFilter === 'ALL'
                         ? 'bg-primary text-primary-foreground font-semibold'
-                        : 'bg-secondary/60 text-muted-foreground hover:text-foreground'
+                        : 'bg-secondary/60 text-muted-foreground'
                     }`}
                   >
-                    All ({masterRecords.length})
+                    All Shoots
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setBatchFilter('TODAY')}
-                    className={`h-6 px-2 rounded text-[10px] font-mono transition cursor-pointer ${
-                      batchFilter === 'TODAY'
-                        ? 'bg-primary text-primary-foreground font-semibold'
-                        : 'bg-secondary/60 text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
-                    Today&apos;s Ingest
-                  </button>
-                  {batchGroups.map(([batchCode, cnt]) => (
+                  {batchGroups.map(([b, cnt]) => (
                     <button
-                      key={batchCode}
+                      key={b}
                       type="button"
-                      data-testid={`batch-pill-${batchCode}`}
-                      onClick={() => setBatchFilter(batchFilter === batchCode ? 'ALL' : batchCode)}
-                      className={`h-6 px-2 rounded text-[10px] font-mono transition cursor-pointer ${
-                        batchFilter === batchCode
+                      onClick={() => setBatchFilter(b)}
+                      className={`px-2 py-0.5 rounded text-[11px] font-mono cursor-pointer ${
+                        batchFilter === b
                           ? 'bg-primary text-primary-foreground font-semibold'
-                          : 'bg-secondary/60 text-muted-foreground hover:text-foreground'
+                          : 'bg-secondary/60 text-muted-foreground'
                       }`}
                     >
-                      {batchCode} ({cnt})
+                      {b} ({cnt})
                     </button>
                   ))}
                 </div>
-              </div>
-
-              {/* Media Type Filter */}
-              <div className="space-y-1 px-1">
-                <span className="text-[10px] font-mono uppercase text-muted-foreground">
-                  Media Type
-                </span>
-                <div className="flex flex-wrap gap-1">
-                  {(
-                    [
-                      ['ALL', 'All Media'],
-                      ['image', 'Photos'],
-                      ['vector', 'Vectors'],
-                      ['video', 'Videos'],
-                    ] as const
-                  ).map(([val, label]) => (
-                    <button
-                      key={val}
-                      type="button"
-                      onClick={() => setMediaFilter(val)}
-                      className={`h-6 px-2 rounded text-[10px] font-mono transition cursor-pointer ${
-                        mediaFilter === val
-                          ? 'bg-primary text-primary-foreground font-semibold'
-                          : 'bg-secondary/60 text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* AI vs Real Filter */}
-              <div className="space-y-1 px-1">
-                <span className="text-[10px] font-mono uppercase text-muted-foreground">
-                  Asset Origin (AI / Real)
-                </span>
-                <div className="flex flex-wrap gap-1">
-                  {(
-                    [
-                      ['ALL', 'All Origins'],
-                      ['AI', 'AI Generated'],
-                      ['REAL', 'Real / Camera'],
-                    ] as const
-                  ).map(([val, label]) => (
-                    <button
-                      key={val}
-                      type="button"
-                      onClick={() => setOriginFilter(val)}
-                      className={`h-6 px-2 rounded text-[10px] font-mono transition cursor-pointer ${
-                        originFilter === val
-                          ? 'bg-primary text-primary-foreground font-semibold'
-                          : 'bg-secondary/60 text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
-
-          {/* Compact Removable Active Filter Chips */}
-          {batchFilter !== 'ALL' && (
-            <button
-              type="button"
-              onClick={() => setBatchFilter('ALL')}
-              className="h-6 px-2 rounded-md bg-primary/15 text-primary border border-primary/30 text-[10px] font-mono font-semibold inline-flex items-center gap-1 cursor-pointer"
-            >
-              <span>Shoot: {batchFilter}</span>
-              <span>×</span>
-            </button>
-          )}
-          {mediaFilter !== 'ALL' && (
-            <button
-              type="button"
-              onClick={() => setMediaFilter('ALL')}
-              className="h-6 px-2 rounded-md bg-primary/15 text-primary border border-primary/30 text-[10px] font-mono font-semibold inline-flex items-center gap-1 cursor-pointer"
-            >
-              <span>Media: {mediaFilter}</span>
-              <span>×</span>
-            </button>
-          )}
-          {originFilter !== 'ALL' && (
-            <button
-              type="button"
-              onClick={() => setOriginFilter('ALL')}
-              className="h-6 px-2 rounded-md bg-primary/15 text-primary border border-primary/30 text-[10px] font-mono font-semibold inline-flex items-center gap-1 cursor-pointer"
-            >
-              <span>Origin: {originFilter}</span>
-              <span>×</span>
-            </button>
-          )}
         </div>
 
-        {/* Center: Compact 6-Agency Switcher Pill Bar + Focus Mode Toggle */}
-        <div
-          className="flex flex-wrap items-center gap-1"
-          role="tablist"
-          aria-label="Target Stock Agency"
-        >
-          {AGENCIES.map((ag) => {
-            const isSelectedAg = activeAgency === ag;
-            const agStats = trackerStats?.perAgencyStats?.[ag];
-            const agPending = agStats?.['Pending Upload'] || 0;
-            const agNew = agStats?.New || 0;
-            return (
-              <button
-                key={ag}
-                type="button"
-                data-testid={`agency-tab-${ag}`}
-                onClick={() => setActiveAgency(ag)}
-                className={`h-7 px-2 rounded-lg border text-[11px] font-medium flex items-center gap-1 transition cursor-pointer ${
-                  isSelectedAg
-                    ? 'bg-primary text-primary-foreground border-primary shadow-2xs font-semibold'
-                    : 'bg-background text-muted-foreground border-border hover:text-foreground hover:bg-secondary/60'
-                }`}
-              >
-                <span className="shrink-0">{getPlatformLogo(ag, 11)}</span>
-                <span>{AGENCY_DISPLAY_NAMES[ag].short}</span>
-                <span
-                  className={`text-[10px] font-mono tabular-nums px-1 rounded ${
-                    isSelectedAg
-                      ? 'bg-primary-foreground/20 text-primary-foreground'
-                      : agPending > 0
-                      ? 'bg-amber-500/20 text-amber-500 font-semibold'
-                      : 'bg-secondary text-muted-foreground'
-                  }`}
-                >
-                  {agPending > 0 ? `${agPending}⏳` : agNew}
-                </span>
-              </button>
-            );
-          })}
-
-          <Button
-            type="button"
-            variant={isFocusMode ? 'default' : 'outline'}
-            size="sm"
-            data-testid="toggle-focus-mode-btn"
-            onClick={() => setIsFocusMode((prev) => !prev)}
-            className="h-7 px-2 text-[11px] gap-1 cursor-pointer ml-0.5"
-            title="Toggle between 6-Agency Matrix and Single-Agency Focus Mode"
+        {/* Right Zone: View Toggle (Gallery vs List) + Open Master Folder + Primary Export + (...) More */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* Gallery Grid vs Compact List Toggle */}
+          <div
+            dir="ltr"
+            className="inline-flex items-center rounded-lg bg-secondary p-0.5 border border-border"
           >
-            {isFocusMode ? (
-              <Focus className="w-3.5 h-3.5" />
-            ) : (
-              <Columns className="w-3.5 h-3.5 text-primary" />
-            )}
-            <span>{isFocusMode ? 'Focus On' : 'Focus'}</span>
-          </Button>
-        </div>
+            <button
+              type="button"
+              data-testid="view-mode-gallery-btn"
+              onClick={() => setViewMode('gallery')}
+              title="Visual Photo Gallery Grid"
+              className={`h-7 px-2.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer ${
+                viewMode === 'gallery'
+                  ? 'bg-card text-foreground shadow-2xs font-semibold'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Gallery</span>
+            </button>
+            <button
+              type="button"
+              data-testid="view-mode-list-btn"
+              onClick={() => setViewMode('list')}
+              title="Clean Compact List View"
+              className={`h-7 px-2.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer ${
+                viewMode === 'list'
+                  ? 'bg-card text-foreground shadow-2xs font-semibold'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <List className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">List</span>
+            </button>
+          </div>
 
-        {/* Right: Primary Actions (Ingest, Auto-Fill, Export) + Consolidated Actions (...) Dropdown */}
-        <div className="flex flex-wrap items-center gap-1.5">
+          {/* Open Master Folder on OS */}
           <Button
             type="button"
             variant="outline"
             size="sm"
-            data-testid="tracker-ingest-files-btn"
+            data-testid="open-master-folder-btn"
+            onClick={handleOpenMasterVaultFolder}
+            className="h-8 text-xs gap-1.5 cursor-pointer"
+          >
+            <FolderOpen className="w-3.5 h-3.5 text-primary" />
+            <span className="hidden md:inline">Open Master Folder</span>
+          </Button>
+
+          {/* Import Files Button */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
             onClick={() => fileInputRef.current?.click()}
-            className="h-7 px-2.5 text-xs gap-1 cursor-pointer"
+            className="h-8 text-xs gap-1.5 cursor-pointer"
           >
-            <FolderPlus className="w-3.5 h-3.5 text-primary" />
-            <span>{language === 'ar' ? 'استيراد' : 'Ingest'}</span>
+            <Plus className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Import</span>
           </Button>
 
+          {/* Primary CTA: Export Active Agency CSV & Basket */}
           <Button
             type="button"
-            variant="outline"
+            variant="default"
             size="sm"
-            data-testid="auto-fill-batch-btn"
-            onClick={handleAutoSelectNextAgencyBatch}
-            className="h-7 px-2 text-xs gap-1 cursor-pointer"
+            data-testid="export-active-agency-btn"
+            onClick={handleExportActiveAgencyBasket}
+            className="h-8 text-xs gap-1.5 cursor-pointer font-semibold"
           >
-            <PackageCheck className="w-3.5 h-3.5 text-primary" />
-            <span>Auto-Fill ({newForActiveAgency})</span>
-          </Button>
-
-          <Button
-            type="button"
-            size="sm"
-            data-testid="export-agency-btn"
-            disabled={selectedIds.size === 0}
-            onClick={handleCreateExportBasket}
-            className="h-7 px-2.5 text-xs font-semibold gap-1 cursor-pointer"
-          >
-            <ArrowUpRight className="w-3.5 h-3.5" />
+            <PackageCheck className="w-3.5 h-3.5" />
             <span>
-              Export {AGENCY_DISPLAY_NAMES[activeAgency].short} ({selectedIds.size})
+              Export {AGENCY_DISPLAY_NAMES[activeAgency].short} (
+              {selectedIds.size > 0 ? selectedIds.size : activeAgencyStats.New})
             </span>
           </Button>
 
-          {/* Consolidated Secondary Actions (...) Dropdown */}
+          {/* Consolidated (...) More Dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -1446,301 +815,512 @@ export const DistributionTrackerView: React.FC<DistributionTrackerViewProps> = (
                 variant="outline"
                 size="sm"
                 data-testid="tracker-more-actions-btn"
-                className="h-7 px-2 text-xs gap-1 cursor-pointer"
-                title="More Actions & Bulk Tools"
+                className="h-8 w-8 p-0 cursor-pointer"
               >
-                <MoreHorizontal className="w-3.5 h-3.5" />
-                <span>Actions</span>
-                {exportBaskets.length > 0 && (
-                  <span className="px-1 rounded bg-amber-500/20 text-amber-500 text-[10px] font-mono font-bold">
-                    {exportBaskets.length}
-                  </span>
-                )}
+                <MoreHorizontal className="w-4 h-4" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-60 text-xs">
-              <DropdownMenuLabel>Contributor Bulk Tools</DropdownMenuLabel>
+            <DropdownMenuContent align="end" className="w-60">
+              <DropdownMenuLabel className="text-[11px] font-mono text-muted-foreground">
+                CONTRIBUTOR TOOLS
+              </DropdownMenuLabel>
               <DropdownMenuItem
-                data-testid="open-bulk-seo-modal-btn"
-                disabled={masterRecords.length === 0}
-                onSelect={() => setIsBulkSeoModalOpen(true)}
-                className="gap-2 cursor-pointer"
+                onClick={() => setIsBasketsModalOpen(true)}
+                className="text-xs gap-2 cursor-pointer"
               >
-                <Scissors className="w-3.5 h-3.5 text-primary" />
+                <PackageCheck className="w-3.5 h-3.5 text-amber-400" />
                 <span>
-                  Bulk Edit SEO & Keywords ({selectedIds.size > 0 ? selectedIds.size : filteredRecords.length})
+                  Reconcile Pending Uploads ({activeAgencyStats['Pending Upload']})
                 </span>
               </DropdownMenuItem>
-
               <DropdownMenuItem
-                data-testid="open-baskets-modal-btn"
-                onSelect={() => setIsBasketsModalOpen(true)}
-                className="gap-2 cursor-pointer"
+                onClick={() => setIsBulkSeoModalOpen(true)}
+                className="text-xs gap-2 cursor-pointer"
               >
-                <Archive className="w-3.5 h-3.5 text-amber-500" />
-                <span>Export Baskets & Reconcile ({exportBaskets.length})</span>
+                <Wrench className="w-3.5 h-3.5 text-primary" />
+                <span>Bulk Find & Replace SEO</span>
               </DropdownMenuItem>
-
-              {overKeywordCapRecords.length > 0 && (
+              <DropdownMenuItem
+                onClick={handleAutoTrimForActiveAgency}
+                className="text-xs gap-2 cursor-pointer"
+              >
+                <Scissors className="w-3.5 h-3.5 text-emerald-400" />
+                <span>
+                  Auto-Trim Keywords ({AGENCY_KEYWORD_CAPS[activeAgency]} max)
+                </span>
+              </DropdownMenuItem>
+              {viewMode === 'list' && (
                 <DropdownMenuItem
-                  onSelect={handleQuickAutoTrimKeywords}
-                  className="gap-2 cursor-pointer"
+                  onClick={() => setIsFocusMode((prev) => !prev)}
+                  className="text-xs gap-2 cursor-pointer"
                 >
-                  <Tag className="w-3.5 h-3.5 text-primary" />
-                  <span>
-                    Auto-Trim &gt;{activeAgencyCap} Tags ({overKeywordCapRecords.length})
-                  </span>
+                  {isFocusMode ? (
+                    <>
+                      <Columns className="w-3.5 h-3.5 text-primary" />
+                      <span>Show All 6 Agencies Matrix</span>
+                    </>
+                  ) : (
+                    <>
+                      <Focus className="w-3.5 h-3.5 text-primary" />
+                      <span>Focus on {AGENCY_DISPLAY_NAMES[activeAgency].short} Only</span>
+                    </>
+                  )}
                 </DropdownMenuItem>
               )}
-
               <DropdownMenuSeparator />
-              <DropdownMenuLabel>Workspace & Ingestion</DropdownMenuLabel>
-
               <DropdownMenuItem
-                onSelect={() => folderInputRef.current?.click()}
-                className="gap-2 cursor-pointer"
+                onClick={() => folderInputRef.current?.click()}
+                className="text-xs gap-2 cursor-pointer"
               >
-                <FolderOpen className="w-3.5 h-3.5 text-primary" />
-                <span>Ingest Entire Folder...</span>
+                <FolderOpen className="w-3.5 h-3.5" />
+                <span>Import Entire Shoot Folder</span>
               </DropdownMenuItem>
-
               <DropdownMenuItem
-                data-testid="seed-demo-portfolio-btn"
-                onSelect={handleLoadSampleBatch}
-                className="gap-2 cursor-pointer"
+                onClick={() => seedMassiveContributorPortfolio(50)}
+                className="text-xs gap-2 cursor-pointer"
               >
                 <Sparkles className="w-3.5 h-3.5 text-primary" />
-                <span>Load Sample Batch (6 Assets)</span>
+                <span>Reset / Seed 50 Sample Assets</span>
               </DropdownMenuItem>
-
+              <DropdownMenuSeparator />
               <DropdownMenuItem
-                onSelect={handleManualHotBackup}
-                className="gap-2 cursor-pointer"
+                onClick={() => {
+                  db.masterRecords.clear();
+                  setSelectedIds(new Set());
+                }}
+                className="text-xs gap-2 text-destructive cursor-pointer"
               >
-                <HardDrive className="w-3.5 h-3.5 text-emerald-500" />
-                <span>Save SQLite Hot Backup Now</span>
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Clear Master Vault</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </div>
 
-      {/* Slim Contextual Bulk Selection & Reconciliation Strip (Only visible when items are selected) */}
-      {selectedIds.size > 0 && (
-        <div
-          data-testid="contextual-bulk-status-bar"
-          className="px-2.5 py-1 rounded-lg border border-primary/40 bg-primary/5 flex flex-wrap items-center justify-between gap-2 text-xs shrink-0"
-        >
-          <div className="flex flex-wrap items-center gap-2.5">
-            <span className="text-[11px] font-semibold text-primary font-mono">
-              {selectedIds.size} Selected
-            </span>
-
-            <label className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
-              <Checkbox
-                checked={applyToAllAgencies}
-                onCheckedChange={(v) => setApplyToAllAgencies(Boolean(v))}
-              />
-              <span className={applyToAllAgencies ? 'text-primary font-semibold' : ''}>
-                All 6 Agencies
-              </span>
-            </label>
-
-            <button
-              type="button"
-              onClick={() => setIsBulkSeoModalOpen(true)}
-              className="text-[11px] font-medium text-primary hover:underline inline-flex items-center gap-1 cursor-pointer"
-            >
-              <Scissors className="w-3 h-3" />
-              <span>Bulk SEO Surgery</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setSelectedIds(new Set())}
-              className="text-[11px] text-muted-foreground hover:text-foreground underline cursor-pointer"
-            >
-              Clear
-            </button>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-1">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              data-testid="reconcile-mark-uploaded-btn"
-              onClick={() => handleBulkReconcileStatus('Uploaded')}
-              className="h-6 px-2 text-[11px] gap-1 cursor-pointer"
-            >
-              <UploadCloud className="w-3 h-3 text-blue-500" />
-              <span>Uploaded</span>
-            </Button>
-
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              data-testid="reconcile-mark-in-review-btn"
-              onClick={() => handleBulkReconcileStatus('In Review')}
-              className="h-6 px-2 text-[11px] gap-1 cursor-pointer"
-            >
-              <Clock className="w-3 h-3 text-blue-400" />
-              <span>In Review</span>
-            </Button>
-
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              data-testid="reconcile-mark-accepted-btn"
-              onClick={() => handleBulkReconcileStatus('Accepted')}
-              className="h-6 px-2 text-[11px] gap-1 cursor-pointer"
-            >
-              <CheckCircle2 className="w-3 h-3 text-emerald-500" />
-              <span>Accepted</span>
-            </Button>
-
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              data-testid="reconcile-revert-new-btn"
-              onClick={() => handleBulkReconcileStatus('New')}
-              className="h-6 px-2 text-[11px] gap-1 cursor-pointer"
-            >
-              <RotateCcw className="w-3 h-3 text-muted-foreground" />
-              <span>Revert New</span>
-            </Button>
-
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              data-testid="reconcile-mark-rejected-btn"
-              onClick={() => handleBulkReconcileStatus('Rejected')}
-              className="h-6 px-2 text-[11px] gap-1 border-destructive/40 text-destructive hover:bg-destructive/10 cursor-pointer"
-            >
-              <AlertCircle className="w-3 h-3" />
-              <span>Rejected</span>
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* High-Density Virtualized 6-Agency Distribution Grid (Takes ~85% of Vertical Screen Height) */}
-      <div className="flex-1 min-h-0 rounded-xl border border-border bg-card flex flex-col overflow-hidden">
-        {/* Sticky Grid Header (Adapts dynamically to 6-Agency Matrix vs Single-Agency Focus Mode) */}
-        <div className="px-3 py-2 border-b border-border bg-secondary/40 grid grid-cols-12 items-center gap-3 text-[11px] font-semibold text-muted-foreground shrink-0">
-          <div className="col-span-5 sm:col-span-4 flex items-center gap-2.5 min-w-0">
-            <Checkbox
-              checked={
-                filteredRecords.length > 0 && selectedIds.size === filteredRecords.length
-              }
-              onCheckedChange={(checked) => handleSelectAllFiltered(Boolean(checked))}
-            />
-            <span>
-              {language === 'ar'
-                ? 'الملف الرئيسي وفحص Pre-Flight'
-                : 'Master Asset & Pre-Flight Checks'}
-            </span>
-          </div>
-
-          <div className={isFocusMode ? 'hidden sm:block sm:col-span-4' : 'hidden sm:block sm:col-span-3'}>
-            <span>
-              {language === 'ar'
-                ? 'البيانات والنسخ السريع (Title · Desc · Tags)'
-                : 'Granular 1-Click Copy & Remediation'}
-            </span>
-          </div>
-
-          {isFocusMode ? (
-            <div className="col-span-7 sm:col-span-4 flex items-center justify-between gap-2">
-              <span className="flex items-center gap-1.5 text-primary font-bold">
-                {getPlatformLogo(activeAgency, 12)}
-                <span>Focused Agency: {AGENCY_DISPLAY_NAMES[activeAgency].full}</span>
+      {/* Contextual Bulk Selection Bar (Only shown when items are selected or Pending Upload basket notice) */}
+      {(selectedIds.size > 0 || pendingBasketsForAgency.length > 0 || actionBanner) && (
+        <div className="shrink-0 px-3 py-1.5 rounded-xl border border-border bg-card/90 flex flex-wrap items-center justify-between gap-2 text-xs">
+          {selectedIds.size > 0 ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold text-foreground font-mono tabular-nums">
+                {selectedIds.size} Selected
               </span>
               <button
                 type="button"
-                onClick={() => setIsFocusMode(false)}
-                className="text-[10px] font-mono text-muted-foreground hover:text-foreground underline cursor-pointer"
+                onClick={() => setSelectedIds(new Set())}
+                className="text-muted-foreground hover:text-foreground underline cursor-pointer"
               >
-                Show All 6 Columns
+                Clear
+              </button>
+              <span className="text-muted-foreground">·</span>
+              <label className="inline-flex items-center gap-1.5 cursor-pointer text-muted-foreground">
+                <Checkbox
+                  checked={applyToAllAgencies}
+                  onCheckedChange={(v) => setApplyToAllAgencies(Boolean(v))}
+                />
+                <span>Apply to all 6 agencies</span>
+              </label>
+              <div className="flex items-center gap-1">
+                {ALL_STATUSES.map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    onClick={() =>
+                      handleStatusChange(
+                        Array.from(selectedIds),
+                        activeAgency,
+                        st,
+                        applyToAllAgencies
+                      )
+                    }
+                    className={`px-2 py-0.5 rounded border text-[11px] font-medium transition cursor-pointer ${getStatusBadgeClasses(
+                      st
+                    )}`}
+                  >
+                    Set {STATUS_SHORT_LABELS[st]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : actionBanner ? (
+            <div className="flex items-center justify-between w-full gap-2">
+              <span className="text-xs text-foreground truncate">{actionBanner.message}</span>
+              <button
+                type="button"
+                onClick={() => setActionBanner(null)}
+                className="text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                Dismiss
               </button>
             </div>
           ) : (
-            <div className="col-span-7 sm:col-span-5 grid grid-cols-6 gap-1.5">
-              {AGENCIES.map((ag) => {
-                const isFocused = activeAgency === ag;
-                return (
-                  <button
-                    key={ag}
-                    type="button"
-                    onClick={() => setActiveAgency(ag)}
-                    className={`flex items-center justify-center gap-1 py-0.5 rounded text-[10px] font-mono transition cursor-pointer ${
-                      isFocused
-                        ? 'bg-primary/15 text-primary font-bold'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
-                    title={`Focus ${AGENCY_DISPLAY_NAMES[ag].full}`}
-                  >
-                    <span className="shrink-0">{getPlatformLogo(ag, 11)}</span>
-                    <span className="truncate">{AGENCY_DISPLAY_NAMES[ag].short}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Virtualized Scroll Viewport */}
-        {filteredRecords.length === 0 ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-3">
-            <div className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center border border-border">
-              <Database className="w-4 h-4 text-muted-foreground" />
-            </div>
-            <div className="space-y-1 max-w-md">
-              <h3 className="text-xs font-semibold text-foreground">
-                {language === 'ar'
-                  ? 'لا توجد ملفات مطابقة في متتبع التوزيع'
-                  : 'No Assets in Master Distribution Tracker'}
-              </h3>
-              <p className="text-xs text-muted-foreground">
-                {language === 'ar'
-                  ? 'استورد مجلداً أو ملفات لنسخها بأمان إلى المجلد المؤقت وفحص SHA-256 وتوليد الكلمات المفتاحية وحفظها في Master Vault.'
-                  : 'Ingest a source folder or files to run atomic SHA-256 deduplication, EPS/Video preparation, and track status across all 6 stock agencies.'}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => fileInputRef.current?.click()}
-                className="h-8 text-xs gap-1.5 cursor-pointer"
-              >
-                <FolderPlus className="w-3.5 h-3.5" />
-                <span>{language === 'ar' ? 'استيراد ملفات' : 'Ingest First Batch'}</span>
-              </Button>
+            <div className="flex items-center justify-between w-full gap-2">
+              <span className="text-xs text-amber-400 font-medium">
+                {AGENCY_DISPLAY_NAMES[activeAgency].full} has {activeAgencyStats['Pending Upload']} assets waiting in Pending Upload.
+              </span>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={handleLoadSampleBatch}
-                className="h-8 text-xs gap-1.5 cursor-pointer"
+                onClick={() => setIsBasketsModalOpen(true)}
+                className="h-6 text-[11px] px-2.5 cursor-pointer"
               >
-                <Sparkles className="w-3.5 h-3.5 text-primary" />
-                <span>
-                  {language === 'ar' ? 'تحميل بيانات تجريبية' : 'Load Sample Portfolio (6 Assets)'}
-                </span>
+                Reconcile Uploads
               </Button>
             </div>
+          )}
+        </div>
+      )}
+
+      {/* MAIN WORKSPACE CANVAS (85%+ Vertical Viewport) */}
+      <div
+        ref={parentScrollRef}
+        className="flex-1 min-h-0 rounded-xl border border-border bg-card overflow-y-auto"
+      >
+        {filteredRecords.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center p-10 text-center">
+            <div className="w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary mb-3">
+              <ImageIcon className="w-6 h-6" />
+            </div>
+            <h3 className="text-sm font-semibold text-foreground">
+              {masterRecords.length === 0
+                ? 'Your Master Vault is Empty'
+                : 'No Assets Match Your Current Filters'}
+            </h3>
+            <p className="text-xs text-muted-foreground max-w-sm mt-1">
+              {masterRecords.length === 0
+                ? 'Import local photos, vectors, or videos, or load the 50-asset contributor portfolio to explore the visual gallery.'
+                : 'Clear your active search or status filters to view all assets.'}
+            </p>
+            <div className="flex items-center gap-2 mt-4">
+              {masterRecords.length === 0 ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="sm"
+                    onClick={() => seedMassiveContributorPortfolio(50)}
+                    className="h-8 text-xs gap-1.5 cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Load 50 Sample Assets</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="h-8 text-xs gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Import Local Files</span>
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleResetAllFilters}
+                  className="h-8 text-xs cursor-pointer"
+                >
+                  Reset Filters
+                </Button>
+              )}
+            </div>
+          </div>
+        ) : viewMode === 'gallery' ? (
+          /* =====================================================================
+           * MODE 1: VISUAL GALLERY GRID (Default — Lightroom-Style Photo Cards)
+           * Strictly displays: Large Thumbnail + Clean Title + Single Active Agency Status
+           * ===================================================================== */
+          <div
+            data-testid="tracker-gallery-grid"
+            className="p-3.5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3.5"
+          >
+            {filteredRecords.map((rec, idx) => {
+              const isSelected = selectedIds.has(rec.id);
+              const cleanTitle = getCleanAssetDisplayTitle(rec);
+              const agencyTracking = rec.agencyTrackings?.[activeAgency];
+              const currentStatus: TrackerAgencyStatus = agencyTracking?.status || 'New';
+              const isRejected = currentStatus === 'Rejected';
+              const warnings = preflightByAssetId.get(rec.id) || [];
+
+              return (
+                <div
+                  key={rec.id}
+                  data-testid={`gallery-card-${rec.id}`}
+                  onClick={(e) => {
+                    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                      e.preventDefault();
+                      handleToggleItemSelect(rec.id, idx, e);
+                    }
+                  }}
+                  className={`group rounded-xl border bg-background/60 overflow-hidden flex flex-col justify-between transition-all ${
+                    isSelected
+                      ? 'border-primary ring-1 ring-primary/40'
+                      : 'border-border hover:border-primary/40'
+                  }`}
+                >
+                  {/* Large 4:3 Visual Thumbnail Frame */}
+                  <div className="relative aspect-[4/3] w-full bg-secondary overflow-hidden">
+                    {rec.thumbnailBase64 ? (
+                      <img
+                        src={rec.thumbnailBase64}
+                        alt={cleanTitle}
+                        referrerPolicy="no-referrer"
+                        onClick={() => setInspectedAssetId(rec.id)}
+                        className="w-full h-full object-cover cursor-pointer group-hover:scale-[1.02] transition-transform duration-200"
+                      />
+                    ) : (
+                      <div
+                        onClick={() => setInspectedAssetId(rec.id)}
+                        className="w-full h-full flex flex-col items-center justify-center gap-1.5 text-muted-foreground cursor-pointer"
+                      >
+                        {rec.mediaType === 'video' ? (
+                          <Film className="w-7 h-7" />
+                        ) : rec.mediaType === 'vector' ? (
+                          <PenTool className="w-7 h-7" />
+                        ) : (
+                          <ImageIcon className="w-7 h-7" />
+                        )}
+                      </div>
+                    )}
+
+                    {/* Top-Left Selection Checkbox */}
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleToggleItemSelect(rec.id, idx, e);
+                      }}
+                      className={`absolute top-2.5 left-2.5 w-6 h-6 rounded-md bg-black/65 backdrop-blur-xs border border-white/20 flex items-center justify-center cursor-pointer transition-opacity ${
+                        isSelected ? 'opacity-100' : 'opacity-80 group-hover:opacity-100'
+                      }`}
+                    >
+                      <Checkbox checked={isSelected} onCheckedChange={() => {}} />
+                    </div>
+
+                    {/* Top-Right Metadata Inspector Button */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setInspectedAssetId(rec.id);
+                      }}
+                      title="Inspect & Edit Metadata"
+                      className="absolute top-2.5 right-2.5 h-6 px-2 rounded-md bg-black/65 hover:bg-black/85 backdrop-blur-xs border border-white/20 text-white text-[10px] font-medium flex items-center gap-1 opacity-85 group-hover:opacity-100 transition cursor-pointer"
+                    >
+                      <Eye className="w-3 h-3" />
+                      <span>Metadata</span>
+                    </button>
+
+                    {/* Pre-flight Warning Indicator (if any) */}
+                    {warnings.length > 0 && (
+                      <div
+                        title={warnings.map((w) => w.detail).join(' • ')}
+                        className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-amber-500/90 text-black text-[10px] font-mono font-bold flex items-center gap-1"
+                      >
+                        <AlertTriangle className="w-3 h-3" />
+                        <span>{warnings.length}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Clean Card Body: Human Title + Single Active Agency Status + Granular Copy */}
+                  <div className="p-3 space-y-2.5">
+                    <div className="space-y-0.5">
+                      <h3
+                        onClick={() => setInspectedAssetId(rec.id)}
+                        title={cleanTitle}
+                        className="text-xs font-semibold text-foreground truncate cursor-pointer hover:text-primary transition-colors"
+                      >
+                        {cleanTitle}
+                      </h3>
+
+                      {isRejected && agencyTracking?.rejectionReasonTitle && (
+                        <p
+                          title={agencyTracking.customRejectionNote || agencyTracking.rejectionReasonTitle}
+                          className="text-[11px] text-destructive font-medium truncate"
+                        >
+                          {agencyTracking.rejectionReasonTitle}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Single Active Agency Status Selector + Fix & Re-Queue Button */}
+                    <div className="flex items-center justify-between gap-1.5">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            data-testid={`card-status-trigger-${rec.id}`}
+                            className={`flex-1 h-7 px-2.5 rounded-lg border text-xs font-medium flex items-center justify-between gap-1.5 transition cursor-pointer ${getStatusBadgeClasses(
+                              currentStatus
+                            )}`}
+                          >
+                            <span className="flex items-center gap-1.5 truncate">
+                              <span className="shrink-0">{getPlatformLogo(activeAgency, 12)}</span>
+                              <span className="truncate">{STATUS_SHORT_LABELS[currentStatus]}</span>
+                            </span>
+                            <span className="text-[10px] opacity-70">▾</span>
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="w-44">
+                          <DropdownMenuLabel className="text-[10px] font-mono text-muted-foreground">
+                            {AGENCY_DISPLAY_NAMES[activeAgency].full.toUpperCase()}
+                          </DropdownMenuLabel>
+                          {ALL_STATUSES.map((st) => (
+                            <DropdownMenuItem
+                              key={st}
+                              onClick={() => handleStatusChange([rec.id], activeAgency, st)}
+                              className="text-xs flex items-center justify-between cursor-pointer"
+                            >
+                              <span>{st}</span>
+                              {currentStatus === st && <Check className="w-3.5 h-3.5 text-primary" />}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+
+                      {isRejected && onFixAndRequeue && (
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="sm"
+                          onClick={() =>
+                            onFixAndRequeue({
+                              assetId: rec.id,
+                              filename: rec.filename,
+                              agencyId: activeAgency,
+                              agencyName: AGENCY_DISPLAY_NAMES[activeAgency].full,
+                              rejectionReasonTitle:
+                                agencyTracking?.rejectionReasonTitle || 'Technical Quality / Artifacts',
+                              customRejectionNote: agencyTracking?.customRejectionNote,
+                            })
+                          }
+                          className="h-7 px-2 text-[11px] font-semibold cursor-pointer shrink-0"
+                        >
+                          Fix
+                        </Button>
+                      )}
+                    </div>
+
+                    {/* Compact Granular 1-Click Copy Row (Title · Desc · Keywords) */}
+                    <div className="pt-2 border-t border-border/60 flex items-center justify-between text-[11px] text-muted-foreground">
+                      <span className="font-mono text-[10px]">
+                        {(rec.rankedKeywords || []).length} tags
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => copyField(`${rec.id}_title`, rec.baseTitle || cleanTitle)}
+                          title="Copy Title"
+                          className="px-1.5 py-0.5 rounded hover:bg-secondary hover:text-foreground transition flex items-center gap-1 cursor-pointer"
+                        >
+                          {copiedKey === `${rec.id}_title` ? (
+                            <Check className="w-3 h-3 text-emerald-400" />
+                          ) : (
+                            <Type className="w-3 h-3" />
+                          )}
+                          <span className="text-[10px]">Title</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            copyField(
+                              `${rec.id}_desc`,
+                              rec.detailedDescription || rec.baseTitle || cleanTitle
+                            )
+                          }
+                          title="Copy Description"
+                          className="px-1.5 py-0.5 rounded hover:bg-secondary hover:text-foreground transition flex items-center gap-1 cursor-pointer"
+                        >
+                          {copiedKey === `${rec.id}_desc` ? (
+                            <Check className="w-3 h-3 text-emerald-400" />
+                          ) : (
+                            <FileText className="w-3 h-3" />
+                          )}
+                          <span className="text-[10px]">Desc</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            copyField(`${rec.id}_kw`, (rec.rankedKeywords || []).join(', '))
+                          }
+                          title="Copy Keywords"
+                          className="px-1.5 py-0.5 rounded hover:bg-secondary hover:text-foreground transition flex items-center gap-1 cursor-pointer"
+                        >
+                          {copiedKey === `${rec.id}_kw` ? (
+                            <Check className="w-3 h-3 text-emerald-400" />
+                          ) : (
+                            <Tag className="w-3 h-3" />
+                          )}
+                          <span className="text-[10px]">Tags</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         ) : (
-          <div
-            ref={parentScrollRef}
-            data-testid="virtualized-tracker-grid"
-            className="flex-1 overflow-y-auto select-none"
-          >
+          /* =====================================================================
+           * MODE 2: CLEAN COMPACT LIST VIEW (44px High-Density Admin Table)
+           * ===================================================================== */
+          <div data-testid="tracker-compact-list" className="min-w-[760px]">
+            {/* Sticky Table Header */}
+            <div className="sticky top-0 z-20 h-9 px-3 bg-card border-b border-border flex items-center gap-3 text-[11px] font-mono text-muted-foreground">
+              <div className="w-6 flex items-center justify-center shrink-0">
+                <Checkbox
+                  checked={
+                    filteredRecords.length > 0 && selectedIds.size === filteredRecords.length
+                  }
+                  onCheckedChange={handleToggleSelectAll}
+                />
+              </div>
+              <div className="flex-1 min-w-[200px]">ASSET TITLE</div>
+              <div className="w-36 shrink-0">1-CLICK COPY</div>
+              {isFocusMode ? (
+                <div className="w-48 shrink-0 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-foreground font-semibold">
+                    {getPlatformLogo(activeAgency, 12)}
+                    {AGENCY_DISPLAY_NAMES[activeAgency].full}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsFocusMode(false)}
+                    className="text-[10px] text-primary hover:underline cursor-pointer"
+                  >
+                    6-Matrix
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {AGENCIES.map((ag) => (
+                    <div
+                      key={ag}
+                      className="w-24 text-center flex items-center justify-center gap-1"
+                    >
+                      {getPlatformLogo(ag, 11)}
+                      <span>{AGENCY_DISPLAY_NAMES[ag].short}</span>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setIsFocusMode(true)}
+                    className="text-[10px] text-primary hover:underline ml-1 cursor-pointer"
+                  >
+                    1-Focus
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Virtualized 44px Rows */}
             <div
               style={{
                 height: `${rowVirtualizer.getTotalSize()}px`,
@@ -1752,28 +1332,13 @@ export const DistributionTrackerView: React.FC<DistributionTrackerViewProps> = (
                 const rec = filteredRecords[virtualRow.index];
                 if (!rec) return null;
                 const isSelected = selectedIds.has(rec.id);
-                const mediaType = rec.mediaType || 'image';
-                const cleanHash = (rec.fileHash || '').replace(/^sha256_/, '');
-                const batchCode = resolveAssetBatchGroup(rec);
-                const rowWarnings = preflightByAssetId.get(rec.id) || [];
-
-                // Check if this asset is Rejected on the active agency (or any agency)
-                const activeAgencyTracking = rec.agencyTrackings?.[activeAgency];
-                const rejectedAgencyId: SupportedPlatform | null =
-                  activeAgencyTracking?.status === 'Rejected'
-                    ? activeAgency
-                    : AGENCIES.find((ag) => rec.agencyTrackings?.[ag]?.status === 'Rejected') ||
-                      null;
-
-                const isCopiedTitle = copiedKey === `title-${rec.id}`;
-                const isCopiedDesc = copiedKey === `desc-${rec.id}`;
-                const isCopiedTags = copiedKey === `tags-${rec.id}`;
-                const kwCount = (rec.rankedKeywords || []).length;
+                const cleanTitle = getCleanAssetDisplayTitle(rec);
+                const activeTrack = rec.agencyTrackings?.[activeAgency];
+                const activeSt: TrackerAgencyStatus = activeTrack?.status || 'New';
 
                 return (
                   <div
                     key={rec.id}
-                    data-testid={`tracker-row-${rec.filename}`}
                     style={{
                       position: 'absolute',
                       top: 0,
@@ -1782,221 +1347,167 @@ export const DistributionTrackerView: React.FC<DistributionTrackerViewProps> = (
                       height: `${virtualRow.size}px`,
                       transform: `translateY(${virtualRow.start}px)`,
                     }}
-                    onClick={(e) => handleToggleSelectRow(rec.id, virtualRow.index, e.shiftKey)}
-                    className={`px-3 border-b border-border/70 grid grid-cols-12 items-center gap-3 text-xs transition-colors cursor-pointer ${
-                      isSelected ? 'bg-primary/10' : 'hover:bg-secondary/30'
+                    className={`px-3 border-b border-border/60 flex items-center gap-3 text-xs transition-colors ${
+                      isSelected ? 'bg-primary/10' : 'hover:bg-secondary/40'
                     }`}
                   >
-                    {/* Col 1: Checkbox + Thumbnail + Master Filename, Shoot Batch, Hash & Pre-Flight Warning Badges */}
-                    <div className="col-span-5 sm:col-span-4 flex items-center gap-2.5 min-w-0">
-                      <div
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleToggleSelectRow(rec.id, virtualRow.index, e.shiftKey);
-                        }}
-                        className="shrink-0 flex items-center"
-                      >
-                        <Checkbox checked={isSelected} onCheckedChange={() => {}} />
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setInspectedAssetId(rec.id);
-                        }}
-                        className="w-12 h-12 rounded-lg border border-border bg-secondary/50 overflow-hidden shrink-0 flex items-center justify-center relative group cursor-pointer"
-                        title="Inspect Asset Metadata & Agency History"
-                      >
-                        {rec.thumbnailBase64 ? (
-                          <img
-                            src={
-                              rec.thumbnailBase64.startsWith('data:')
-                                ? rec.thumbnailBase64
-                                : `data:image/jpeg;base64,${rec.thumbnailBase64}`
-                            }
-                            alt={rec.filename}
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                          />
-                        ) : mediaType === 'video' ? (
-                          <Film className="w-4 h-4 text-muted-foreground" />
-                        ) : mediaType === 'vector' ? (
-                          <PenTool className="w-4 h-4 text-muted-foreground" />
-                        ) : (
-                          <ImageIcon className="w-4 h-4 text-muted-foreground" />
-                        )}
-                        <span className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                          <Eye className="w-3.5 h-3.5 text-white" />
-                        </span>
-                      </button>
-
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <div className="font-mono font-semibold text-foreground truncate" dir="ltr">
-                          {rec.filename}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground font-mono tabular-nums">
-                          <span className="text-primary font-semibold">{batchCode}</span>
-                          <span>·</span>
-                          <span className="text-foreground font-semibold">
-                            {mediaType.toUpperCase()}
-                          </span>
-                          <span>·</span>
-                          <span>{rec.isAiGenerated ? 'AI' : 'Real'}</span>
-                          {cleanHash && (
-                            <>
-                              <span>·</span>
-                              <span title={`SHA-256: ${cleanHash}`}>
-                                #{cleanHash.slice(0, 8)}
-                              </span>
-                            </>
-                          )}
-
-                          {/* 6-Agency Pre-Flight Warning Badges */}
-                          {rowWarnings.map((w) => (
-                            <Tooltip key={w.code} content={w.detail}>
-                              <span
-                                data-testid={`preflight-warning-${rec.id}-${w.code}`}
-                                className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded border text-[10px] font-mono font-semibold ${
-                                  w.severity === 'error'
-                                    ? 'bg-destructive/15 text-destructive border-destructive/40'
-                                    : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/40'
-                                }`}
-                              >
-                                <AlertTriangle className="w-2.5 h-2.5 shrink-0" />
-                                <span>{w.shortLabel}</span>
-                              </span>
-                            </Tooltip>
-                          ))}
-                        </div>
-                      </div>
+                    <div
+                      onClick={(e) => handleToggleItemSelect(rec.id, virtualRow.index, e)}
+                      className="w-6 flex items-center justify-center shrink-0 cursor-pointer"
+                    >
+                      <Checkbox checked={isSelected} onCheckedChange={() => {}} />
                     </div>
 
-                    {/* Col 2: SEO Title + Granular 1-Click Copy (Title · Desc · Keywords) + Fix & Re-Queue Button */}
+                    {/* Thumbnail + Clean Title */}
                     <div
-                      onClick={(e) => e.stopPropagation()}
-                      className={
-                        isFocusMode
-                          ? 'hidden sm:flex sm:col-span-4 min-w-0 flex-col justify-center gap-1'
-                          : 'hidden sm:flex sm:col-span-3 min-w-0 flex-col justify-center gap-1.5'
-                      }
+                      onClick={() => setInspectedAssetId(rec.id)}
+                      className="flex-1 min-w-[200px] flex items-center gap-2.5 cursor-pointer truncate"
                     >
-                      <div className="flex items-center justify-between gap-1.5 min-w-0">
-                        <button
-                          type="button"
-                          onClick={() => setInspectedAssetId(rec.id)}
-                          className="text-xs font-medium text-foreground truncate text-start hover:text-primary transition cursor-pointer"
-                          title={rec.baseTitle}
-                        >
-                          {rec.baseTitle || 'Untitled Asset'}
-                        </button>
-
-                        {rejectedAgencyId && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            data-testid={`fix-and-requeue-btn-${rec.id}`}
-                            onClick={() => handleTriggerFixAndRequeue(rec, rejectedAgencyId)}
-                            className="h-5 px-2 text-[10px] font-semibold gap-1 bg-destructive text-destructive-foreground hover:bg-destructive/90 shrink-0 cursor-pointer"
-                            title={`Rejected on ${AGENCY_DISPLAY_NAMES[rejectedAgencyId].full} — Open in Metadata Studio to fix and auto-requeue to New`}
-                          >
-                            <Wrench className="w-2.5 h-2.5" />
-                            <span>Fix & Re-Queue</span>
-                          </Button>
-                        )}
-                      </div>
-
-                      {isFocusMode && rec.detailedDescription && (
-                        <div className="text-[11px] text-muted-foreground truncate">
-                          {rec.detailedDescription}
+                      {rec.thumbnailBase64 ? (
+                        <img
+                          src={rec.thumbnailBase64}
+                          alt={cleanTitle}
+                          referrerPolicy="no-referrer"
+                          className="w-7 h-7 rounded object-cover shrink-0 border border-border"
+                        />
+                      ) : (
+                        <div className="w-7 h-7 rounded bg-secondary flex items-center justify-center shrink-0">
+                          <ImageIcon className="w-3.5 h-3.5 text-muted-foreground" />
                         </div>
                       )}
-
-                      {/* 3 Distinct Granular 1-Click Copy Buttons: Title | Desc | Keywords */}
-                      <div className="flex items-center gap-1 text-[10px] font-mono tabular-nums">
-                        <button
-                          type="button"
-                          data-testid={`copy-title-btn-${rec.id}`}
-                          onClick={() => handleCopyText(`title-${rec.id}`, rec.baseTitle || '')}
-                          className={`px-1.5 py-0.5 rounded border inline-flex items-center gap-1 transition cursor-pointer whitespace-nowrap ${
-                            isCopiedTitle
-                              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 font-semibold'
-                              : 'bg-secondary/70 border-border/70 hover:bg-secondary text-foreground'
-                          }`}
-                          title="Copy SEO Title"
-                        >
-                          {isCopiedTitle ? (
-                            <Check className="w-2.5 h-2.5 text-emerald-500" />
-                          ) : (
-                            <Type className="w-2.5 h-2.5 text-muted-foreground" />
-                          )}
-                          <span>{isCopiedTitle ? 'Copied!' : 'Title'}</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          data-testid={`copy-desc-btn-${rec.id}`}
-                          onClick={() =>
-                            handleCopyText(
-                              `desc-${rec.id}`,
-                              rec.detailedDescription || rec.baseTitle || ''
-                            )
-                          }
-                          className={`px-1.5 py-0.5 rounded border inline-flex items-center gap-1 transition cursor-pointer whitespace-nowrap ${
-                            isCopiedDesc
-                              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 font-semibold'
-                              : 'bg-secondary/70 border-border/70 hover:bg-secondary text-foreground'
-                          }`}
-                          title="Copy Detailed Description"
-                        >
-                          {isCopiedDesc ? (
-                            <Check className="w-2.5 h-2.5 text-emerald-500" />
-                          ) : (
-                            <FileText className="w-2.5 h-2.5 text-muted-foreground" />
-                          )}
-                          <span>{isCopiedDesc ? 'Copied!' : 'Desc'}</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          data-testid={`copy-keywords-btn-${rec.id}`}
-                          onClick={() =>
-                            handleCopyText(
-                              `tags-${rec.id}`,
-                              (rec.rankedKeywords || []).join(', ')
-                            )
-                          }
-                          className={`px-1.5 py-0.5 rounded border inline-flex items-center gap-1 transition cursor-pointer whitespace-nowrap ${
-                            isCopiedTags
-                              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 font-semibold'
-                              : 'bg-secondary/70 border-border/70 hover:bg-secondary text-foreground'
-                          }`}
-                          title="Copy comma-separated Keywords"
-                        >
-                          {isCopiedTags ? (
-                            <Check className="w-2.5 h-2.5 text-emerald-500" />
-                          ) : (
-                            <Tag className="w-2.5 h-2.5 text-muted-foreground" />
-                          )}
-                          <span>{isCopiedTags ? 'Copied!' : `${kwCount} Keywords`}</span>
-                        </button>
-                      </div>
+                      <span className="font-medium text-foreground truncate hover:text-primary">
+                        {cleanTitle}
+                      </span>
                     </div>
 
-                    {/* Col 3: Either Single-Agency Focus Mode OR 6-Column Agency Status Matrix */}
-                    {isFocusMode ? (
-                      <div
-                        className="col-span-7 sm:col-span-4 flex items-center"
-                        onClick={(e) => e.stopPropagation()}
+                    {/* Granular 1-Click Copy Buttons */}
+                    <div className="w-36 shrink-0 flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => copyField(`${rec.id}_t`, rec.baseTitle || cleanTitle)}
+                        title="Copy Title"
+                        className="h-6 px-1.5 rounded bg-secondary/60 hover:bg-secondary text-[10px] font-mono flex items-center gap-1 cursor-pointer"
                       >
-                        {renderFocusedAgencyControlCell(rec)}
+                        {copiedKey === `${rec.id}_t` ? (
+                          <Check className="w-3 h-3 text-emerald-400" />
+                        ) : (
+                          <Type className="w-3 h-3" />
+                        )}
+                        <span>T</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          copyField(
+                            `${rec.id}_d`,
+                            rec.detailedDescription || rec.baseTitle || cleanTitle
+                          )
+                        }
+                        title="Copy Description"
+                        className="h-6 px-1.5 rounded bg-secondary/60 hover:bg-secondary text-[10px] font-mono flex items-center gap-1 cursor-pointer"
+                      >
+                        {copiedKey === `${rec.id}_d` ? (
+                          <Check className="w-3 h-3 text-emerald-400" />
+                        ) : (
+                          <FileText className="w-3 h-3" />
+                        )}
+                        <span>D</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          copyField(`${rec.id}_k`, (rec.rankedKeywords || []).join(', '))
+                        }
+                        title="Copy Keywords"
+                        className="h-6 px-1.5 rounded bg-secondary/60 hover:bg-secondary text-[10px] font-mono flex items-center gap-1 cursor-pointer"
+                      >
+                        {copiedKey === `${rec.id}_k` ? (
+                          <Check className="w-3 h-3 text-emerald-400" />
+                        ) : (
+                          <Tag className="w-3 h-3" />
+                        )}
+                        <span>K</span>
+                      </button>
+                    </div>
+
+                    {/* Status Column(s) */}
+                    {isFocusMode ? (
+                      <div className="w-48 shrink-0 flex items-center gap-1.5">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              type="button"
+                              className={`flex-1 h-6 px-2 rounded border text-[11px] font-medium flex items-center justify-between cursor-pointer ${getStatusBadgeClasses(
+                                activeSt
+                              )}`}
+                            >
+                              <span className="truncate">{STATUS_SHORT_LABELS[activeSt]}</span>
+                              <span className="text-[9px] opacity-70">▾</span>
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-40">
+                            {ALL_STATUSES.map((st) => (
+                              <DropdownMenuItem
+                                key={st}
+                                onClick={() => handleStatusChange([rec.id], activeAgency, st)}
+                                className="text-xs cursor-pointer"
+                              >
+                                {st}
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+
+                        {activeSt === 'Rejected' && onFixAndRequeue && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onFixAndRequeue({
+                                assetId: rec.id,
+                                filename: rec.filename,
+                                agencyId: activeAgency,
+                                agencyName: AGENCY_DISPLAY_NAMES[activeAgency].full,
+                                rejectionReasonTitle:
+                                  activeTrack?.rejectionReasonTitle || 'Technical Quality / Artifacts',
+                                customRejectionNote: activeTrack?.customRejectionNote,
+                              })
+                            }
+                            className="h-6 px-2 rounded bg-destructive text-destructive-foreground text-[10px] font-semibold cursor-pointer"
+                          >
+                            Fix
+                          </button>
+                        )}
                       </div>
                     ) : (
-                      <div
-                        className="col-span-7 sm:col-span-5 grid grid-cols-6 gap-1.5 items-center"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {AGENCIES.map((agencyId) => renderAgencyStatusCell(rec, agencyId))}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {AGENCIES.map((ag) => {
+                          const st = rec.agencyTrackings?.[ag]?.status || 'New';
+                          return (
+                            <DropdownMenu key={ag}>
+                              <DropdownMenuTrigger asChild>
+                                <button
+                                  type="button"
+                                  className={`w-24 h-6 px-1.5 rounded border text-[10px] font-medium truncate cursor-pointer ${getStatusBadgeClasses(
+                                    st
+                                  )}`}
+                                >
+                                  {STATUS_SHORT_LABELS[st]}
+                                </button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-36">
+                                {ALL_STATUSES.map((opt) => (
+                                  <DropdownMenuItem
+                                    key={opt}
+                                    onClick={() => handleStatusChange([rec.id], ag, opt)}
+                                    className="text-xs cursor-pointer"
+                                  >
+                                    {opt}
+                                  </DropdownMenuItem>
+                                ))}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -2007,173 +1518,196 @@ export const DistributionTrackerView: React.FC<DistributionTrackerViewProps> = (
         )}
       </div>
 
-      {/* Proposal 2 (Modified): Visual Thumbnail Grid + Drag & Drop Matching Reconciliation Modal */}
-      <ExportBasketReconcileModal
-        open={isBasketsModalOpen}
-        onClose={() => setIsBasketsModalOpen(false)}
-        baskets={exportBaskets}
-        masterRecords={masterRecords}
-        activeAgency={activeAgency}
-        onSplitReconcile={handleSplitReconcileBasket}
-      />
-
-      {/* Proposal 1: Bulk Find & Replace / Keyword Sanitizer Modal */}
-      <BulkMetadataSurgeryModal
-        open={isBulkSeoModalOpen}
-        onClose={() => setIsBulkSeoModalOpen(false)}
-        targetRecords={surgeryTargetRecords}
-        activeAgency={activeAgency}
-        onCompleted={(msg) => {
-          setActionBanner({
-            type: 'success',
-            message: msg,
-          });
-        }}
-      />
-
-      {/* Asset Metadata & 6-Agency Inspector Modal */}
+      {/* Clean Lightbox & Metadata Inspector Modal (Opened when clicking any image or Metadata button) */}
       <Dialog
         open={Boolean(inspectedAsset)}
         onClose={() => setInspectedAssetId(null)}
-        title={inspectedAsset?.filename || 'Asset Inspector'}
+        title={inspectedAsset ? getCleanAssetDisplayTitle(inspectedAsset) : 'Asset Metadata'}
         size="lg"
       >
         {inspectedAsset && (
-          <div className="space-y-4 text-xs">
-            <div className="flex flex-col sm:flex-row gap-4">
-              <div className="w-28 h-28 rounded-xl border border-border bg-secondary/40 overflow-hidden shrink-0 flex items-center justify-center">
-                {inspectedAsset.thumbnailBase64 ? (
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+            {/* Left Preview Column */}
+            <div className="md:col-span-5 space-y-2.5">
+              <div className="aspect-[4/3] rounded-xl border border-border overflow-hidden bg-secondary">
+                {inspectedAsset.thumbnailBase64 && (
                   <img
-                    src={
-                      inspectedAsset.thumbnailBase64.startsWith('data:')
-                        ? inspectedAsset.thumbnailBase64
-                        : `data:image/jpeg;base64,${inspectedAsset.thumbnailBase64}`
-                    }
-                    alt={inspectedAsset.filename}
+                    src={inspectedAsset.thumbnailBase64}
+                    alt={getCleanAssetDisplayTitle(inspectedAsset)}
+                    referrerPolicy="no-referrer"
                     className="w-full h-full object-cover"
                   />
-                ) : (
-                  <ImageIcon className="w-6 h-6 text-muted-foreground" />
                 )}
               </div>
-
-              <div className="flex-1 space-y-2 min-w-0">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-muted-foreground">SEO Title</span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleCopyText('modal-title', inspectedAsset.baseTitle || '')}
-                    className="h-6 px-2 text-[10px] gap-1 cursor-pointer"
-                  >
-                    {copiedKey === 'modal-title' ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                    <span>{copiedKey === 'modal-title' ? 'Copied!' : 'Copy Title'}</span>
-                  </Button>
+              <div className="p-2.5 rounded-lg bg-secondary/40 border border-border space-y-1 text-[11px] font-mono text-muted-foreground">
+                <div className="truncate" title={inspectedAsset.filename}>
+                  File: {inspectedAsset.filename}
                 </div>
-                <div className="p-2 rounded-lg border border-border bg-secondary/20 font-medium text-foreground">
-                  {inspectedAsset.baseTitle}
-                </div>
-
-                <div className="flex items-center justify-between gap-2 pt-1">
-                  <span className="font-semibold text-muted-foreground">Detailed Description</span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      handleCopyText(
-                        'modal-desc',
-                        inspectedAsset.detailedDescription || inspectedAsset.baseTitle || ''
-                      )
-                    }
-                    className="h-6 px-2 text-[10px] gap-1 cursor-pointer"
-                  >
-                    {copiedKey === 'modal-desc' ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                    <span>{copiedKey === 'modal-desc' ? 'Copied!' : 'Copy Description'}</span>
-                  </Button>
-                </div>
-                <div className="p-2 rounded-lg border border-border bg-secondary/20 text-muted-foreground">
-                  {inspectedAsset.detailedDescription || inspectedAsset.baseTitle}
-                </div>
-
-                <div className="flex items-center justify-between gap-2 pt-1">
-                  <span className="font-semibold text-muted-foreground">
-                    Keywords ({(inspectedAsset.rankedKeywords || []).length})
-                  </span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      handleCopyText('modal-keywords', (inspectedAsset.rankedKeywords || []).join(', '))
-                    }
-                    className="h-6 px-2 text-[10px] gap-1 cursor-pointer"
-                  >
-                    {copiedKey === 'modal-keywords' ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                    <span>{copiedKey === 'modal-keywords' ? 'Copied!' : 'Copy Keywords'}</span>
-                  </Button>
-                </div>
-                <div className="p-2 rounded-lg border border-border bg-secondary/20 font-mono text-[11px] text-muted-foreground leading-relaxed max-h-24 overflow-y-auto">
-                  {(inspectedAsset.rankedKeywords || []).join(', ')}
+                <div>
+                  Vault Path: {inspectedAsset.masterPath || `/StockFlow/Master_Vault/${inspectedAsset.filename}`}
                 </div>
               </div>
             </div>
 
-            <div className="space-y-1.5 pt-2 border-t border-border">
-              <div className="font-semibold text-foreground">6-Agency Distribution Status</div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {AGENCIES.map((ag) => {
-                  const tr = inspectedAsset.agencyTrackings?.[ag];
-                  const st = tr?.status || 'New';
-                  return (
-                    <div
-                      key={ag}
-                      className="p-2 rounded-lg border border-border bg-secondary/20 flex flex-col gap-1"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="flex items-center gap-1.5 font-semibold">
-                          {getPlatformLogo(ag, 12)}
-                          {AGENCY_DISPLAY_NAMES[ag].full}
-                        </span>
-                        <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-secondary">
-                          {st}
-                        </span>
-                      </div>
-                      {st === 'Rejected' && (
-                        <div className="flex items-center justify-between gap-1 pt-1">
-                          <span className="text-[10px] text-destructive truncate">
-                            {tr?.rejectionReasonTitle || 'Rejected'}
-                          </span>
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => {
-                              setInspectedAssetId(null);
-                              handleTriggerFixAndRequeue(inspectedAsset, ag);
-                            }}
-                            className="h-5 px-1.5 text-[10px] bg-destructive text-destructive-foreground cursor-pointer"
-                          >
-                            Fix & Re-Queue
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+            {/* Right Metadata Form & 1-Click Copy Column */}
+            <div className="md:col-span-7 space-y-3">
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-foreground">Title</label>
+                  <button
+                    type="button"
+                    onClick={() => copyField('modal_title', editTitle)}
+                    className="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedKey === 'modal_title' ? <Check className="w-3 h-3" /> : null}
+                    <span>{copiedKey === 'modal_title' ? 'Copied!' : 'Copy Title'}</span>
+                  </button>
+                </div>
+                <Input
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="h-8 text-xs"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-foreground">Description</label>
+                  <button
+                    type="button"
+                    onClick={() => copyField('modal_desc', editDesc)}
+                    className="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedKey === 'modal_desc' ? <Check className="w-3 h-3" /> : null}
+                    <span>{copiedKey === 'modal_desc' ? 'Copied!' : 'Copy Description'}</span>
+                  </button>
+                </div>
+                <textarea
+                  value={editDesc}
+                  onChange={(e) => setEditDesc(e.target.value)}
+                  rows={2}
+                  className="w-full rounded-lg border border-border bg-background p-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-foreground">
+                    Keywords ({editKeywords.split(',').filter((k) => k.trim()).length})
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => copyField('modal_kw', editKeywords)}
+                    className="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedKey === 'modal_kw' ? <Check className="w-3 h-3" /> : null}
+                    <span>{copiedKey === 'modal_kw' ? 'Copied!' : 'Copy All Keywords'}</span>
+                  </button>
+                </div>
+                <textarea
+                  value={editKeywords}
+                  onChange={(e) => setEditKeywords(e.target.value)}
+                  rows={4}
+                  className="w-full rounded-lg border border-border bg-background p-2 text-xs font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setInspectedAssetId(null)}
+                  className="h-8 text-xs cursor-pointer"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  onClick={handleSaveInspectedMetadata}
+                  className="h-8 text-xs gap-1.5 cursor-pointer"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Save Changes</span>
+                </Button>
               </div>
             </div>
           </div>
         )}
       </Dialog>
 
-      {/* Rejection Dictionary Modal */}
+      {/* Modals for Rejection Logging, Export Basket Reconciliation & Bulk SEO Surgery */}
       <RejectionReasonModal
         open={rejectionModalState.open}
-        onClose={() => setRejectionModalState((s) => ({ ...s, open: false }))}
         agencyId={rejectionModalState.agencyId}
         assetCount={rejectionModalState.assetIds.length}
-        onConfirmRejection={handleConfirmRejection}
+        onClose={() =>
+          setRejectionModalState((prev) => ({ ...prev, open: false, assetIds: [] }))
+        }
+        onConfirmRejection={async ({ rejectionReasonId, customRejectionNote }) => {
+          const targets = rejectionModalState.allAgencies
+            ? AGENCIES
+            : [rejectionModalState.agencyId];
+          for (const ag of targets) {
+            await db.tracker.reconcileAgencyStatuses({
+              assetIds: rejectionModalState.assetIds,
+              agencyId: ag,
+              targetStatus: 'Rejected',
+              rejectionReasonId,
+              customRejectionNote,
+            });
+          }
+          setRejectionModalState((prev) => ({ ...prev, open: false, assetIds: [] }));
+        }}
+      />
+
+      <ExportBasketReconcileModal
+        open={isBasketsModalOpen}
+        onClose={() => setIsBasketsModalOpen(false)}
+        baskets={exportBaskets}
+        masterRecords={masterRecords}
+        activeAgency={activeAgency}
+        onSplitReconcile={async ({ agencyId, revertToNewIds, markUploadedIds }) => {
+          if (revertToNewIds.length > 0) {
+            await db.tracker.reconcileAgencyStatuses({
+              assetIds: revertToNewIds,
+              agencyId,
+              targetStatus: 'New',
+            });
+          }
+          if (markUploadedIds.length > 0) {
+            await db.tracker.reconcileAgencyStatuses({
+              assetIds: markUploadedIds,
+              agencyId,
+              targetStatus: 'Uploaded',
+            });
+          }
+          setIsBasketsModalOpen(false);
+          setActionBanner({
+            type: 'success',
+            message: `Reconciled ${AGENCY_DISPLAY_NAMES[agencyId].full}: ${markUploadedIds.length} marked Uploaded, ${revertToNewIds.length} reverted to New.`,
+          });
+        }}
+      />
+
+      <BulkMetadataSurgeryModal
+        open={isBulkSeoModalOpen}
+        onClose={() => setIsBulkSeoModalOpen(false)}
+        targetRecords={
+          selectedIds.size > 0
+            ? filteredRecords.filter((r) => selectedIds.has(r.id))
+            : filteredRecords
+        }
+        activeAgency={activeAgency}
+        onCompleted={(summaryMessage) => {
+          setIsBulkSeoModalOpen(false);
+          setActionBanner({
+            type: 'success',
+            message: summaryMessage,
+          });
+        }}
       />
     </div>
   );

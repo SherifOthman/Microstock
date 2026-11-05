@@ -9,7 +9,6 @@ import {
   FtpProtocolType,
   FtpQueueItem,
   FtpTelemetryFrame,
-  SimulatedFaultMode,
 } from '../../services/ftp/dreamstimeFtpRouter';
 import { dreamstimeFtpService } from '../../services/ftp/ftpClientService';
 import { Progress } from '../../components/ui/progress';
@@ -17,17 +16,13 @@ import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { getPlatformLogo } from '../../components/icons/StockLogos';
 import {
-  Activity,
   AlertTriangle,
   CheckCircle2,
-  Clock,
-  Database,
   Eye,
   EyeOff,
   FileImage,
   FileVideo,
   FolderGit2,
-  HardDriveUpload,
   Layers,
   Lock,
   Play,
@@ -35,17 +30,15 @@ import {
   RefreshCw,
   RotateCcw,
   Server,
-  ShieldCheck,
   Sparkles,
   Square,
   Trash2,
   UploadCloud,
-  Wifi,
   XCircle,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
 
-type QueueSubTab = 'all' | 'succeeded' | 'failed' | 'logs';
+type QueueSubTab = 'all' | 'succeeded' | 'failed';
 
 function getRemoteFolderBadgeStyle(folder: DreamstimeRemoteFolder): string {
   switch (folder) {
@@ -69,27 +62,17 @@ export const FtpUploaderView: React.FC = () => {
   const { language } = useLanguage();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Subscribe to live orchestrator state
   const [queue, setQueue] = useState<FtpQueueItem[]>(() => dreamstimeFtpService.getQueue());
   const [telemetry, setTelemetry] = useState<FtpTelemetryFrame>(() =>
     dreamstimeFtpService.getTelemetry()
   );
   const [mode, setMode] = useState<FtpExecutionMode>(() => dreamstimeFtpService.getMode());
-  const [faultMode, setFaultMode] = useState<SimulatedFaultMode>(() =>
-    dreamstimeFtpService.getFaultMode()
-  );
   const [activeSubTab, setActiveSubTab] = useState<QueueSubTab>('all');
   const [isDraggingOver, setIsDraggingOver] = useState(false);
 
-  // SQLite persisted profile & audit logs
   const storedProfile = useSqliteQuery(() => db.ftp.getProfile('dreamstime'), [], undefined);
-  const transferLogs = useSqliteQuery(
-    () => db.ftp.getTransferLogs({ agencyId: 'dreamstime', limit: 60 }),
-    [queue.length, telemetry.completedFiles],
-    []
-  );
 
-  // Credential Vault Form State
+  // Credential Form State
   const [protocol, setProtocol] = useState<FtpProtocolType>('ftps');
   const [host, setHost] = useState('ftp.dreamstime.com');
   const [port, setPort] = useState(21);
@@ -106,7 +89,6 @@ export const FtpUploaderView: React.FC = () => {
       setQueue([...dreamstimeFtpService.getQueue()]);
       setTelemetry({ ...dreamstimeFtpService.getTelemetry() });
       setMode(dreamstimeFtpService.getMode());
-      setFaultMode(dreamstimeFtpService.getFaultMode());
     };
     const unsub = dreamstimeFtpService.subscribe(sync);
     return () => unsub();
@@ -123,16 +105,8 @@ export const FtpUploaderView: React.FC = () => {
     }
   }, [storedProfile?.updatedAt]);
 
-  const handleModeSwitch = (nextMode: FtpExecutionMode) => {
-    dreamstimeFtpService.setMode(nextMode);
-  };
-
-  const handleFaultModeChange = (nextFault: SimulatedFaultMode) => {
-    dreamstimeFtpService.setFaultMode(nextFault);
-  };
-
   const handleSaveCredentials = async () => {
-    setVaultStatus({ type: 'saving', message: 'Encrypting via OS safeStorage...' });
+    setVaultStatus({ type: 'saving', message: 'Saving encrypted credentials...' });
     try {
       await dreamstimeFtpService.saveDreamstimeCredentials({
         protocol,
@@ -143,10 +117,7 @@ export const FtpUploaderView: React.FC = () => {
         passiveMode: true,
       });
       setPassword('');
-      setVaultStatus({
-        type: 'ok',
-        message: 'Saved to SQLite (safeStorage encrypted)',
-      });
+      setVaultStatus({ type: 'ok', message: 'Saved to Secure Vault' });
     } catch (err: any) {
       setVaultStatus({
         type: 'error',
@@ -156,13 +127,7 @@ export const FtpUploaderView: React.FC = () => {
   };
 
   const handleTestConnection = async () => {
-    setVaultStatus({
-      type: 'testing',
-      message:
-        mode === 'live'
-          ? `Handshaking ${host}:${port} (${protocol.toUpperCase()})...`
-          : 'Simulating Dreamstime FTPS handshake...',
-    });
+    setVaultStatus({ type: 'testing', message: 'Testing connection...' });
     try {
       const res = await dreamstimeFtpService.testDreamstimeConnection({
         protocol,
@@ -176,18 +141,18 @@ export const FtpUploaderView: React.FC = () => {
         setPassword('');
         setVaultStatus({
           type: 'ok',
-          message: `Connected (${res.latencyMs || 45}ms · ${protocol.toUpperCase()})`,
+          message: `Connected (${res.latencyMs || 42}ms)`,
         });
       } else {
         setVaultStatus({
           type: 'error',
-          message: res.error || 'Connection test failed',
+          message: res.error || 'Connection failed',
         });
       }
     } catch (err: any) {
       setVaultStatus({
         type: 'error',
-        message: err?.message || 'Connection test error',
+        message: err?.message || 'Connection error',
       });
     }
   };
@@ -206,7 +171,6 @@ export const FtpUploaderView: React.FC = () => {
     }
   };
 
-  // Compute folder routing counts
   const rootCount = queue.filter((i) => i.remoteFolder === '/').length;
   const vectorCount = queue.filter((i) => i.remoteFolder === '/additional').length;
   const videoCount = queue.filter((i) => i.remoteFolder === '/video').length;
@@ -223,183 +187,139 @@ export const FtpUploaderView: React.FC = () => {
       : queue;
 
   return (
-    <div className="flex-1 min-h-0 h-full flex flex-col gap-3 overflow-hidden select-none">
-      {/* Ultra-Slim Top Header Bar */}
-      <div className="shrink-0 h-11 px-3.5 rounded-xl border border-border bg-card flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-7 h-7 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
-            {getPlatformLogo('dreamstime', 16)}
-          </div>
-          <div className="flex items-center gap-2 min-w-0">
-            <h1 className="text-xs sm:text-sm font-bold tracking-tight text-foreground truncate">
-              {language === 'ar' ? 'رافع FTP الذكي — Dreamstime' : 'Microstock FTP Uploader'}
-            </h1>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-semibold shrink-0">
-              Dreamstime PoC · Phase 1
-            </span>
-            <span className="hidden md:inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-secondary text-muted-foreground border border-border shrink-0">
-              <ShieldCheck className="w-3 h-3 text-primary" />
-              SFTP-Ready Adapter
-            </span>
-          </div>
+    <div
+      data-testid="ftp-uploader-view"
+      className="flex-1 min-h-0 h-full flex flex-col gap-3 overflow-hidden select-none"
+    >
+      {/* Minimalist Top Bar */}
+      <div className="shrink-0 h-11 px-4 rounded-xl border border-border bg-card flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          {getPlatformLogo('dreamstime', 18)}
+          <h1 className="text-sm font-bold tracking-tight text-foreground">
+            {language === 'ar' ? 'رافع Dreamstime FTP' : 'Dreamstime FTP Uploader'}
+          </h1>
         </div>
 
-        {/* Execution Mode Switcher (Dry-Run vs Live FTPS) */}
-        <div className="flex items-center gap-2 shrink-0">
-          <div
-            dir="ltr"
-            className="inline-flex items-center rounded-lg bg-secondary p-0.5 border border-border text-[11px] font-medium"
+        <div
+          dir="ltr"
+          className="inline-flex items-center rounded-lg bg-secondary p-0.5 border border-border text-xs"
+        >
+          <button
+            type="button"
+            disabled={telemetry.isRunning}
+            onClick={() => dreamstimeFtpService.setMode('dry_run')}
+            className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+              mode === 'dry_run'
+                ? 'bg-card text-foreground shadow-2xs font-semibold'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
           >
-            <button
-              type="button"
-              disabled={telemetry.isRunning}
-              onClick={() => handleModeSwitch('dry_run')}
-              className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer flex items-center gap-1.5 ${
-                mode === 'dry_run'
-                  ? 'bg-card text-foreground shadow-2xs font-semibold'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Sparkles className="w-3 h-3 text-amber-400" />
-              <span>Dry-Run Simulator</span>
-            </button>
-            <button
-              type="button"
-              disabled={telemetry.isRunning}
-              onClick={() => handleModeSwitch('live')}
-              className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer flex items-center gap-1.5 ${
-                mode === 'live'
-                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shadow-2xs font-semibold'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Wifi className="w-3 h-3 text-emerald-400" />
-              <span>Live FTPS (Port 21)</span>
-            </button>
-          </div>
+            Dry-Run Test
+          </button>
+          <button
+            type="button"
+            disabled={telemetry.isRunning}
+            onClick={() => dreamstimeFtpService.setMode('live')}
+            className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+              mode === 'live'
+                ? 'bg-card text-emerald-400 shadow-2xs font-semibold'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Live FTPS
+          </button>
         </div>
       </div>
 
-      {/* Main 2-Column Workspace */}
+      {/* Main 2-Column Minimalist Layout */}
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-3 overflow-hidden">
-        {/* LEFT COLUMN: Secure Credential Vault + Smart Routing Rules + Resiliency Controls */}
-        <div className="lg:col-span-4 xl:col-span-3 min-h-0 flex flex-col gap-2.5 overflow-y-auto pr-0.5">
-          {/* 1. Secure Credential Vault Card */}
-          <div className="p-3.5 rounded-xl border border-border bg-card space-y-2.5 shrink-0">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5">
-                <Lock className="w-3.5 h-3.5 text-primary shrink-0" />
-                <h2 className="text-xs font-semibold text-foreground">
-                  {language === 'ar' ? 'خزنة بيانات Dreamstime' : 'Dreamstime Credential Vault'}
-                </h2>
-              </div>
-              <span
-                dir="ltr"
-                className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/25"
-              >
-                OS safeStorage
+        {/* Left Sidebar: Credentials + Smart Folder Routing */}
+        <div className="lg:col-span-4 xl:col-span-3 min-h-0 flex flex-col gap-3 overflow-y-auto">
+          {/* 1. Dreamstime Credentials */}
+          <div className="p-3.5 rounded-xl border border-border bg-card space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-primary" />
+                <span>FTP Credentials</span>
               </span>
+              {storedProfile?.hasSavedPassword && (
+                <span className="text-[11px] text-emerald-400 font-medium">Encrypted</span>
+              )}
             </div>
 
-            {/* Protocol & Host/Port */}
             <div className="grid grid-cols-3 gap-1.5" dir="ltr">
               <div className="col-span-2 space-y-1">
-                <label className="text-[10px] font-mono text-muted-foreground block">
-                  FTP HOST
-                </label>
+                <label className="text-[11px] text-muted-foreground block">Host</label>
                 <Input
                   value={host}
                   onChange={(e) => setHost(e.target.value)}
                   placeholder="ftp.dreamstime.com"
-                  className="h-7 text-xs font-mono"
+                  className="h-8 text-xs font-mono"
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-[10px] font-mono text-muted-foreground block">
-                  PORT
-                </label>
+                <label className="text-[11px] text-muted-foreground block">Port</label>
                 <Input
                   type="number"
                   value={port}
                   onChange={(e) => setPort(Number(e.target.value) || 21)}
-                  className="h-7 text-xs font-mono tabular-nums"
+                  className="h-8 text-xs font-mono tabular-nums"
                 />
               </div>
             </div>
 
-            {/* Protocol selector */}
-            <div className="space-y-1" dir="ltr">
-              <label className="text-[10px] font-mono text-muted-foreground block">
-                TRANSPORT SECURITY
-              </label>
-              <div className="grid grid-cols-2 gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setProtocol('ftps')}
-                  className={`h-7 px-2 rounded-md border text-[11px] font-mono transition cursor-pointer ${
-                    protocol === 'ftps'
-                      ? 'bg-primary/15 border-primary/40 text-primary font-semibold'
-                      : 'bg-secondary/50 border-border text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  Explicit FTPS (TLS)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setProtocol('ftp')}
-                  className={`h-7 px-2 rounded-md border text-[11px] font-mono transition cursor-pointer ${
-                    protocol === 'ftp'
-                      ? 'bg-primary/15 border-primary/40 text-primary font-semibold'
-                      : 'bg-secondary/50 border-border text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  Standard FTP
-                </button>
-              </div>
+            <div className="grid grid-cols-2 gap-1.5" dir="ltr">
+              <button
+                type="button"
+                onClick={() => setProtocol('ftps')}
+                className={`h-7 rounded-md border text-xs font-medium transition cursor-pointer ${
+                  protocol === 'ftps'
+                    ? 'bg-primary/15 border-primary/40 text-primary font-semibold'
+                    : 'bg-secondary/50 border-border text-muted-foreground'
+                }`}
+              >
+                FTPS (Explicit TLS)
+              </button>
+              <button
+                type="button"
+                onClick={() => setProtocol('ftp')}
+                className={`h-7 rounded-md border text-xs font-medium transition cursor-pointer ${
+                  protocol === 'ftp'
+                    ? 'bg-primary/15 border-primary/40 text-primary font-semibold'
+                    : 'bg-secondary/50 border-border text-muted-foreground'
+                }`}
+              >
+                Standard FTP
+              </button>
             </div>
 
-            {/* Username & Password */}
             <div className="space-y-2" dir="ltr">
               <div className="space-y-1">
-                <label className="text-[10px] font-mono text-muted-foreground block">
-                  USERNAME
-                </label>
+                <label className="text-[11px] text-muted-foreground block">Username</label>
                 <Input
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="dreamstime_username"
-                  className="h-7 text-xs font-mono"
+                  placeholder="Dreamstime username"
+                  className="h-8 text-xs font-mono"
                 />
               </div>
 
               <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <label className="text-[10px] font-mono text-muted-foreground">
-                    PASSWORD
-                  </label>
-                  {storedProfile?.hasSavedPassword && !password && (
-                    <span className="text-[10px] font-mono text-emerald-400">
-                      ● Encrypted in SQLite
-                    </span>
-                  )}
-                </div>
+                <label className="text-[11px] text-muted-foreground block">Password</label>
                 <div className="relative">
                   <Input
                     type={showPassword ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder={
-                      storedProfile?.hasSavedPassword
-                        ? '•••••••••••••••• (Saved)'
-                        : 'Enter FTP password...'
+                      storedProfile?.hasSavedPassword ? '•••••••••••• (Saved)' : 'FTP password'
                     }
-                    className="h-7 text-xs font-mono pr-8"
+                    className="h-8 text-xs font-mono pr-8"
                   />
                   <button
                     type="button"
-                    onClick={() => setShowPassword((prev) => !prev)}
+                    onClick={() => setShowPassword((p) => !p)}
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
-                    aria-label="Toggle password visibility"
                   >
                     {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                   </button>
@@ -407,302 +327,100 @@ export const FtpUploaderView: React.FC = () => {
               </div>
             </div>
 
-            {/* Save & Test Buttons */}
-            <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+            <div className="grid grid-cols-2 gap-1.5 pt-1">
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 onClick={handleSaveCredentials}
-                disabled={vaultStatus.type === 'saving' || vaultStatus.type === 'testing'}
-                className="h-7 text-xs gap-1.5 cursor-pointer"
+                className="h-8 text-xs cursor-pointer"
               >
-                <Lock className="w-3 h-3" />
-                <span>Save Vault</span>
+                Save
               </Button>
               <Button
                 type="button"
                 variant="default"
                 size="sm"
                 onClick={handleTestConnection}
-                disabled={vaultStatus.type === 'saving' || vaultStatus.type === 'testing'}
-                className="h-7 text-xs gap-1.5 cursor-pointer"
+                className="h-8 text-xs gap-1.5 cursor-pointer"
               >
-                <Server className="w-3 h-3" />
+                <Server className="w-3.5 h-3.5" />
                 <span>Test Link</span>
               </Button>
             </div>
 
             {vaultStatus.type !== 'idle' && (
-              <div
-                className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-mono flex items-center gap-1.5 ${
+              <p
+                className={`text-xs font-medium truncate ${
                   vaultStatus.type === 'ok'
-                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                    ? 'text-emerald-400'
                     : vaultStatus.type === 'error'
-                    ? 'bg-destructive/10 border-destructive/30 text-destructive'
-                    : 'bg-secondary border-border text-muted-foreground'
+                    ? 'text-destructive'
+                    : 'text-muted-foreground'
                 }`}
               >
-                {vaultStatus.type === 'ok' && <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />}
-                {vaultStatus.type === 'error' && <AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
-                <span className="truncate">{vaultStatus.message}</span>
-              </div>
+                {vaultStatus.message}
+              </p>
             )}
           </div>
 
-          {/* 2. Dreamstime Smart Extension Router Card */}
-          <div className="p-3.5 rounded-xl border border-border bg-card space-y-2 shrink-0">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <FolderGit2 className="w-3.5 h-3.5 text-primary shrink-0" />
-                <h2 className="text-xs font-semibold text-foreground">
-                  {language === 'ar' ? 'التوجيه التلقائي للمجلدات' : 'Dreamstime Auto-Router'}
-                </h2>
-              </div>
-              <span className="text-[10px] font-mono text-muted-foreground">By Extension</span>
-            </div>
+          {/* 2. Smart Folder Routing Summary */}
+          <div className="p-3.5 rounded-xl border border-border bg-card space-y-2">
+            <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+              <FolderGit2 className="w-3.5 h-3.5 text-primary" />
+              <span>Auto-Routing Rules</span>
+            </span>
 
             <div className="space-y-1.5 text-xs" dir="ltr">
-              <div className="px-2.5 py-1.5 rounded-lg bg-secondary/40 border border-border flex items-center justify-between">
-                <div className="flex items-center gap-2 min-w-0">
-                  <FileImage className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                  <span className="text-[11px] text-foreground truncate">JPEGs / Raster</span>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-sky-500/15 text-sky-400 border-sky-500/30">
-                    /
-                  </span>
-                  <span className="text-[11px] font-mono tabular-nums font-semibold text-foreground w-5 text-right">
-                    {rootCount}
-                  </span>
-                </div>
+              <div className="px-2.5 py-1.5 rounded-lg bg-secondary/40 flex items-center justify-between">
+                <span className="text-muted-foreground">Photos (.jpg)</span>
+                <span className="font-mono font-semibold text-sky-400">
+                  / ({rootCount})
+                </span>
               </div>
-
-              <div className="px-2.5 py-1.5 rounded-lg bg-secondary/40 border border-border flex items-center justify-between">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Layers className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span className="text-[11px] text-foreground truncate">Vectors (.eps, .ai)</span>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-amber-500/15 text-amber-400 border-amber-500/30">
-                    /additional
-                  </span>
-                  <span className="text-[11px] font-mono tabular-nums font-semibold text-foreground w-5 text-right">
-                    {vectorCount}
-                  </span>
-                </div>
+              <div className="px-2.5 py-1.5 rounded-lg bg-secondary/40 flex items-center justify-between">
+                <span className="text-muted-foreground">Vectors (.eps, .ai)</span>
+                <span className="font-mono font-semibold text-amber-400">
+                  /additional ({vectorCount})
+                </span>
               </div>
-
-              <div className="px-2.5 py-1.5 rounded-lg bg-secondary/40 border border-border flex items-center justify-between">
-                <div className="flex items-center gap-2 min-w-0">
-                  <FileVideo className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                  <span className="text-[11px] text-foreground truncate">Videos (.mp4, .mov)</span>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-purple-500/15 text-purple-400 border-purple-500/30">
-                    /video
-                  </span>
-                  <span className="text-[11px] font-mono tabular-nums font-semibold text-foreground w-5 text-right">
-                    {videoCount}
-                  </span>
-                </div>
+              <div className="px-2.5 py-1.5 rounded-lg bg-secondary/40 flex items-center justify-between">
+                <span className="text-muted-foreground">Videos (.mp4, .mov)</span>
+                <span className="font-mono font-semibold text-purple-400">
+                  /video ({videoCount})
+                </span>
               </div>
-            </div>
-          </div>
-
-          {/* 3. Network Resiliency & 3x Auto-Retry Simulator Card */}
-          <div className="p-3.5 rounded-xl border border-border bg-card space-y-2 shrink-0">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <RefreshCw className="w-3.5 h-3.5 text-primary shrink-0" />
-                <h2 className="text-xs font-semibold text-foreground">
-                  3x Exponential Backoff
-                </h2>
-              </div>
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">
-                1.5s → 3s → 6s
-              </span>
-            </div>
-
-            <p className="text-[11px] text-muted-foreground leading-snug">
-              Test how the queue handles network drops during unattended overnight batches:
-            </p>
-
-            <div className="space-y-1 text-[11px]" dir="ltr">
-              {(
-                [
-                  {
-                    id: 'none',
-                    label: 'Clean Transfer (0 Drops)',
-                    desc: 'All files stream at 100% with zero network errors',
-                  },
-                  {
-                    id: 'transient_recover_on_retry_2',
-                    label: 'Transient Blip (Recovers Retry #2)',
-                    desc: 'File #2 drops mid-stream, auto-retries & succeeds',
-                  },
-                  {
-                    id: 'persistent_fail_all_3',
-                    label: 'Hard Drop (Moves to Failed Queue)',
-                    desc: 'Exhausts all 3 retries → isolates in Failed Queue',
-                  },
-                ] as const
-              ).map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  disabled={telemetry.isRunning}
-                  onClick={() => handleFaultModeChange(opt.id)}
-                  className={`w-full px-2.5 py-1.5 rounded-lg border text-left transition cursor-pointer ${
-                    faultMode === opt.id
-                      ? 'bg-primary/15 border-primary/40 text-foreground font-semibold'
-                      : 'bg-secondary/30 border-border text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span>{opt.label}</span>
-                    {faultMode === opt.id && (
-                      <span className="text-[10px] font-mono text-primary">ACTIVE</span>
-                    )}
-                  </div>
-                  <p className="text-[10px] text-muted-foreground font-normal mt-0.5">
-                    {opt.desc}
-                  </p>
-                </button>
-              ))}
             </div>
           </div>
         </div>
 
-        {/* RIGHT COLUMN: Live Telemetry Cockpit + Dropzone + Transfer Queue & SQLite Logs */}
-        <div className="lg:col-span-8 xl:col-span-9 min-h-0 flex flex-col gap-2.5 overflow-hidden">
-          {/* 1. Live Telemetry Cockpit */}
+        {/* Right Column: Live Progress Header + Clean Transfer Queue */}
+        <div className="lg:col-span-8 xl:col-span-9 min-h-0 flex flex-col gap-3 overflow-hidden">
+          {/* Compact Progress & Controls Card */}
           <div className="shrink-0 p-3.5 rounded-xl border border-border bg-card space-y-3">
-            {/* Top Telemetry KPI Strip */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-              {/* Overall Batch Counter */}
-              <div className="p-2.5 rounded-lg bg-secondary/40 border border-border space-y-0.5">
-                <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                  <span>Batch Progress</span>
-                  <HardDriveUpload className="w-3.5 h-3.5 text-primary" />
-                </div>
-                <div className="text-base font-bold font-mono tabular-nums text-foreground" dir="ltr">
-                  File {telemetry.currentFileIndex} of {telemetry.totalFiles}
-                </div>
-                <div className="text-[10px] font-mono tabular-nums text-muted-foreground" dir="ltr">
-                  {formatBytes(telemetry.batchBytesTransferred)} / {formatBytes(telemetry.batchTotalBytes)}
-                </div>
-              </div>
-
-              {/* Live Upload Speed */}
-              <div className="p-2.5 rounded-lg bg-secondary/40 border border-border space-y-0.5">
-                <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                  <span>Live Speed (EMA)</span>
-                  <Activity className="w-3.5 h-3.5 text-emerald-400" />
-                </div>
-                <div className="text-base font-bold font-mono tabular-nums text-emerald-400" dir="ltr">
-                  {telemetry.isRunning ? formatTransferSpeed(telemetry.speedBytesPerSec) : '0.0 MB/s'}
-                </div>
-                <div className="text-[10px] font-mono text-muted-foreground" dir="ltr">
-                  {mode === 'live' ? 'Explicit FTPS Stream' : '60fps Telemetry Bridge'}
-                </div>
-              </div>
-
-              {/* Estimated Time Remaining */}
-              <div className="p-2.5 rounded-lg bg-secondary/40 border border-border space-y-0.5">
-                <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                  <span>Estimated Time (ETA)</span>
-                  <Clock className="w-3.5 h-3.5 text-sky-400" />
-                </div>
-                <div className="text-base font-bold font-mono tabular-nums text-foreground" dir="ltr">
-                  {formatEtaSeconds(telemetry.etaSeconds)}
-                </div>
-                <div className="text-[10px] font-mono tabular-nums text-muted-foreground" dir="ltr">
-                  {telemetry.succeededFiles} ok · {telemetry.failedFiles} failed
-                </div>
-              </div>
-
-              {/* Active Target Folder & Retry Status */}
-              <div className="p-2.5 rounded-lg bg-secondary/40 border border-border space-y-0.5">
-                <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                  <span>Active Route</span>
-                  <FolderGit2 className="w-3.5 h-3.5 text-amber-400" />
-                </div>
-                <div className="flex items-center gap-1.5 pt-0.5" dir="ltr">
-                  <span
-                    className={`text-xs font-mono font-bold px-2 py-0.5 rounded border ${getRemoteFolderBadgeStyle(
-                      telemetry.currentRemoteFolder
-                    )}`}
-                  >
-                    {telemetry.currentRemoteFolder}
-                  </span>
-                  {telemetry.activeRetryAttempt > 0 && (
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
-                      Retry {telemetry.activeRetryAttempt}/3
-                    </span>
-                  )}
-                </div>
-                <div className="text-[10px] font-mono text-muted-foreground truncate" dir="ltr">
-                  {telemetry.currentFilename || 'Waiting for batch...'}
-                </div>
-              </div>
-            </div>
-
-            {/* Dual 60fps Progress Bars (Overall Batch + Current File) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-0.5" dir="ltr">
-              {/* Overall Batch Progress Bar */}
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-[11px] font-mono">
-                  <span className="text-muted-foreground">
-                    OVERALL BATCH ({telemetry.completedFiles}/{telemetry.totalFiles} FILES)
-                  </span>
-                  <span className="font-bold tabular-nums text-foreground">
-                    {telemetry.batchPercent}%
+            <div className="flex flex-wrap items-center justify-between gap-3" dir="ltr">
+              <div className="flex items-center gap-4 text-xs font-mono tabular-nums">
+                <div>
+                  <span className="text-muted-foreground">Batch: </span>
+                  <span className="font-bold text-foreground">
+                    {telemetry.completedFiles} / {telemetry.totalFiles} files ({telemetry.batchPercent}%)
                   </span>
                 </div>
-                <Progress value={telemetry.batchPercent} className="h-2" />
-              </div>
-
-              {/* Current File Progress Bar */}
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-[11px] font-mono">
-                  <span className="text-muted-foreground truncate max-w-[260px]">
-                    {telemetry.currentFilename
-                      ? `FILE: ${telemetry.currentFilename}`
-                      : 'CURRENT FILE PROGRESS'}
-                  </span>
-                  <span className="font-bold tabular-nums text-primary">
-                    {telemetry.currentFilePercent}%
+                <div>
+                  <span className="text-muted-foreground">Speed: </span>
+                  <span className="font-bold text-emerald-400">
+                    {telemetry.isRunning ? formatTransferSpeed(telemetry.speedBytesPerSec) : '0.0 MB/s'}
                   </span>
                 </div>
-                <Progress
-                  value={telemetry.currentFilePercent}
-                  className="h-2"
-                  indicatorClassName={
-                    telemetry.activeRetryAttempt > 0 ? 'bg-amber-400' : 'bg-emerald-500'
-                  }
-                />
-              </div>
-            </div>
-
-            {/* Live Status Line & Action Bar */}
-            <div className="pt-1 border-t border-border flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <span
-                  className={`w-2 h-2 rounded-full shrink-0 ${
-                    telemetry.isRunning
-                      ? 'bg-emerald-400 animate-ping'
-                      : failedItems.length > 0
-                      ? 'bg-amber-400'
-                      : 'bg-muted-foreground'
-                  }`}
-                />
-                <span className="text-[11px] font-mono text-muted-foreground truncate" dir="ltr">
-                  {telemetry.statusMessage}
-                </span>
+                <div>
+                  <span className="text-muted-foreground">ETA: </span>
+                  <span className="font-bold text-foreground">
+                    {formatEtaSeconds(telemetry.etaSeconds)}
+                  </span>
+                </div>
               </div>
 
-              <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex items-center gap-1.5">
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -720,7 +438,7 @@ export const FtpUploaderView: React.FC = () => {
                   size="sm"
                   disabled={telemetry.isRunning}
                   onClick={() => fileInputRef.current?.click()}
-                  className="h-7 text-xs gap-1.5 cursor-pointer"
+                  className="h-8 text-xs gap-1.5 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>Add Files</span>
@@ -732,10 +450,10 @@ export const FtpUploaderView: React.FC = () => {
                   size="sm"
                   disabled={telemetry.isRunning}
                   onClick={() => dreamstimeFtpService.loadSampleDreamstimeBatch()}
-                  className="h-7 text-xs gap-1.5 cursor-pointer"
+                  className="h-8 text-xs gap-1.5 cursor-pointer"
                 >
                   <Sparkles className="w-3.5 h-3.5 text-primary" />
-                  <span>Load Sample Dreamstime Mix (6)</span>
+                  <span>Sample Mix (6)</span>
                 </Button>
 
                 {failedItems.length > 0 && !telemetry.isRunning && (
@@ -744,10 +462,10 @@ export const FtpUploaderView: React.FC = () => {
                     variant="default"
                     size="sm"
                     onClick={() => dreamstimeFtpService.retryAllFailed()}
-                    className="h-7 text-xs gap-1.5 bg-amber-500 hover:bg-amber-600 text-black font-semibold cursor-pointer"
+                    className="h-8 text-xs gap-1.5 bg-amber-500 hover:bg-amber-600 text-black font-semibold cursor-pointer"
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Retry All Failed ({failedItems.length})</span>
+                    <span>Retry Failed ({failedItems.length})</span>
                   </Button>
                 )}
 
@@ -757,10 +475,10 @@ export const FtpUploaderView: React.FC = () => {
                     variant="destructive"
                     size="sm"
                     onClick={() => dreamstimeFtpService.abortBatch()}
-                    className="h-7 text-xs gap-1.5 cursor-pointer"
+                    className="h-8 text-xs gap-1.5 cursor-pointer"
                   >
                     <Square className="w-3.5 h-3.5" />
-                    <span>Abort Batch</span>
+                    <span>Stop</span>
                   </Button>
                 ) : (
                   <Button
@@ -769,7 +487,7 @@ export const FtpUploaderView: React.FC = () => {
                     size="sm"
                     disabled={queuedItems.length === 0}
                     onClick={() => dreamstimeFtpService.startBatchUpload()}
-                    className="h-7 text-xs gap-1.5 cursor-pointer"
+                    className="h-8 text-xs gap-1.5 cursor-pointer font-semibold"
                   >
                     <Play className="w-3.5 h-3.5" />
                     <span>Start Upload ({queuedItems.length})</span>
@@ -782,17 +500,18 @@ export const FtpUploaderView: React.FC = () => {
                     variant="ghost"
                     size="sm"
                     onClick={() => dreamstimeFtpService.clearQueue()}
-                    className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive cursor-pointer"
-                    title="Clear Queue"
+                    className="h-8 px-2 text-muted-foreground hover:text-destructive cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </Button>
                 )}
               </div>
             </div>
+
+            <Progress value={telemetry.batchPercent} className="h-2" />
           </div>
 
-          {/* 2. Queue & SQLite Audit Tabs */}
+          {/* Transfer Queue Table */}
           <div
             onDragOver={(e) => {
               e.preventDefault();
@@ -804,289 +523,129 @@ export const FtpUploaderView: React.FC = () => {
               isDraggingOver ? 'border-primary bg-primary/5' : 'border-border'
             }`}
           >
-            {/* Segmented Tab Bar */}
-            <div className="shrink-0 h-10 px-3 border-b border-border flex items-center justify-between gap-2 bg-secondary/20">
-              <div className="flex items-center gap-1" dir="ltr">
-                <button
-                  type="button"
-                  onClick={() => setActiveSubTab('all')}
-                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition cursor-pointer flex items-center gap-1.5 ${
-                    activeSubTab === 'all'
-                      ? 'bg-primary text-primary-foreground font-semibold'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
-                  }`}
-                >
-                  <span>All Queue</span>
-                  <span className="text-[10px] font-mono tabular-nums px-1.5 py-0.2 rounded bg-black/20">
-                    {queue.length}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setActiveSubTab('succeeded')}
-                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition cursor-pointer flex items-center gap-1.5 ${
-                    activeSubTab === 'succeeded'
-                      ? 'bg-emerald-500 text-black font-semibold'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
-                  }`}
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Succeeded</span>
-                  <span className="text-[10px] font-mono tabular-nums px-1.5 py-0.2 rounded bg-black/15">
-                    {succeededItems.length}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setActiveSubTab('failed')}
-                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition cursor-pointer flex items-center gap-1.5 ${
-                    activeSubTab === 'failed'
-                      ? 'bg-destructive text-destructive-foreground font-semibold'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
-                  }`}
-                >
-                  <XCircle className="w-3.5 h-3.5" />
-                  <span>Failed Queue</span>
-                  <span className="text-[10px] font-mono tabular-nums px-1.5 py-0.2 rounded bg-black/20">
-                    {failedItems.length}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setActiveSubTab('logs')}
-                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition cursor-pointer flex items-center gap-1.5 ${
-                    activeSubTab === 'logs'
-                      ? 'bg-primary text-primary-foreground font-semibold'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
-                  }`}
-                >
-                  <Database className="w-3.5 h-3.5" />
-                  <span>SQLite Audit Logs</span>
-                  <span className="text-[10px] font-mono tabular-nums px-1.5 py-0.2 rounded bg-black/20">
-                    {transferLogs?.length || 0}
-                  </span>
-                </button>
-              </div>
-
-              {activeSubTab === 'logs' && (transferLogs?.length || 0) > 0 && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => db.ftp.clearLogs('dreamstime')}
-                  className="h-7 text-[11px] text-muted-foreground hover:text-destructive cursor-pointer"
-                >
-                  Clear History
-                </Button>
-              )}
+            {/* Simple Queue Filter Tabs */}
+            <div className="shrink-0 h-10 px-3 border-b border-border flex items-center gap-1.5" dir="ltr">
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('all')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer ${
+                  activeSubTab === 'all'
+                    ? 'bg-primary text-primary-foreground font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Queue ({queue.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('succeeded')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer ${
+                  activeSubTab === 'succeeded'
+                    ? 'bg-emerald-500 text-black font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Completed ({succeededItems.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('failed')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer ${
+                  activeSubTab === 'failed'
+                    ? 'bg-destructive text-destructive-foreground font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Failed ({failedItems.length})
+              </button>
             </div>
 
-            {/* Tab Content Area */}
             <div className="flex-1 min-h-0 overflow-y-auto">
-              {activeSubTab === 'logs' ? (
-                (transferLogs?.length || 0) === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center p-8 text-center text-muted-foreground">
-                    <Database className="w-8 h-8 mb-2 opacity-40" />
-                    <p className="text-xs font-medium text-foreground">No SQLite transfer logs recorded yet</p>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">
-                      Run a Dreamstime upload batch to persist per-file transfer telemetry in SQLite.
-                    </p>
-                  </div>
-                ) : (
-                  <table className="w-full text-left border-collapse text-xs" dir="ltr">
-                    <thead className="sticky top-0 bg-card border-b border-border text-[10px] font-mono text-muted-foreground uppercase">
-                      <tr>
-                        <th className="py-2 px-3">Filename</th>
-                        <th className="py-2 px-2.5">Dreamstime Target</th>
-                        <th className="py-2 px-2.5">Size</th>
-                        <th className="py-2 px-2.5">Retries</th>
-                        <th className="py-2 px-2.5">Status</th>
-                        <th className="py-2 px-3 text-right">Duration</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border font-mono text-[11px]">
-                      {transferLogs?.map((log) => (
-                        <tr key={log.id} className="hover:bg-secondary/30">
-                          <td className="py-2 px-3 font-medium text-foreground truncate max-w-[240px]">
-                            {log.filename}
-                          </td>
-                          <td className="py-2 px-2.5">
-                            <span
-                              className={`text-[10px] px-1.5 py-0.5 rounded border ${getRemoteFolderBadgeStyle(
-                                log.remoteDirectory
-                              )}`}
-                            >
-                              {log.remotePath}
-                            </span>
-                          </td>
-                          <td className="py-2 px-2.5 tabular-nums text-muted-foreground">
-                            {formatBytes(log.fileSize)}
-                          </td>
-                          <td className="py-2 px-2.5 tabular-nums text-muted-foreground">
-                            {log.retryCount > 0 ? `${log.retryCount}/3` : '0'}
-                          </td>
-                          <td className="py-2 px-2.5">
-                            {log.status === 'succeeded' ? (
-                              <span className="inline-flex items-center gap-1 text-emerald-400">
-                                <CheckCircle2 className="w-3 h-3" />
-                                Succeeded
-                              </span>
-                            ) : (
-                              <span
-                                className="inline-flex items-center gap-1 text-destructive"
-                                title={log.errorMessage}
-                              >
-                                <XCircle className="w-3 h-3" />
-                                {log.errorCode || 'Failed'}
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">
-                            {log.durationMs}ms
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )
-              ) : visibleQueue.length === 0 ? (
+              {visibleQueue.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center p-8 text-center">
-                  <div className="w-11 h-11 rounded-2xl bg-primary/10 border border-primary/25 flex items-center justify-center text-primary mb-3">
-                    <UploadCloud className="w-5 h-5" />
-                  </div>
+                  <UploadCloud className="w-8 h-8 text-primary mb-2 opacity-80" />
                   <h3 className="text-xs sm:text-sm font-semibold text-foreground">
-                    {activeSubTab === 'failed'
-                      ? 'Zero Failed Transfers'
-                      : activeSubTab === 'succeeded'
-                      ? 'No Completed Transfers Yet'
-                      : 'Drop Microstock Assets Here for Dreamstime Auto-Routing'}
+                    Drop Files Here to Queue for Dreamstime
                   </h3>
-                  <p className="text-[11px] text-muted-foreground max-w-md mt-1 leading-relaxed">
-                    JPEGs route automatically to <code className="text-sky-400 font-mono">/</code>, EPS/AI
-                    vectors route to <code className="text-amber-400 font-mono">/additional</code>, and
-                    MP4/MOV videos route to <code className="text-purple-400 font-mono">/video</code>.
+                  <p className="text-xs text-muted-foreground max-w-sm mt-1">
+                    JPEGs route to <code className="text-sky-400 font-mono">/</code>, vectors route to{' '}
+                    <code className="text-amber-400 font-mono">/additional</code>, and videos route to{' '}
+                    <code className="text-purple-400 font-mono">/video</code>.
                   </p>
-                  {activeSubTab === 'all' && (
-                    <div className="flex items-center gap-2 mt-4">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="h-8 text-xs gap-1.5 cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Browse Local Files</span>
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="default"
-                        size="sm"
-                        onClick={() => dreamstimeFtpService.loadSampleDreamstimeBatch()}
-                        className="h-8 text-xs gap-1.5 cursor-pointer"
-                      >
-                        <Sparkles className="w-3.5 h-3.5" />
-                        <span>Load Sample Dreamstime Mix (6 Files)</span>
-                      </Button>
-                    </div>
-                  )}
                 </div>
               ) : (
                 <table className="w-full text-left border-collapse text-xs" dir="ltr">
-                  <thead className="sticky top-0 bg-card border-b border-border text-[10px] font-mono text-muted-foreground uppercase z-10">
+                  <thead className="sticky top-0 bg-card border-b border-border text-[11px] font-mono text-muted-foreground">
                     <tr>
-                      <th className="py-2 px-3">Asset Filename</th>
-                      <th className="py-2 px-2.5">Dreamstime Target Path</th>
+                      <th className="py-2 px-3">File</th>
+                      <th className="py-2 px-2.5">Destination</th>
                       <th className="py-2 px-2.5">Size</th>
-                      <th className="py-2 px-2.5 w-44">Progress</th>
-                      <th className="py-2 px-2.5">Status / Retries</th>
-                      <th className="py-2 px-3 text-right">Action</th>
+                      <th className="py-2 px-2.5 w-40">Progress</th>
+                      <th className="py-2 px-2.5">Status</th>
+                      <th className="py-2 px-3 text-right" />
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-border text-xs">
+                  <tbody className="divide-y divide-border">
                     {visibleQueue.map((item) => (
-                      <tr key={item.id} className="hover:bg-secondary/30 transition-colors">
+                      <tr key={item.id} className="hover:bg-secondary/30">
                         <td className="py-2 px-3">
                           <div className="flex items-center gap-2 min-w-0">
                             {getMediaIcon(item.mediaType)}
-                            <span className="font-mono text-[11px] font-medium text-foreground truncate max-w-[230px]">
+                            <span className="font-mono text-xs text-foreground truncate max-w-[240px]">
                               {item.filename}
                             </span>
                           </div>
                         </td>
                         <td className="py-2 px-2.5">
                           <span
-                            className={`text-[10px] font-mono px-2 py-0.5 rounded border ${getRemoteFolderBadgeStyle(
+                            className={`text-[11px] font-mono px-2 py-0.5 rounded border ${getRemoteFolderBadgeStyle(
                               item.remoteFolder
                             )}`}
                           >
-                            {item.remotePath}
+                            {item.remoteFolder}
                           </span>
                         </td>
-                        <td className="py-2 px-2.5 font-mono text-[11px] tabular-nums text-muted-foreground">
+                        <td className="py-2 px-2.5 font-mono text-xs tabular-nums text-muted-foreground">
                           {formatBytes(item.fileSize)}
                         </td>
                         <td className="py-2 px-2.5">
                           <div className="flex items-center gap-2">
-                            <Progress
-                              value={item.progressPercent}
-                              className="h-1.5 flex-1"
-                              indicatorClassName={
-                                item.status === 'failed'
-                                  ? 'bg-destructive'
-                                  : item.status === 'retrying'
-                                  ? 'bg-amber-400'
-                                  : item.status === 'succeeded'
-                                  ? 'bg-emerald-500'
-                                  : 'bg-primary'
-                              }
-                            />
-                            <span className="text-[10px] font-mono tabular-nums text-muted-foreground w-8 text-right">
+                            <Progress value={item.progressPercent} className="h-1.5 flex-1" />
+                            <span className="text-[11px] font-mono tabular-nums text-muted-foreground w-8 text-right">
                               {item.progressPercent}%
                             </span>
                           </div>
                         </td>
-                        <td className="py-2 px-2.5 font-mono text-[11px]">
+                        <td className="py-2 px-2.5 text-xs">
                           {item.status === 'succeeded' && (
-                            <span className="inline-flex items-center gap-1 text-emerald-400">
-                              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                              <span>
-                                Transferred{item.retryCount > 0 ? ` (Retry #${item.retryCount})` : ''}
-                              </span>
+                            <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              Done
                             </span>
                           )}
                           {item.status === 'uploading' && (
                             <span className="inline-flex items-center gap-1 text-primary">
-                              <RefreshCw className="w-3 h-3 animate-spin shrink-0" />
-                              <span>
-                                Uploading{item.retryCount > 0 ? ` (${item.retryCount}/3)` : '...'}
-                              </span>
+                              <RefreshCw className="w-3 h-3 animate-spin" />
+                              Uploading
                             </span>
                           )}
                           {item.status === 'retrying' && (
                             <span className="inline-flex items-center gap-1 text-amber-400">
-                              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                              <span>Backoff Retry {item.retryCount}/3</span>
+                              <AlertTriangle className="w-3.5 h-3.5" />
+                              Retry {item.retryCount}/3
                             </span>
                           )}
                           {item.status === 'queued' && (
                             <span className="text-muted-foreground">Queued</span>
                           )}
                           {item.status === 'failed' && (
-                            <div className="space-y-0.5">
-                              <span className="inline-flex items-center gap-1 text-destructive font-semibold">
-                                <XCircle className="w-3.5 h-3.5 shrink-0" />
-                                <span>Failed (3/3 Retries)</span>
-                              </span>
-                              {item.errorMessage && (
-                                <p className="text-[10px] text-destructive/80 truncate max-w-[210px]">
-                                  {item.errorMessage}
-                                </p>
-                              )}
-                            </div>
+                            <span
+                              className="inline-flex items-center gap-1 text-destructive font-medium"
+                              title={item.errorMessage}
+                            >
+                              <XCircle className="w-3.5 h-3.5" />
+                              Failed
+                            </span>
                           )}
                         </td>
                         <td className="py-2 px-3 text-right">
@@ -1094,8 +653,7 @@ export const FtpUploaderView: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => dreamstimeFtpService.removeItem(item.id)}
-                              className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-destructive transition cursor-pointer"
-                              title="Remove from queue"
+                              className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-destructive cursor-pointer"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
