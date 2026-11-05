@@ -662,7 +662,7 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
       if (!p) {
         p = {
           agencyId,
-          protocol: 'ftps',
+          protocol: 'ftp',
           host: agencyId === 'dreamstime' ? 'ftp.dreamstime.com' : '',
           port: 21,
           username: '',
@@ -675,6 +675,8 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
       }
       return {
         ...p,
+        protocol: 'ftp',
+        port: 21,
         hasSavedPassword: Boolean(p.encryptedPassword),
       };
     }
@@ -689,13 +691,13 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
           : existing?.encryptedPassword || '';
       const updated: FtpCredentialProfile = {
         agencyId,
-        protocol: payload.protocol || existing?.protocol || 'ftps',
+        protocol: 'ftp',
         host: (payload.host ?? existing?.host ?? 'ftp.dreamstime.com').trim(),
-        port: Number(payload.port) || existing?.port || 21,
+        port: 21,
         username: (payload.username ?? existing?.username ?? '').trim(),
         encryptedPassword: nextEncrypted,
         hasSavedPassword: Boolean(nextEncrypted),
-        passiveMode: payload.passiveMode !== false,
+        passiveMode: true,
         lastVerifiedAt: payload.lastVerifiedAt ?? existing?.lastVerifiedAt,
         updatedAt: now,
       };

@@ -406,6 +406,7 @@ function setupIpcHandlers() {
     sqliteDb,
     safeStorage,
     getMainWindow: () => mainWindow,
+    dialog,
   });
 
   // Native SQLite Relational Database RPC Bridge
@@ -413,7 +414,7 @@ function setupIpcHandlers() {
     return sqliteDb.invoke(method, ...args);
   });
 
-  // Native FTP/FTPS Uploader IPC Bridge (Dreamstime PoC + SFTP-Ready Adapter)
+  // Native Plain FTP Uploader IPC Bridge (Port 21 Standard FTP)
   ipcMain.handle('ftp:saveCredentials', async (_event, payload) => {
     return ftpManager.saveCredentials(payload);
   });
@@ -428,6 +429,10 @@ function setupIpcHandlers() {
 
   ipcMain.handle('ftp:abortBatch', async () => {
     return ftpManager.abortActiveBatch();
+  });
+
+  ipcMain.handle('ftp:selectFolderFiles', async () => {
+    return await ftpManager.selectFolderFiles();
   });
 
   // Window Control IPC

@@ -138,17 +138,21 @@ describe('Step 2 Self-Audit: 50-Asset Seeding & Visual-First UX Verification', (
     });
   });
 
-  it('4. audits FtpUploaderView: renders minimalist Dreamstime uploader without fault-injection or SQLite debug clutter', async () => {
+  it('4. audits FtpUploaderView: renders full-screen queue with Site Settings modal, Add Folder button, and zero Dry-Run/Sample clutter', async () => {
     const { container } = renderWithProviders(<FtpUploaderView />);
 
     expect(screen.getByTestId('ftp-uploader-view')).toBeTruthy();
+    expect(screen.getByTestId('ftp-site-settings-btn')).toBeTruthy();
+    expect(screen.getByTestId('ftp-add-files-btn')).toBeTruthy();
+    expect(screen.getByTestId('ftp-add-folder-btn')).toBeTruthy();
     expect(container.textContent).toContain('Dreamstime FTP Uploader');
     expect(container.textContent).toContain('Auto-Routing Rules');
     expect(container.textContent).toContain('/additional');
     expect(container.textContent).toContain('/video');
 
-    // Verify debug clutter was removed
-    expect(container.textContent).not.toContain('3x Exponential Backoff');
-    expect(container.textContent).not.toContain('SQLite Audit Logs');
+    // Verify Dry-Run Test, Sample Mix, and FTPS toggles are completely gone
+    expect(container.textContent).not.toContain('Dry-Run Test');
+    expect(container.textContent).not.toContain('Sample Mix');
+    expect(container.textContent).not.toContain('Explicit TLS');
   });
 });

@@ -2124,7 +2124,7 @@ class SqliteDatabaseManager {
     const now = Date.now();
     const defaultProfile = {
       agencyId,
-      protocol: 'ftps',
+      protocol: 'ftp',
       host: agencyId === 'dreamstime' ? 'ftp.dreamstime.com' : '',
       port: 21,
       username: '',
@@ -2136,7 +2136,7 @@ class SqliteDatabaseManager {
 
     if (!this.isNativeSqlite) {
       const existing = this.memoryFallback.ftpProfiles.get(agencyId);
-      return existing ? { ...existing } : defaultProfile;
+      return existing ? { ...existing, protocol: 'ftp', port: 21 } : defaultProfile;
     }
 
     const row = this.db
@@ -2146,9 +2146,9 @@ class SqliteDatabaseManager {
 
     return {
       agencyId: row.agency_id,
-      protocol: row.protocol || 'ftps',
+      protocol: 'ftp',
       host: row.host || 'ftp.dreamstime.com',
-      port: Number(row.port || 21),
+      port: 21,
       username: row.username || '',
       encryptedPassword: row.encrypted_password || '',
       hasSavedPassword: Boolean(row.encrypted_password && row.encrypted_password.length > 0),
@@ -2172,9 +2172,9 @@ class SqliteDatabaseManager {
 
     const updated = {
       agencyId,
-      protocol: payload.protocol || existing.protocol || 'ftps',
+      protocol: 'ftp',
       host: (payload.host ?? existing.host ?? 'ftp.dreamstime.com').trim(),
-      port: Number(payload.port || existing.port || 21),
+      port: 21,
       username: (payload.username ?? existing.username ?? '').trim(),
       encryptedPassword,
       hasSavedPassword: Boolean(encryptedPassword && encryptedPassword.length > 0),

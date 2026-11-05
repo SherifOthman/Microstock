@@ -4,7 +4,17 @@ export type FtpProtocolType = 'ftp' | 'ftps' | 'sftp';
 export type DreamstimeRemoteFolder = '/' | '/additional' | '/video';
 export type FtpExecutionMode = 'live' | 'dry_run';
 export type FtpQueueItemStatus = 'queued' | 'uploading' | 'retrying' | 'succeeded' | 'failed';
-export type SimulatedFaultMode = 'none' | 'transient_recover_on_retry_2' | 'persistent_fail_all_3';
+export type SimulatedFaultMode =
+  | 'none'
+  | 'transient_recover_on_retry_2'
+  | 'persistent_fail_all_3'
+  | 'persistent_fail_all_5';
+
+/**
+ * 5x Aggressive Auto-Retry Schedule (2s -> 5s -> 10s -> 30s -> 60s)
+ */
+export const FTP_MAX_RETRIES_PER_FILE = 5;
+export const FTP_RETRY_BACKOFF_SCHEDULE_MS = [2000, 5000, 10000, 30000, 60000] as const;
 
 export interface FtpCredentialProfile {
   agencyId: SupportedPlatform;
@@ -152,6 +162,33 @@ export function resolveDreamstimeRoute(filename: string): DreamstimeRouteResolut
     remotePath: `/${cleanName}`,
     ruleLabel: 'Default → /',
   };
+}
+
+/**
+ * Intelligent File Sorting Priority:
+ * 0 = Photos (`image` -> `/`)
+ * 1 = Vectors (`vector` -> `/additional`)
+ * 2 = Videos (`video` -> `/video`)
+ */
+export function getMediaSortPriority(mediaType: MediaType): number {
+  if (mediaType === 'image') return 0;
+  if (mediaType === 'vector') return 1;
+  return 2;
+}
+
+/**
+ * Sorts FTP queue items so all Photos appear first, followed by Vectors, followed by Videos.
+ * Preserves relative insertion order within the same media category.
+ */
+export function sortFtpQueueByMediaPriority<T extends { mediaType: MediaType }>(items: T[]): T[] {
+  return items
+    .map((item, idx) => ({ item, idx }))
+    .sort((a, b) => {
+      const prioDiff = getMediaSortPriority(a.item.mediaType) - getMediaSortPriority(b.item.mediaType);
+      if (prioDiff !== 0) return prioDiff;
+      return a.idx - b.idx;
+    })
+    .map((entry) => entry.item);
 }
 
 /**

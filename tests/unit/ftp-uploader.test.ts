@@ -4,11 +4,13 @@ import {
   formatBytes,
   formatTransferSpeed,
   formatEtaSeconds,
+  FTP_MAX_RETRIES_PER_FILE,
+  FTP_RETRY_BACKOFF_SCHEDULE_MS,
 } from '../../src/services/ftp/dreamstimeFtpRouter';
 import { DreamstimeFtpOrchestrator } from '../../src/services/ftp/ftpClientService';
 import { db } from '../../src/db';
 
-describe('Dreamstime FTP Uploader (Phase 1 PoC)', () => {
+describe('Dreamstime FTP Uploader (Plain FTP Port 21, Intelligent Sorting & 5x Retry)', () => {
   beforeEach(async () => {
     await db.ftp.clearLogs('dreamstime');
   });
@@ -40,18 +42,46 @@ describe('Dreamstime FTP Uploader (Phase 1 PoC)', () => {
     expect(movRoute.mediaType).toBe('video');
   });
 
-  it('encrypts Dreamstime FTP passwords at rest with enc:<hex> prefix in SQLite', async () => {
+  it('automatically sorts dropped files so Photos appear first, followed by Vectors, followed by Videos', () => {
+    const orchestrator = new DreamstimeFtpOrchestrator();
+    orchestrator.addFiles([
+      { name: 'video_clip_01.mp4', size: 25_000_000 },
+      { name: 'vector_illustration_01.eps', size: 4_000_000 },
+      { name: 'photo_shoot_01.jpg', size: 8_000_000 },
+      { name: 'video_clip_02.mov', size: 30_000_000 },
+      { name: 'photo_shoot_02.png', size: 6_500_000 },
+      { name: 'vector_illustration_02.ai', size: 5_200_000 },
+    ]);
+
+    const sortedQueue = orchestrator.getQueue();
+    expect(sortedQueue.map((i) => i.filename)).toEqual([
+      'photo_shoot_01.jpg',
+      'photo_shoot_02.png',
+      'vector_illustration_01.eps',
+      'vector_illustration_02.ai',
+      'video_clip_01.mp4',
+      'video_clip_02.mov',
+    ]);
+    expect(sortedQueue.map((i) => i.mediaType)).toEqual([
+      'image',
+      'image',
+      'vector',
+      'vector',
+      'video',
+      'video',
+    ]);
+  });
+
+  it('forces Plain FTP on port 21 and encrypts passwords at rest with enc:<hex> prefix in SQLite', async () => {
     const orchestrator = new DreamstimeFtpOrchestrator();
     const saved = await orchestrator.saveDreamstimeCredentials({
-      protocol: 'ftps',
       host: 'ftp.dreamstime.com',
-      port: 21,
       username: 'dt_contributor_99',
       password: 'SuperSecretFtpPassword!2026',
-      passiveMode: true,
     });
 
     expect(saved.agencyId).toBe('dreamstime');
+    expect(saved.protocol).toBe('ftp');
     expect(saved.host).toBe('ftp.dreamstime.com');
     expect(saved.port).toBe(21);
     expect(saved.username).toBe('dt_contributor_99');
@@ -60,8 +90,16 @@ describe('Dreamstime FTP Uploader (Phase 1 PoC)', () => {
     expect(saved.encryptedPassword).not.toContain('SuperSecretFtpPassword!2026');
   });
 
-  it('auto-retries transient network drops with exponential backoff and recovers cleanly on Retry #2', async () => {
+  it('enforces 5x auto-retry schedule (2s, 5s, 10s, 30s, 60s) and recovers cleanly on transient network drops', async () => {
     const orchestrator = new DreamstimeFtpOrchestrator();
+    expect(FTP_MAX_RETRIES_PER_FILE).toBe(5);
+    expect(FTP_RETRY_BACKOFF_SCHEDULE_MS).toEqual([2000, 5000, 10000, 30000, 60000]);
+    expect(orchestrator.getRetryDelayMs(1)).toBe(2000);
+    expect(orchestrator.getRetryDelayMs(2)).toBe(5000);
+    expect(orchestrator.getRetryDelayMs(3)).toBe(10000);
+    expect(orchestrator.getRetryDelayMs(4)).toBe(30000);
+    expect(orchestrator.getRetryDelayMs(5)).toBe(60000);
+
     orchestrator.addFiles([
       { name: 'photo_01.jpg', size: 2_000_000 },
       { name: 'vector_02.eps', size: 3_000_000 },
@@ -71,7 +109,7 @@ describe('Dreamstime FTP Uploader (Phase 1 PoC)', () => {
       mode: 'dry_run',
       faultMode: 'transient_recover_on_retry_2',
       faultTargetFilenames: ['vector_02.eps'],
-      baseBackoffMs: 5,
+      baseBackoffMs: 2,
       simulatedChunkIntervalMs: 1,
     });
 
@@ -82,10 +120,11 @@ describe('Dreamstime FTP Uploader (Phase 1 PoC)', () => {
     const recoveredItem = queue.find((i) => i.filename === 'vector_02.eps');
     expect(recoveredItem?.status).toBe('succeeded');
     expect(recoveredItem?.retryCount).toBe(2);
+    expect(recoveredItem?.maxRetries).toBe(5);
     expect(recoveredItem?.remoteFolder).toBe('/additional');
   });
 
-  it('isolates persistent failures into Failed Queue after 3 retries without halting batch, and supports 1-click Retry All Failed', async () => {
+  it('isolates persistent failures into Failed Queue after 5 retries without halting batch, logs to SQLite, and supports 1-click Retry All Failed', async () => {
     const orchestrator = new DreamstimeFtpOrchestrator();
     orchestrator.addFiles([
       { name: 'photo_01.jpg', size: 2_000_000 },
@@ -95,9 +134,9 @@ describe('Dreamstime FTP Uploader (Phase 1 PoC)', () => {
 
     const firstRun = await orchestrator.startBatchUpload({
       mode: 'dry_run',
-      faultMode: 'persistent_fail_all_3',
+      faultMode: 'persistent_fail_all_5',
       faultTargetFilenames: ['video_02_drop.mp4'],
-      baseBackoffMs: 5,
+      baseBackoffMs: 1,
       simulatedChunkIntervalMs: 1,
     });
 
@@ -106,14 +145,14 @@ describe('Dreamstime FTP Uploader (Phase 1 PoC)', () => {
 
     const failedItem = orchestrator.getQueue().find((i) => i.filename === 'video_02_drop.mp4');
     expect(failedItem?.status).toBe('failed');
-    expect(failedItem?.retryCount).toBe(3);
+    expect(failedItem?.retryCount).toBe(5);
     expect(failedItem?.errorCode).toBe('ETIMEDOUT_421');
 
     // Now test 1-click Retry All Failed
     const retryRun = await orchestrator.retryAllFailed({
       mode: 'dry_run',
       faultMode: 'none',
-      baseBackoffMs: 5,
+      baseBackoffMs: 1,
       simulatedChunkIntervalMs: 1,
     });
 

@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     testConnection: (payload) => ipcRenderer.invoke('ftp:testConnection', payload),
     uploadFile: (payload) => ipcRenderer.invoke('ftp:uploadFile', payload),
     abortBatch: () => ipcRenderer.invoke('ftp:abortBatch'),
+    selectFolderFiles: () => ipcRenderer.invoke('ftp:selectFolderFiles'),
     onTelemetry: (callback) => {
       const handler = (_event, frame) => callback(frame);
       ipcRenderer.on('ftp:telemetry', handler);

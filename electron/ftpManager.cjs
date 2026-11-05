@@ -1,54 +1,85 @@
 const ftp = require('basic-ftp');
 const fs = require('fs');
 const path = require('path');
+const { Readable } = require('stream');
+
+const SUPPORTED_MEDIA_EXTENSIONS = new Set([
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.webp',
+  '.tif',
+  '.tiff',
+  '.bmp',
+  '.eps',
+  '.ai',
+  '.svg',
+  '.cdr',
+  '.mp4',
+  '.mov',
+  '.webm',
+  '.avi',
+  '.mkv',
+  '.m4v',
+]);
 
 /**
- * SFTP-Ready StockTransferAdapter Interface (Phase 1: FTP/Explicit FTPS via basic-ftp)
- * Phase 2 will register SftpAdapter (ssh2-sftp-client) behind the exact same contract.
+ * Plain Standard FTP Adapter via basic-ftp (Forced Port 21, Unencrypted Standard FTP)
+ * Matches FileZilla's default standard FTP connection behavior for Dreamstime (`ftp.dreamstime.com`).
  */
-class FtpFtpsAdapter {
+class PlainFtpAdapter {
   constructor() {
     this.client = null;
-    this.ensuredDirs = new Set();
   }
 
-  async connect({ host, port = 21, username, password, secure = true, timeoutMs = 15000 }) {
+  async connect({ host, username, password, timeoutMs = 20000 }) {
     this.disconnect();
     const client = new ftp.Client(timeoutMs);
     client.ftp.verbose = false;
     await client.access({
-      host,
-      port: Number(port) || 21,
-      user: username,
-      password,
-      secure: Boolean(secure),
-      secureOptions: secure ? { rejectUnauthorized: false } : undefined,
+      host: (host || 'ftp.dreamstime.com').trim(),
+      port: 21,
+      user: (username || '').trim(),
+      password: password || '',
+      secure: false,
     });
     this.client = client;
-    this.ensuredDirs.clear();
-    this.ensuredDirs.add('/');
   }
 
-  async ensureDirectory(remoteDir) {
+  async navigateToRemoteFolder(remoteDir) {
     if (!this.client) throw new Error('FTP client is not connected.');
-    const normalized = !remoteDir || remoteDir === '/' ? '/' : remoteDir.startsWith('/') ? remoteDir : `/${remoteDir}`;
-    if (this.ensuredDirs.has(normalized)) {
-      await this.client.cd(normalized);
+    const normalized =
+      !remoteDir || remoteDir === '/'
+        ? '/'
+        : remoteDir.startsWith('/')
+        ? remoteDir
+        : `/${remoteDir}`;
+
+    if (normalized === '/') {
+      await this.client.cd('/');
       return;
     }
-    await this.client.ensureDir(normalized);
-    this.ensuredDirs.add(normalized);
+
+    try {
+      await this.client.cd(normalized);
+    } catch {
+      await this.client.ensureDir(normalized);
+    }
   }
 
-  async uploadFile({ localPath, remoteFolder, filename, onProgress }) {
+  async uploadFile({ localPath, fileBuffer, remoteFolder, filename, onProgress }) {
     if (!this.client) throw new Error('FTP client is not connected.');
-    if (!localPath || !fs.existsSync(localPath)) {
+
+    const hasDiskFile = typeof localPath === 'string' && localPath.length > 0 && fs.existsSync(localPath);
+    const hasMemoryBuffer = fileBuffer && (Buffer.isBuffer(fileBuffer) || fileBuffer.byteLength > 0);
+
+    if (!hasDiskFile && !hasMemoryBuffer) {
       const err = new Error(`Local source file not found on disk: ${localPath || filename}`);
       err.code = 'ENOENT';
       throw err;
     }
 
-    await this.ensureDirectory(remoteFolder);
+    await this.navigateToRemoteFolder(remoteFolder);
 
     this.client.trackProgress((info) => {
       if (typeof onProgress === 'function') {
@@ -57,8 +88,14 @@ class FtpFtpsAdapter {
     });
 
     try {
-      const targetName = path.basename(filename || localPath);
-      await this.client.uploadFrom(localPath, targetName);
+      const targetName = path.basename(filename || localPath || 'upload.bin');
+      if (hasDiskFile) {
+        await this.client.uploadFrom(localPath, targetName);
+      } else {
+        const buf = Buffer.isBuffer(fileBuffer) ? fileBuffer : Buffer.from(fileBuffer);
+        const stream = Readable.from(buf);
+        await this.client.uploadFrom(stream, targetName);
+      }
     } finally {
       this.client.trackProgress();
     }
@@ -73,15 +110,54 @@ class FtpFtpsAdapter {
       }
       this.client = null;
     }
-    this.ensuredDirs.clear();
   }
 }
 
+function scanDirectoryForMediaFiles(rootDir) {
+  const results = [];
+  const stack = [rootDir];
+
+  while (stack.length > 0) {
+    const currentDir = stack.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase();
+        if (SUPPORTED_MEDIA_EXTENSIONS.has(ext)) {
+          try {
+            const stat = fs.statSync(fullPath);
+            results.push({
+              name: entry.name,
+              size: stat.size,
+              path: fullPath,
+            });
+          } catch {
+            // skip unreadable file
+          }
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
 class ElectronFtpManager {
-  constructor({ sqliteDb, safeStorage, getMainWindow }) {
+  constructor({ sqliteDb, safeStorage, getMainWindow, dialog }) {
     this.sqliteDb = sqliteDb;
     this.safeStorage = safeStorage;
     this.getMainWindow = getMainWindow;
+    this.dialog = dialog;
     this.activeAbortController = null;
     this.activeAdapter = null;
   }
@@ -128,12 +204,12 @@ class ElectronFtpManager {
     }
     return this.sqliteDb.saveFtpProfile({
       agencyId,
-      protocol: payload.protocol || 'ftps',
+      protocol: 'ftp',
       host: (payload.host || 'ftp.dreamstime.com').trim(),
-      port: Number(payload.port) || 21,
+      port: 21,
       username: (payload.username || '').trim(),
       encryptedPassword,
-      passiveMode: payload.passiveMode !== false,
+      passiveMode: true,
       lastVerifiedAt: payload.lastVerifiedAt,
     });
   }
@@ -142,8 +218,6 @@ class ElectronFtpManager {
     const agencyId = payload.agencyId || 'dreamstime';
     const profileWithSecret = this.sqliteDb.getFtpProfileWithSecret(agencyId);
     const host = (payload.host || profileWithSecret?.host || 'ftp.dreamstime.com').trim();
-    const port = Number(payload.port || profileWithSecret?.port || 21);
-    const protocol = payload.protocol || profileWithSecret?.protocol || 'ftps';
     const username = (payload.username ?? profileWithSecret?.username ?? '').trim();
     const password =
       typeof payload.password === 'string' && payload.password.length > 0
@@ -153,28 +227,26 @@ class ElectronFtpManager {
     if (!host || !username || !password) {
       return {
         success: false,
-        error: 'Host, Username, and Password are required to test the Dreamstime connection.',
+        error: 'Host, Username, and Password are required to connect to Dreamstime FTP.',
       };
     }
 
     const startMs = Date.now();
-    const adapter = new FtpFtpsAdapter();
+    const adapter = new PlainFtpAdapter();
     try {
       await adapter.connect({
         host,
-        port,
         username,
         password,
-        secure: protocol === 'ftps',
-        timeoutMs: 12000,
+        timeoutMs: 15000,
       });
       const latencyMs = Date.now() - startMs;
       const now = Date.now();
       this.sqliteDb.saveFtpProfile({
         agencyId,
-        protocol,
+        protocol: 'ftp',
         host,
-        port,
+        port: 21,
         username,
         encryptedPassword:
           typeof payload.password === 'string' && payload.password.length > 0
@@ -186,9 +258,9 @@ class ElectronFtpManager {
       return {
         success: true,
         latencyMs,
-        protocol,
+        protocol: 'ftp',
         host,
-        port,
+        port: 21,
         verifiedAt: now,
       };
     } catch (err) {
@@ -200,6 +272,27 @@ class ElectronFtpManager {
     } finally {
       adapter.disconnect();
     }
+  }
+
+  async selectFolderFiles() {
+    const win = this.getMainWindow ? this.getMainWindow() : null;
+    if (!this.dialog) {
+      return { canceled: true, files: [] };
+    }
+    const result = await this.dialog.showOpenDialog(win, {
+      title: 'Select Shoot Folder to Queue for FTP Upload',
+      properties: ['openDirectory'],
+    });
+    if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+      return { canceled: true, files: [] };
+    }
+    const folderPath = result.filePaths[0];
+    const files = scanDirectoryForMediaFiles(folderPath);
+    return {
+      canceled: false,
+      folderPath,
+      files,
+    };
   }
 
   sendTelemetry(frame) {
@@ -224,6 +317,7 @@ class ElectronFtpManager {
     const {
       agencyId = 'dreamstime',
       localPath,
+      fileBuffer,
       remoteFolder = '/',
       filename,
       itemId,
@@ -231,8 +325,6 @@ class ElectronFtpManager {
 
     const profileWithSecret = this.sqliteDb.getFtpProfileWithSecret(agencyId);
     const host = (profileWithSecret?.host || 'ftp.dreamstime.com').trim();
-    const port = Number(profileWithSecret?.port || 21);
-    const protocol = profileWithSecret?.protocol || 'ftps';
     const username = (profileWithSecret?.username || '').trim();
     const password = this.decryptPassword(profileWithSecret?.encryptedPassword || '');
 
@@ -240,26 +332,25 @@ class ElectronFtpManager {
       return {
         success: false,
         errorCode: 'NO_CREDENTIALS',
-        errorMessage: 'Dreamstime FTP credentials are not configured in the Secure Vault.',
+        errorMessage: 'Dreamstime FTP credentials are not configured. Open Site Settings to save your login.',
       };
     }
 
-    const adapter = new FtpFtpsAdapter();
+    const adapter = new PlainFtpAdapter();
     this.activeAdapter = adapter;
     let lastEmit = 0;
 
     try {
       await adapter.connect({
         host,
-        port,
         username,
         password,
-        secure: protocol === 'ftps',
-        timeoutMs: 20000,
+        timeoutMs: 30000,
       });
 
       await adapter.uploadFile({
         localPath,
+        fileBuffer,
         remoteFolder,
         filename,
         onProgress: (bytesTransferred) => {
@@ -296,5 +387,6 @@ class ElectronFtpManager {
 
 module.exports = {
   ElectronFtpManager,
-  FtpFtpsAdapter,
+  PlainFtpAdapter,
+  FtpFtpsAdapter: PlainFtpAdapter,
 };

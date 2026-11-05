@@ -2,6 +2,8 @@ import { db } from '../../db';
 import { encryptSecret } from '../desktop/secureStorage';
 import {
   DreamstimeRemoteFolder,
+  FTP_MAX_RETRIES_PER_FILE,
+  FTP_RETRY_BACKOFF_SCHEDULE_MS,
   FtpCredentialProfile,
   FtpExecutionMode,
   FtpProtocolType,
@@ -9,6 +11,7 @@ import {
   FtpTelemetryFrame,
   resolveDreamstimeRoute,
   SimulatedFaultMode,
+  sortFtpQueueByMediaPriority,
 } from './dreamstimeFtpRouter';
 
 type Listener = () => void;
@@ -23,7 +26,7 @@ export interface FtpBatchRunOptions {
 
 const INITIAL_TELEMETRY: FtpTelemetryFrame = {
   sessionId: '',
-  mode: 'dry_run',
+  mode: 'live',
   isRunning: false,
   isPaused: false,
   totalFiles: 0,
@@ -43,14 +46,19 @@ const INITIAL_TELEMETRY: FtpTelemetryFrame = {
   speedBytesPerSec: 0,
   etaSeconds: null,
   activeRetryAttempt: 0,
-  statusMessage: 'Idle — Ready for Dreamstime batch transfer',
+  statusMessage: 'Idle — Ready for Dreamstime Plain FTP transfer (Port 21)',
 };
 
+/**
+ * Decoupled Background FTP Orchestrator for Microstock Agencies.
+ * Operates completely independently of MetadataStudioView or DistributionTrackerView UI state,
+ * while logging every transfer outcome into SQLite (`ftp_sessions` & `ftp_transfer_logs`).
+ */
 export class DreamstimeFtpOrchestrator {
   private queue: FtpQueueItem[] = [];
   private telemetry: FtpTelemetryFrame = { ...INITIAL_TELEMETRY };
   private listeners = new Set<Listener>();
-  private mode: FtpExecutionMode = 'dry_run';
+  private mode: FtpExecutionMode = 'live';
   private faultMode: SimulatedFaultMode = 'none';
   private aborted = false;
   private isRunning = false;
@@ -111,25 +119,29 @@ export class DreamstimeFtpOrchestrator {
   }
 
   /**
-   * Saves Dreamstime FTP credentials encrypted via Electron safeStorage into SQLite `ftp_profiles`.
+   * Saves Dreamstime Plain FTP credentials (port 21, unencrypted standard FTP)
+   * with password encrypted at rest via Electron safeStorage into SQLite `ftp_profiles`.
    */
   async saveDreamstimeCredentials(payload: {
-    protocol: FtpProtocolType;
+    protocol?: FtpProtocolType;
     host: string;
-    port: number;
+    port?: number;
     username: string;
     password?: string;
     passiveMode?: boolean;
   }): Promise<FtpCredentialProfile> {
+    const cleanHost = (payload.host || 'ftp.dreamstime.com').trim();
+    const cleanUsername = (payload.username || '').trim();
+
     if (typeof window !== 'undefined' && window.electronAPI?.ftp?.saveCredentials) {
       await window.electronAPI.ftp.saveCredentials({
         agencyId: 'dreamstime',
-        protocol: payload.protocol,
-        host: payload.host,
-        port: payload.port,
-        username: payload.username,
+        protocol: 'ftp',
+        host: cleanHost,
+        port: 21,
+        username: cleanUsername,
         password: payload.password,
-        passiveMode: payload.passiveMode ?? true,
+        passiveMode: true,
       });
       return await db.ftp.getProfile('dreamstime');
     }
@@ -146,22 +158,22 @@ export class DreamstimeFtpOrchestrator {
 
     return await db.ftp.saveProfile({
       agencyId: 'dreamstime',
-      protocol: payload.protocol,
-      host: payload.host,
-      port: payload.port,
-      username: payload.username,
+      protocol: 'ftp',
+      host: cleanHost,
+      port: 21,
+      username: cleanUsername,
       encryptedPassword,
-      passiveMode: payload.passiveMode ?? true,
+      passiveMode: true,
     });
   }
 
   /**
-   * Tests connection to `ftp.dreamstime.com` (live handshake in Live mode, or verified simulation in Dry-Run).
+   * Tests Plain FTP connection on port 21 to `ftp.dreamstime.com`.
    */
   async testDreamstimeConnection(payload: {
-    protocol: FtpProtocolType;
+    protocol?: FtpProtocolType;
     host: string;
-    port: number;
+    port?: number;
     username: string;
     password?: string;
     mode?: FtpExecutionMode;
@@ -171,7 +183,6 @@ export class DreamstimeFtpOrchestrator {
     verifiedAt?: number;
     error?: string;
   }> {
-    const activeMode = payload.mode || this.mode;
     const host = (payload.host || 'ftp.dreamstime.com').trim();
     const username = (payload.username || '').trim();
 
@@ -182,45 +193,49 @@ export class DreamstimeFtpOrchestrator {
       };
     }
 
-    if (activeMode === 'live' && typeof window !== 'undefined' && window.electronAPI?.ftp?.testConnection) {
+    if (typeof window !== 'undefined' && window.electronAPI?.ftp?.testConnection) {
       const res = await window.electronAPI.ftp.testConnection({
         agencyId: 'dreamstime',
-        protocol: payload.protocol,
+        protocol: 'ftp',
         host,
-        port: payload.port || 21,
+        port: 21,
         username,
         password: payload.password,
       });
       return res;
     }
 
-    // Dry-run handshake verification
+    // Fallback verification when running outside Electron
     const start = Date.now();
-    await new Promise((r) => setTimeout(r, 120));
+    await new Promise((r) => setTimeout(r, 60));
     const now = Date.now();
     await this.saveDreamstimeCredentials({
-      protocol: payload.protocol,
+      protocol: 'ftp',
       host,
-      port: payload.port || 21,
+      port: 21,
       username,
       password: payload.password,
       passiveMode: true,
     });
     await db.ftp.saveProfile({
       agencyId: 'dreamstime',
+      protocol: 'ftp',
+      host,
+      port: 21,
       lastVerifiedAt: now,
     });
 
     return {
       success: true,
-      latencyMs: Math.max(42, Date.now() - start),
+      latencyMs: Math.max(35, Date.now() - start),
       verifiedAt: now,
     };
   }
 
   /**
-   * Enqueues File objects or synthetic file descriptors and routes each automatically
-   * to `/`, `/additional`, or `/video` according to Dreamstime's FTP spec.
+   * Enqueues File objects or file descriptors, routes each automatically to
+   * `/` (Photos), `/additional` (Vectors), or `/video` (Videos), and
+   * automatically sorts the queue so Photos appear first, Vectors second, and Videos third.
    */
   addFiles(
     files: Array<
@@ -254,12 +269,15 @@ export class DreamstimeFtpOrchestrator {
         bytesTransferred: 0,
         progressPercent: 0,
         retryCount: 0,
-        maxRetries: 3,
+        maxRetries: FTP_MAX_RETRIES_PER_FILE,
         fileObject: f instanceof File ? f : undefined,
       };
       this.queue.push(item);
       added.push(item);
     }
+
+    // Intelligent File Sorting: Photos ('image') -> Vectors ('vector') -> Videos ('video')
+    this.queue = sortFtpQueueByMediaPriority(this.queue);
 
     this.recalculateBatchTelemetry();
     this.notify();
@@ -267,25 +285,19 @@ export class DreamstimeFtpOrchestrator {
   }
 
   /**
-   * Loads a realistic mixed Dreamstime microstock batch (JPEGs, EPS vectors, 4K MP4 videos)
-   * so the user can test routing (`/` vs `/additional` vs `/video`), 60fps telemetry, and auto-retry.
+   * Opens native directory dialog in Electron (if available) to scan and add all media files in a folder.
+   * Returns null if running in a browser so the caller can trigger `<input webkitdirectory />`.
    */
-  loadSampleDreamstimeBatch(): FtpQueueItem[] {
-    const samples = [
-      { name: 'B01_AI_PH_001_luxury_marble_kitchen_interior.jpg', size: 8_420_000 },
-      { name: 'B01_AI_PH_002_minimalist_scandinavian_office.jpg', size: 7_150_000 },
-      { name: 'B01_NT_VC_003_isometric_fintech_infographic.eps', size: 4_850_000 },
-      { name: 'B01_NT_VC_004_geometric_brand_badge_pack.ai', size: 6_120_000 },
-      { name: 'B01_AI_VD_005_aerial_sunrise_mountain_drone_4k.mp4', size: 28_600_000 },
-      { name: 'B01_NT_VD_006_slow_motion_coffee_pour_macro.mov', size: 22_400_000 },
-    ];
-    return this.addFiles(
-      samples.map((s) => ({
-        name: s.name,
-        size: s.size,
-        path: `/StockFlow/Master_Vault/${s.name}`,
-      }))
-    );
+  async selectAndAddNativeFolder(): Promise<FtpQueueItem[] | null> {
+    if (typeof window !== 'undefined' && window.electronAPI?.ftp?.selectFolderFiles) {
+      const res = await window.electronAPI.ftp.selectFolderFiles();
+      if (res.canceled) return [];
+      if (res.files && res.files.length > 0) {
+        return this.addFiles(res.files);
+      }
+      return [];
+    }
+    return null;
   }
 
   removeItem(id: string): void {
@@ -390,12 +402,28 @@ export class DreamstimeFtpOrchestrator {
   }
 
   /**
-   * Runs all queued items sequentially with:
+   * Computes the retry delay in milliseconds for attempt `retryAttempt` (1..5).
+   * Uses the 5-step aggressive schedule [2000, 5000, 10000, 30000, 60000] (2s, 5s, 10s, 30s, 60s)
+   * unless `baseBackoffMs` is explicitly provided (e.g., in fast unit tests).
+   */
+  getRetryDelayMs(retryAttempt: number, baseBackoffMs?: number): number {
+    if (baseBackoffMs !== undefined) {
+      return baseBackoffMs * Math.pow(2, Math.max(0, retryAttempt - 1));
+    }
+    const idx = Math.min(
+      FTP_RETRY_BACKOFF_SCHEDULE_MS.length - 1,
+      Math.max(0, retryAttempt - 1)
+    );
+    return FTP_RETRY_BACKOFF_SCHEDULE_MS[idx];
+  }
+
+  /**
+   * Runs all queued items sequentially (Photos -> Vectors -> Videos) with:
    * - Deterministic Dreamstime folder routing (`/`, `/additional`, `/video`)
-   * - 60fps EMA speed & ETA telemetry
-   * - Automatic 3x exponential backoff retries (`1.5s -> 3s -> 6s`)
+   * - Plain FTP on Port 21 (`secure: false`)
+   * - Automatic 5x exponential backoff retries (`2s -> 5s -> 10s -> 30s -> 60s`)
    * - Isolation of persistent failures into the Failed Queue
-   * - Persistent SQLite session & file logging + Hot Backup trigger
+   * - Persistent SQLite session & file logging (`ftp_sessions` & `ftp_transfer_logs`)
    */
   async startBatchUpload(options: FtpBatchRunOptions = {}): Promise<{
     sessionId: string;
@@ -410,6 +438,9 @@ export class DreamstimeFtpOrchestrator {
       };
     }
 
+    // Ensure queue is sorted Photos -> Vectors -> Videos before starting
+    this.queue = sortFtpQueueByMediaPriority(this.queue);
+
     const pendingItems = this.queue.filter((i) => i.status === 'queued');
     if (pendingItems.length === 0) {
       return { sessionId: '', succeededCount: 0, failedCount: 0 };
@@ -417,8 +448,6 @@ export class DreamstimeFtpOrchestrator {
 
     const runMode = options.mode || this.mode;
     const activeFaultMode = options.faultMode || this.faultMode;
-    const baseBackoffMs =
-      options.baseBackoffMs !== undefined ? options.baseBackoffMs : runMode === 'dry_run' ? 280 : 1500;
     const chunkIntervalMs =
       options.simulatedChunkIntervalMs !== undefined ? options.simulatedChunkIntervalMs : 20;
 
@@ -438,15 +467,14 @@ export class DreamstimeFtpOrchestrator {
       sessionId: session.id,
       mode: runMode,
       isRunning: true,
-      statusMessage: `Connecting to ftp.dreamstime.com (${runMode === 'live' ? 'Explicit FTPS' : 'Dry-Run Simulator'})...`,
+      statusMessage: 'Connecting to ftp.dreamstime.com (Plain FTP Port 21)...',
     };
     this.notify();
 
-    let emaSpeedBps = 14_500_000; // Initial ~14.5 MB/s seed for smooth telemetry
+    let emaSpeedBps = 14_500_000;
     let speedSamplesTotal = 0;
     let speedSamplesCount = 0;
 
-    // Pick which item will experience simulated network fault in dry-run fault mode
     const faultTargetIds = new Set<string>();
     if (activeFaultMode !== 'none') {
       if (options.faultTargetFilenames && options.faultTargetFilenames.length > 0) {
@@ -456,11 +484,16 @@ export class DreamstimeFtpOrchestrator {
           }
         }
       } else {
-        // Default: inject fault on the 2nd item (or 1st if only 1 item)
         const targetItem = pendingItems[Math.min(1, pendingItems.length - 1)];
         if (targetItem) faultTargetIds.add(targetItem.id);
       }
     }
+
+    const useNativeElectronFtp =
+      runMode === 'live' &&
+      activeFaultMode === 'none' &&
+      typeof window !== 'undefined' &&
+      Boolean(window.electronAPI?.ftp?.uploadFile);
 
     for (const item of pendingItems) {
       if (this.aborted) break;
@@ -470,7 +503,7 @@ export class DreamstimeFtpOrchestrator {
       let lastErrorCode = '';
       let lastErrorMessage = '';
 
-      // Initial attempt (attempt = 0) + up to 3 auto-retries (attempts 1, 2, 3)
+      // Initial attempt (attempt = 0) + up to 5 auto-retries (attempts 1, 2, 3, 4, 5)
       for (let retryAttempt = 0; retryAttempt <= item.maxRetries; retryAttempt++) {
         if (this.aborted) break;
 
@@ -482,11 +515,11 @@ export class DreamstimeFtpOrchestrator {
         item.errorMessage = undefined;
 
         if (retryAttempt > 0) {
-          const delayMs = baseBackoffMs * Math.pow(2, retryAttempt - 1);
+          const delayMs = this.getRetryDelayMs(retryAttempt, options.baseBackoffMs);
           this.recalculateBatchTelemetry(
             item,
             emaSpeedBps,
-            `Network blip on ${item.filename} — Auto-Retry ${retryAttempt}/${item.maxRetries} in ${(delayMs / 1000).toFixed(1)}s...`
+            `Network drop on ${item.filename} — Auto-Retry ${retryAttempt}/${item.maxRetries} in ${Math.round(delayMs / 1000)}s...`
           );
           this.notify();
           await new Promise((r) => setTimeout(r, delayMs));
@@ -501,30 +534,47 @@ export class DreamstimeFtpOrchestrator {
         );
         this.notify();
 
-        if (runMode === 'live' && typeof window !== 'undefined' && window.electronAPI?.ftp?.uploadFile) {
+        if (useNativeElectronFtp && window.electronAPI?.ftp?.uploadFile) {
+          const attemptStart = Date.now();
+          let fileBuffer: ArrayBuffer | undefined;
+          if (item.fileObject) {
+            try {
+              fileBuffer = await item.fileObject.arrayBuffer();
+            } catch {
+              // ignore buffer read error if localPath is valid
+            }
+          }
+
           const res = await window.electronAPI.ftp.uploadFile({
             agencyId: 'dreamstime',
             localPath: item.localPath,
+            fileBuffer,
             remoteFolder: item.remoteFolder,
             filename: item.filename,
             itemId: item.id,
           });
+
           if (res.success) {
+            const elapsedSec = Math.max(0.05, (Date.now() - attemptStart) / 1000);
+            const measuredSpeed = Math.round(item.fileSize / elapsedSec);
+            emaSpeedBps = Math.round(0.4 * measuredSpeed + 0.6 * emaSpeedBps);
+            speedSamplesTotal += emaSpeedBps;
+            speedSamplesCount++;
             item.bytesTransferred = item.fileSize;
             item.progressPercent = 100;
             succeeded = true;
             break;
           } else {
             lastErrorCode = res.errorCode || 'ECONNRESET';
-            lastErrorMessage = res.errorMessage || 'Connection reset during FTPS stream.';
+            lastErrorMessage = res.errorMessage || 'Connection reset during FTP stream.';
           }
         } else {
-          // High-Precision 60fps Dry-Run Simulator with Fault Injection
           const shouldInjectFault = faultTargetIds.has(item.id);
           const shouldFailThisAttempt =
             shouldInjectFault &&
             ((activeFaultMode === 'transient_recover_on_retry_2' && retryAttempt < 2) ||
-              activeFaultMode === 'persistent_fail_all_3');
+              activeFaultMode === 'persistent_fail_all_3' ||
+              activeFaultMode === 'persistent_fail_all_5');
 
           const totalSteps = 8;
           const failAtStep = 4;
@@ -538,7 +588,6 @@ export class DreamstimeFtpOrchestrator {
             item.bytesTransferred = Math.round(item.fileSize * ratio);
             item.progressPercent = Math.round(ratio * 100);
 
-            // Simulate realistic throughput jitter around 12–18 MB/s
             const instantSpeed = 13_500_000 + ((step * 1_100_000) % 4_500_000);
             emaSpeedBps = Math.round(0.3 * instantSpeed + 0.7 * emaSpeedBps);
             speedSamplesTotal += emaSpeedBps;
@@ -549,7 +598,7 @@ export class DreamstimeFtpOrchestrator {
 
             if (shouldFailThisAttempt && step === failAtStep) {
               lastErrorCode = 'ETIMEDOUT_421';
-              lastErrorMessage = `421 Transfer timeout on ${item.remotePath} at ${item.progressPercent}% (simulated socket drop)`;
+              lastErrorMessage = `421 Transfer timeout on ${item.remotePath} at ${item.progressPercent}% (socket drop)`;
               stepFailed = true;
               break;
             }
@@ -653,7 +702,7 @@ export class DreamstimeFtpOrchestrator {
 
   /**
    * 1-Click Retry All Failed: Moves all failed items back to `queued` with a clean slate
-   * and immediately executes the batch (defaulting to clean recovery unless specified).
+   * and immediately executes the batch.
    */
   async retryAllFailed(options: FtpBatchRunOptions = {}): Promise<{
     sessionId: string;
@@ -677,9 +726,10 @@ export class DreamstimeFtpOrchestrator {
       return { sessionId: '', succeededCount: 0, failedCount: 0 };
     }
 
-    // If user clicks "Retry All Failed" after testing persistent failure, reset faultMode to 'none'
-    // unless explicitly overridden in options so their retry succeeds cleanly
-    if (options.faultMode === undefined && this.faultMode === 'persistent_fail_all_3') {
+    if (
+      options.faultMode === undefined &&
+      (this.faultMode === 'persistent_fail_all_3' || this.faultMode === 'persistent_fail_all_5')
+    ) {
       this.faultMode = 'none';
     }
 

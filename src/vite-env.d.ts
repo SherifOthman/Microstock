@@ -119,6 +119,7 @@ interface Window {
       uploadFile: (payload: {
         agencyId?: string;
         localPath?: string;
+        fileBuffer?: ArrayBuffer;
         remoteFolder: string;
         filename: string;
         itemId: string;
@@ -128,6 +129,11 @@ interface Window {
         errorMessage?: string;
       }>;
       abortBatch: () => Promise<{ aborted: boolean }>;
+      selectFolderFiles?: () => Promise<{
+        canceled: boolean;
+        folderPath?: string;
+        files: Array<{ name: string; size: number; path: string }>;
+      }>;
       onTelemetry: (
         callback: (frame: {
           type: 'file-progress';
