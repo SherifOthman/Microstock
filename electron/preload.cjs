@@ -47,4 +47,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   db: {
     invoke: (method, ...args) => ipcRenderer.invoke('db:invoke', method, ...args),
   },
+  ftp: {
+    saveCredentials: (payload) => ipcRenderer.invoke('ftp:saveCredentials', payload),
+    testConnection: (payload) => ipcRenderer.invoke('ftp:testConnection', payload),
+    uploadFile: (payload) => ipcRenderer.invoke('ftp:uploadFile', payload),
+    abortBatch: () => ipcRenderer.invoke('ftp:abortBatch'),
+    onTelemetry: (callback) => {
+      const handler = (_event, frame) => callback(frame);
+      ipcRenderer.on('ftp:telemetry', handler);
+      return () => ipcRenderer.removeListener('ftp:telemetry', handler);
+    },
+  },
 });

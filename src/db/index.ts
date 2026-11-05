@@ -17,6 +17,11 @@ import {
   TrackerSummaryStats,
   WorkspacePathsInfo,
 } from '../types';
+import {
+  FtpCredentialProfile,
+  FtpSessionRecord,
+  FtpTransferLogRecord,
+} from '../services/ftp/dreamstimeFtpRouter';
 import { PROVIDERS_META } from '../constants/providers';
 import { encryptSecret, decryptSecret } from '../services/desktop/secureStorage';
 
@@ -196,6 +201,24 @@ const testMemoryStore = {
   apiKeys: new Map<string, ApiKeyRecord>(),
   batches: new Map<string, BatchRecord>(),
   settings: new Map<string, SettingItem>(),
+  ftpProfiles: new Map<string, FtpCredentialProfile>([
+    [
+      'dreamstime',
+      {
+        agencyId: 'dreamstime',
+        protocol: 'ftps',
+        host: 'ftp.dreamstime.com',
+        port: 21,
+        username: '',
+        encryptedPassword: '',
+        hasSavedPassword: false,
+        passiveMode: true,
+        updatedAt: Date.now(),
+      },
+    ],
+  ]),
+  ftpSessions: new Map<string, FtpSessionRecord>(),
+  ftpTransferLogs: [] as FtpTransferLogRecord[],
 };
 
 function ensureTestAgencyTracking(assetId: string, now = Date.now()): Record<SupportedPlatform, AgencyTrackingRecord> {
@@ -633,6 +656,143 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
     case 'clearSettings':
       testMemoryStore.settings.clear();
       return;
+    case 'getFtpProfile': {
+      const agencyId = args[0] || 'dreamstime';
+      let p = testMemoryStore.ftpProfiles.get(agencyId);
+      if (!p) {
+        p = {
+          agencyId,
+          protocol: 'ftps',
+          host: agencyId === 'dreamstime' ? 'ftp.dreamstime.com' : '',
+          port: 21,
+          username: '',
+          encryptedPassword: '',
+          hasSavedPassword: false,
+          passiveMode: true,
+          updatedAt: Date.now(),
+        };
+        testMemoryStore.ftpProfiles.set(agencyId, p);
+      }
+      return {
+        ...p,
+        hasSavedPassword: Boolean(p.encryptedPassword),
+      };
+    }
+    case 'saveFtpProfile': {
+      const payload = args[0] || {};
+      const agencyId = payload.agencyId || 'dreamstime';
+      const existing = testMemoryStore.ftpProfiles.get(agencyId);
+      const now = Date.now();
+      const nextEncrypted =
+        typeof payload.encryptedPassword === 'string' && payload.encryptedPassword.length > 0
+          ? payload.encryptedPassword
+          : existing?.encryptedPassword || '';
+      const updated: FtpCredentialProfile = {
+        agencyId,
+        protocol: payload.protocol || existing?.protocol || 'ftps',
+        host: (payload.host ?? existing?.host ?? 'ftp.dreamstime.com').trim(),
+        port: Number(payload.port) || existing?.port || 21,
+        username: (payload.username ?? existing?.username ?? '').trim(),
+        encryptedPassword: nextEncrypted,
+        hasSavedPassword: Boolean(nextEncrypted),
+        passiveMode: payload.passiveMode !== false,
+        lastVerifiedAt: payload.lastVerifiedAt ?? existing?.lastVerifiedAt,
+        updatedAt: now,
+      };
+      testMemoryStore.ftpProfiles.set(agencyId, updated);
+      return updated;
+    }
+    case 'createFtpSession': {
+      const payload = args[0] || {};
+      const now = Date.now();
+      const id = payload.id || `ftp_sess_${crypto.randomUUID().slice(0, 8)}`;
+      const session: FtpSessionRecord = {
+        id,
+        agencyId: payload.agencyId || 'dreamstime',
+        mode: payload.mode || 'dry_run',
+        status: 'running',
+        totalFiles: payload.totalFiles || 0,
+        succeededFiles: 0,
+        failedFiles: 0,
+        totalBytes: payload.totalBytes || 0,
+        averageSpeedBps: 0,
+        startedAt: now,
+      };
+      testMemoryStore.ftpSessions.set(id, session);
+      return session;
+    }
+    case 'updateFtpSession': {
+      const [id, changes] = args;
+      const existing = testMemoryStore.ftpSessions.get(id);
+      if (!existing) return null;
+      const updated: FtpSessionRecord = {
+        ...existing,
+        ...changes,
+        id,
+      };
+      testMemoryStore.ftpSessions.set(id, updated);
+      if (changes?.status === 'completed' || changes?.status === 'partial_failure') {
+        recordTestBackup('ftp_batch_complete');
+      }
+      return updated;
+    }
+    case 'getFtpSessions': {
+      const agencyId = args[0];
+      const limit = args[1] || 20;
+      const all = Array.from(testMemoryStore.ftpSessions.values()).sort(
+        (a, b) => b.startedAt - a.startedAt
+      );
+      const filtered = agencyId ? all.filter((s) => s.agencyId === agencyId) : all;
+      return filtered.slice(0, limit);
+    }
+    case 'logFtpTransfer': {
+      const payload = args[0] || {};
+      const now = Date.now();
+      const rec: FtpTransferLogRecord = {
+        id: payload.id || `ftp_log_${crypto.randomUUID().slice(0, 8)}`,
+        sessionId: payload.sessionId || 'session_default',
+        agencyId: payload.agencyId || 'dreamstime',
+        filename: payload.filename || '',
+        localPath: payload.localPath,
+        fileSize: payload.fileSize || 0,
+        mediaType: payload.mediaType || 'image',
+        remoteDirectory: payload.remoteDirectory || '/',
+        remotePath: payload.remotePath || `/${payload.filename || ''}`,
+        status: payload.status || 'succeeded',
+        retryCount: payload.retryCount || 0,
+        errorCode: payload.errorCode,
+        errorMessage: payload.errorMessage,
+        durationMs: payload.durationMs || 0,
+        completedAt: payload.completedAt || now,
+      };
+      testMemoryStore.ftpTransferLogs.unshift(rec);
+      if (testMemoryStore.ftpTransferLogs.length > 500) {
+        testMemoryStore.ftpTransferLogs.length = 500;
+      }
+      return rec;
+    }
+    case 'getFtpTransferLogs': {
+      const { agencyId, sessionId, limit = 100 } = args[0] || {};
+      let list = [...testMemoryStore.ftpTransferLogs];
+      if (agencyId) list = list.filter((l) => l.agencyId === agencyId);
+      if (sessionId) list = list.filter((l) => l.sessionId === sessionId);
+      return list.slice(0, limit);
+    }
+    case 'clearFtpLogs': {
+      const agencyId = args[0];
+      if (agencyId) {
+        testMemoryStore.ftpTransferLogs = testMemoryStore.ftpTransferLogs.filter(
+          (l) => l.agencyId !== agencyId
+        );
+        for (const [k, v] of testMemoryStore.ftpSessions.entries()) {
+          if (v.agencyId === agencyId) testMemoryStore.ftpSessions.delete(k);
+        }
+      } else {
+        testMemoryStore.ftpTransferLogs = [];
+        testMemoryStore.ftpSessions.clear();
+      }
+      return { cleared: true };
+    }
     default:
       return undefined;
   }
@@ -803,6 +963,65 @@ export class StockFlowSqliteDB {
     },
     getBackupLogs: async (limit = 30): Promise<BackupLogRecord[]> => {
       return (await invokeDbRpc('getBackupLogs', limit)) || [];
+    },
+  };
+
+  ftp = {
+    getProfile: async (agencyId: SupportedPlatform = 'dreamstime'): Promise<FtpCredentialProfile> => {
+      return await invokeDbRpc('getFtpProfile', agencyId);
+    },
+    saveProfile: async (payload: {
+      agencyId?: SupportedPlatform;
+      protocol?: 'ftp' | 'ftps' | 'sftp';
+      host?: string;
+      port?: number;
+      username?: string;
+      encryptedPassword?: string;
+      passiveMode?: boolean;
+      lastVerifiedAt?: number;
+    }): Promise<FtpCredentialProfile> => {
+      const res = await invokeDbRpc('saveFtpProfile', payload);
+      notifyDbChanged(true);
+      return res;
+    },
+    createSession: async (payload: {
+      id?: string;
+      agencyId?: SupportedPlatform;
+      mode?: 'live' | 'dry_run';
+      totalFiles: number;
+      totalBytes: number;
+    }): Promise<FtpSessionRecord> => {
+      const res = await invokeDbRpc('createFtpSession', payload);
+      notifyDbChanged(true);
+      return res;
+    },
+    updateSession: async (
+      id: string,
+      changes: Partial<FtpSessionRecord>
+    ): Promise<FtpSessionRecord | null> => {
+      const res = await invokeDbRpc('updateFtpSession', id, changes);
+      notifyDbChanged(true);
+      return res;
+    },
+    getSessions: async (agencyId?: SupportedPlatform, limit = 20): Promise<FtpSessionRecord[]> => {
+      return (await invokeDbRpc('getFtpSessions', agencyId, limit)) || [];
+    },
+    logTransfer: async (payload: Omit<FtpTransferLogRecord, 'id' | 'completedAt'> & { id?: string; completedAt?: number }): Promise<FtpTransferLogRecord> => {
+      const res = await invokeDbRpc('logFtpTransfer', payload);
+      notifyDbChanged();
+      return res;
+    },
+    getTransferLogs: async (options?: {
+      agencyId?: SupportedPlatform;
+      sessionId?: string;
+      limit?: number;
+    }): Promise<FtpTransferLogRecord[]> => {
+      return (await invokeDbRpc('getFtpTransferLogs', options || {})) || [];
+    },
+    clearLogs: async (agencyId?: SupportedPlatform): Promise<{ cleared: boolean }> => {
+      const res = await invokeDbRpc('clearFtpLogs', agencyId);
+      notifyDbChanged(true);
+      return res;
     },
   };
 

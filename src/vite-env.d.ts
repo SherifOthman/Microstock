@@ -88,5 +88,54 @@ interface Window {
     db?: {
       invoke: (method: string, ...args: any[]) => Promise<any>;
     };
+    ftp?: {
+      saveCredentials: (payload: {
+        agencyId?: string;
+        protocol?: 'ftp' | 'ftps' | 'sftp';
+        host: string;
+        port: number;
+        username: string;
+        password?: string;
+        passiveMode?: boolean;
+        lastVerifiedAt?: number;
+      }) => Promise<any>;
+      testConnection: (payload: {
+        agencyId?: string;
+        protocol?: 'ftp' | 'ftps' | 'sftp';
+        host?: string;
+        port?: number;
+        username?: string;
+        password?: string;
+      }) => Promise<{
+        success: boolean;
+        latencyMs?: number;
+        protocol?: string;
+        host?: string;
+        port?: number;
+        verifiedAt?: number;
+        errorCode?: string;
+        error?: string;
+      }>;
+      uploadFile: (payload: {
+        agencyId?: string;
+        localPath?: string;
+        remoteFolder: string;
+        filename: string;
+        itemId: string;
+      }) => Promise<{
+        success: boolean;
+        errorCode?: string;
+        errorMessage?: string;
+      }>;
+      abortBatch: () => Promise<{ aborted: boolean }>;
+      onTelemetry: (
+        callback: (frame: {
+          type: 'file-progress';
+          itemId: string;
+          bytesTransferred: number;
+          timestamp: number;
+        }) => void
+      ) => () => void;
+    };
   };
 }

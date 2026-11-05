@@ -5,6 +5,7 @@ const os = require('os');
 const { Readable } = require('stream');
 const { spawn, spawnSync } = require('child_process');
 const { sqliteDb } = require('./sqliteDb.cjs');
+const { ElectronFtpManager } = require('./ftpManager.cjs');
 
 // Register custom stockflow:// protocol as privileged before app is ready
 // Enables native <img src="stockflow://..."> and <video src="stockflow://..."> streaming
@@ -401,9 +402,32 @@ app.on('window-all-closed', () => {
 function setupIpcHandlers() {
   sqliteDb.init(app);
 
+  const ftpManager = new ElectronFtpManager({
+    sqliteDb,
+    safeStorage,
+    getMainWindow: () => mainWindow,
+  });
+
   // Native SQLite Relational Database RPC Bridge
   ipcMain.handle('db:invoke', async (_event, method, ...args) => {
     return sqliteDb.invoke(method, ...args);
+  });
+
+  // Native FTP/FTPS Uploader IPC Bridge (Dreamstime PoC + SFTP-Ready Adapter)
+  ipcMain.handle('ftp:saveCredentials', async (_event, payload) => {
+    return ftpManager.saveCredentials(payload);
+  });
+
+  ipcMain.handle('ftp:testConnection', async (_event, payload) => {
+    return await ftpManager.testConnection(payload);
+  });
+
+  ipcMain.handle('ftp:uploadFile', async (_event, payload) => {
+    return await ftpManager.uploadSingleNativeFile(payload);
+  });
+
+  ipcMain.handle('ftp:abortBatch', async () => {
+    return ftpManager.abortActiveBatch();
   });
 
   // Window Control IPC

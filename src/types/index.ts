@@ -185,7 +185,15 @@ export interface ExportBasketRecord {
 
 export interface BackupLogRecord {
   id: string;
-  triggerEvent: 'app_startup' | 'app_quit' | 'batch_ingest' | 'batch_metadata' | 'batch_export' | 'batch_reconcile' | 'manual';
+  triggerEvent:
+    | 'app_startup'
+    | 'app_quit'
+    | 'batch_ingest'
+    | 'batch_metadata'
+    | 'batch_export'
+    | 'batch_reconcile'
+    | 'ftp_batch_complete'
+    | 'manual';
   backupFilePath: string;
   fileSizeBytes: number;
   assetCountSnapshot: number;

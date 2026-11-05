@@ -80,6 +80,9 @@ class SqliteDatabaseManager {
       apiKeys: new Map(),
       batches: new Map(),
       settings: new Map(),
+      ftpProfiles: new Map(),
+      ftpSessions: new Map(),
+      ftpTransferLogs: [],
     };
     this._seedMemoryFallbackDefaults();
   }
@@ -95,6 +98,17 @@ class SqliteDatabaseManager {
         updatedAt: now,
       });
     }
+    this.memoryFallback.ftpProfiles.set('dreamstime', {
+      agencyId: 'dreamstime',
+      protocol: 'ftps',
+      host: 'ftp.dreamstime.com',
+      port: 21,
+      username: '',
+      encryptedPassword: '',
+      hasSavedPassword: false,
+      passiveMode: true,
+      updatedAt: now,
+    });
   }
 
   init(app = null, customBaseDir = null) {
@@ -380,6 +394,57 @@ class SqliteDatabaseManager {
 
       CREATE INDEX IF NOT EXISTS idx_backup_logs_created_at
         ON backup_logs(created_at);
+
+      -- Pillar 6: Microstock FTP Uploader Credential Vault & Persistent Session Logs
+      CREATE TABLE IF NOT EXISTS ftp_profiles (
+        agency_id TEXT PRIMARY KEY,
+        protocol TEXT NOT NULL DEFAULT 'ftps',
+        host TEXT NOT NULL DEFAULT 'ftp.dreamstime.com',
+        port INTEGER NOT NULL DEFAULT 21,
+        username TEXT NOT NULL DEFAULT '',
+        encrypted_password TEXT NOT NULL DEFAULT '',
+        passive_mode INTEGER NOT NULL DEFAULT 1,
+        last_verified_at INTEGER,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS ftp_sessions (
+        id TEXT PRIMARY KEY,
+        agency_id TEXT NOT NULL DEFAULT 'dreamstime',
+        mode TEXT NOT NULL DEFAULT 'live',
+        status TEXT NOT NULL DEFAULT 'running',
+        total_files INTEGER NOT NULL DEFAULT 0,
+        succeeded_files INTEGER NOT NULL DEFAULT 0,
+        failed_files INTEGER NOT NULL DEFAULT 0,
+        total_bytes INTEGER NOT NULL DEFAULT 0,
+        average_speed_bps INTEGER NOT NULL DEFAULT 0,
+        started_at INTEGER NOT NULL,
+        completed_at INTEGER
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ftp_sessions_started_at
+        ON ftp_sessions(started_at DESC);
+
+      CREATE TABLE IF NOT EXISTS ftp_transfer_logs (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES ftp_sessions(id) ON DELETE CASCADE,
+        agency_id TEXT NOT NULL DEFAULT 'dreamstime',
+        filename TEXT NOT NULL,
+        local_path TEXT,
+        file_size INTEGER NOT NULL DEFAULT 0,
+        media_type TEXT NOT NULL DEFAULT 'image',
+        remote_directory TEXT NOT NULL DEFAULT '/',
+        remote_path TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'succeeded',
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        error_code TEXT,
+        error_message TEXT,
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        completed_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ftp_transfer_logs_session
+        ON ftp_transfer_logs(session_id, completed_at DESC);
     `);
   }
 
@@ -2041,6 +2106,316 @@ class SqliteDatabaseManager {
       return;
     }
     this.db.prepare('DELETE FROM settings').run();
+  }
+
+  // ============================================================================
+  // Pillar 6: Microstock FTP Credential Vault & Persistent Session Audit Logs
+  // ============================================================================
+  getFtpProfile(agencyId = 'dreamstime') {
+    const profile = this.getFtpProfileWithSecret(agencyId);
+    const { encryptedPassword, ...safeProfile } = profile;
+    return {
+      ...safeProfile,
+      hasSavedPassword: Boolean(encryptedPassword && encryptedPassword.length > 0),
+    };
+  }
+
+  getFtpProfileWithSecret(agencyId = 'dreamstime') {
+    const now = Date.now();
+    const defaultProfile = {
+      agencyId,
+      protocol: 'ftps',
+      host: agencyId === 'dreamstime' ? 'ftp.dreamstime.com' : '',
+      port: 21,
+      username: '',
+      encryptedPassword: '',
+      hasSavedPassword: false,
+      passiveMode: true,
+      updatedAt: now,
+    };
+
+    if (!this.isNativeSqlite) {
+      const existing = this.memoryFallback.ftpProfiles.get(agencyId);
+      return existing ? { ...existing } : defaultProfile;
+    }
+
+    const row = this.db
+      .prepare('SELECT * FROM ftp_profiles WHERE agency_id = ?')
+      .get(agencyId);
+    if (!row) return defaultProfile;
+
+    return {
+      agencyId: row.agency_id,
+      protocol: row.protocol || 'ftps',
+      host: row.host || 'ftp.dreamstime.com',
+      port: Number(row.port || 21),
+      username: row.username || '',
+      encryptedPassword: row.encrypted_password || '',
+      hasSavedPassword: Boolean(row.encrypted_password && row.encrypted_password.length > 0),
+      passiveMode: Boolean(row.passive_mode),
+      lastVerifiedAt: row.last_verified_at || undefined,
+      updatedAt: row.updated_at || now,
+    };
+  }
+
+  saveFtpProfile(payload = {}) {
+    const agencyId = payload.agencyId || 'dreamstime';
+    const existing = this.getFtpProfileWithSecret(agencyId);
+    const now = Date.now();
+
+    const encryptedPassword =
+      typeof payload.encryptedPassword === 'string' && payload.encryptedPassword.length > 0
+        ? payload.encryptedPassword
+        : payload.clearPassword
+        ? ''
+        : existing.encryptedPassword || '';
+
+    const updated = {
+      agencyId,
+      protocol: payload.protocol || existing.protocol || 'ftps',
+      host: (payload.host ?? existing.host ?? 'ftp.dreamstime.com').trim(),
+      port: Number(payload.port || existing.port || 21),
+      username: (payload.username ?? existing.username ?? '').trim(),
+      encryptedPassword,
+      hasSavedPassword: Boolean(encryptedPassword && encryptedPassword.length > 0),
+      passiveMode: payload.passiveMode !== undefined ? Boolean(payload.passiveMode) : existing.passiveMode,
+      lastVerifiedAt: payload.lastVerifiedAt ?? existing.lastVerifiedAt ?? null,
+      updatedAt: now,
+    };
+
+    if (!this.isNativeSqlite) {
+      this.memoryFallback.ftpProfiles.set(agencyId, updated);
+      return this.getFtpProfile(agencyId);
+    }
+
+    this.db
+      .prepare(`
+        INSERT OR REPLACE INTO ftp_profiles (
+          agency_id, protocol, host, port, username, encrypted_password,
+          passive_mode, last_verified_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        updated.agencyId,
+        updated.protocol,
+        updated.host,
+        updated.port,
+        updated.username,
+        updated.encryptedPassword,
+        updated.passiveMode ? 1 : 0,
+        updated.lastVerifiedAt,
+        updated.updatedAt
+      );
+
+    return this.getFtpProfile(agencyId);
+  }
+
+  createFtpSession(payload = {}) {
+    const now = Date.now();
+    const session = {
+      id: payload.id || crypto.randomUUID(),
+      agencyId: payload.agencyId || 'dreamstime',
+      mode: payload.mode || 'live',
+      status: payload.status || 'running',
+      totalFiles: Number(payload.totalFiles || 0),
+      succeededFiles: Number(payload.succeededFiles || 0),
+      failedFiles: Number(payload.failedFiles || 0),
+      totalBytes: Number(payload.totalBytes || 0),
+      averageSpeedBps: Number(payload.averageSpeedBps || 0),
+      startedAt: payload.startedAt || now,
+      completedAt: payload.completedAt || null,
+    };
+
+    if (!this.isNativeSqlite) {
+      this.memoryFallback.ftpSessions.set(session.id, { ...session });
+      return session;
+    }
+
+    this.db
+      .prepare(`
+        INSERT OR REPLACE INTO ftp_sessions (
+          id, agency_id, mode, status, total_files, succeeded_files,
+          failed_files, total_bytes, average_speed_bps, started_at, completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        session.id,
+        session.agencyId,
+        session.mode,
+        session.status,
+        session.totalFiles,
+        session.succeededFiles,
+        session.failedFiles,
+        session.totalBytes,
+        session.averageSpeedBps,
+        session.startedAt,
+        session.completedAt
+      );
+
+    return session;
+  }
+
+  updateFtpSession(sessionId, updates = {}) {
+    if (!sessionId) return null;
+    if (!this.isNativeSqlite) {
+      const existing = this.memoryFallback.ftpSessions.get(sessionId);
+      if (!existing) return null;
+      const merged = { ...existing, ...updates };
+      this.memoryFallback.ftpSessions.set(sessionId, merged);
+      if (updates.status && updates.status !== 'running') {
+        this.performHotBackup('ftp_batch_complete');
+      }
+      return merged;
+    }
+
+    const row = this.db.prepare('SELECT * FROM ftp_sessions WHERE id = ?').get(sessionId);
+    if (!row) return null;
+
+    const merged = {
+      id: row.id,
+      agencyId: updates.agencyId ?? row.agency_id,
+      mode: updates.mode ?? row.mode,
+      status: updates.status ?? row.status,
+      totalFiles: updates.totalFiles ?? row.total_files,
+      succeededFiles: updates.succeededFiles ?? row.succeeded_files,
+      failedFiles: updates.failedFiles ?? row.failed_files,
+      totalBytes: updates.totalBytes ?? row.total_bytes,
+      averageSpeedBps: updates.averageSpeedBps ?? row.average_speed_bps,
+      startedAt: row.started_at,
+      completedAt: updates.completedAt ?? row.completed_at,
+    };
+
+    this.createFtpSession(merged);
+    if (updates.status && updates.status !== 'running') {
+      this.performHotBackup('ftp_batch_complete');
+    }
+    return merged;
+  }
+
+  getFtpSessions(limit = 25) {
+    if (!this.isNativeSqlite) {
+      return Array.from(this.memoryFallback.ftpSessions.values())
+        .sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0))
+        .slice(0, limit);
+    }
+
+    const rows = this.db
+      .prepare('SELECT * FROM ftp_sessions ORDER BY started_at DESC LIMIT ?')
+      .all(limit);
+
+    return rows.map((r) => ({
+      id: r.id,
+      agencyId: r.agency_id,
+      mode: r.mode,
+      status: r.status,
+      totalFiles: r.total_files,
+      succeededFiles: r.succeeded_files,
+      failedFiles: r.failed_files,
+      totalBytes: r.total_bytes,
+      averageSpeedBps: r.average_speed_bps,
+      startedAt: r.started_at,
+      completedAt: r.completed_at || undefined,
+    }));
+  }
+
+  logFtpTransfer(payload = {}) {
+    const now = Date.now();
+    const entry = {
+      id: payload.id || crypto.randomUUID(),
+      sessionId: payload.sessionId,
+      agencyId: payload.agencyId || 'dreamstime',
+      filename: payload.filename || 'unknown',
+      localPath: payload.localPath || null,
+      fileSize: Number(payload.fileSize || 0),
+      mediaType: payload.mediaType || 'image',
+      remoteDirectory: payload.remoteDirectory || '/',
+      remotePath: payload.remotePath || `/${payload.filename || 'unknown'}`,
+      status: payload.status || 'succeeded',
+      retryCount: Number(payload.retryCount || 0),
+      errorCode: payload.errorCode || null,
+      errorMessage: payload.errorMessage || null,
+      durationMs: Number(payload.durationMs || 0),
+      completedAt: payload.completedAt || now,
+    };
+
+    if (!this.isNativeSqlite) {
+      this.memoryFallback.ftpTransferLogs.unshift(entry);
+      return entry;
+    }
+
+    this.db
+      .prepare(`
+        INSERT OR REPLACE INTO ftp_transfer_logs (
+          id, session_id, agency_id, filename, local_path, file_size,
+          media_type, remote_directory, remote_path, status, retry_count,
+          error_code, error_message, duration_ms, completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        entry.id,
+        entry.sessionId,
+        entry.agencyId,
+        entry.filename,
+        entry.localPath,
+        entry.fileSize,
+        entry.mediaType,
+        entry.remoteDirectory,
+        entry.remotePath,
+        entry.status,
+        entry.retryCount,
+        entry.errorCode,
+        entry.errorMessage,
+        entry.durationMs,
+        entry.completedAt
+      );
+
+    return entry;
+  }
+
+  getFtpTransferLogs(sessionId = null, limit = 200) {
+    if (!this.isNativeSqlite) {
+      const list = sessionId
+        ? this.memoryFallback.ftpTransferLogs.filter((l) => l.sessionId === sessionId)
+        : this.memoryFallback.ftpTransferLogs;
+      return list.slice(0, limit);
+    }
+
+    const rows = sessionId
+      ? this.db
+          .prepare('SELECT * FROM ftp_transfer_logs WHERE session_id = ? ORDER BY completed_at DESC LIMIT ?')
+          .all(sessionId, limit)
+      : this.db
+          .prepare('SELECT * FROM ftp_transfer_logs ORDER BY completed_at DESC LIMIT ?')
+          .all(limit);
+
+    return rows.map((r) => ({
+      id: r.id,
+      sessionId: r.session_id,
+      agencyId: r.agency_id,
+      filename: r.filename,
+      localPath: r.local_path || undefined,
+      fileSize: r.file_size,
+      mediaType: r.media_type,
+      remoteDirectory: r.remote_directory,
+      remotePath: r.remote_path,
+      status: r.status,
+      retryCount: r.retry_count,
+      errorCode: r.error_code || undefined,
+      errorMessage: r.error_message || undefined,
+      durationMs: r.duration_ms,
+      completedAt: r.completed_at,
+    }));
+  }
+
+  clearFtpLogs() {
+    if (!this.isNativeSqlite) {
+      this.memoryFallback.ftpSessions.clear();
+      this.memoryFallback.ftpTransferLogs = [];
+      return { cleared: true };
+    }
+    this.db.prepare('DELETE FROM ftp_transfer_logs').run();
+    this.db.prepare('DELETE FROM ftp_sessions').run();
+    return { cleared: true };
   }
 }
 

@@ -17,7 +17,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { TrackerAnalyticsCharts } from '../tracker/TrackerAnalyticsCharts';
 
 export interface HomeHubViewProps {
-  onNavigate?: (tool: 'tracker' | 'studio' | 'cleaner' | 'muter' | 'eps') => void;
+  onNavigate?: (tool: 'tracker' | 'studio' | 'cleaner' | 'muter' | 'eps' | 'ftp') => void;
   onOpenKeyRing?: () => void;
   onOpenTemplates?: () => void;
 }

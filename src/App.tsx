@@ -5,6 +5,7 @@ import { StudioView } from './features/studio/StudioView';
 import { FileCleanerView } from './features/cleaner/FileCleanerView';
 import { VideoMuterView } from './features/video/VideoMuterView';
 import { EpsConverterView } from './features/eps/EpsConverterView';
+import { FtpUploaderView } from './features/ftp/FtpUploaderView';
 import { batchQueueService } from './services/queue/BatchQueueService';
 import { keyRingScheduler } from './services/scheduler/KeyRingScheduler';
 import { db, getAllApiKeys, updateApiKey, useSqliteQuery } from './db';
@@ -23,6 +24,7 @@ import {
   FileSpreadsheet,
   Languages,
   Database,
+  HardDriveUpload,
 } from 'lucide-react';
 import { Dialog } from './components/ui/dialog';
 import { Tooltip } from './components/ui/tooltip';
@@ -32,7 +34,7 @@ import { AppLogo } from './components/icons/AppLogo';
 import { useLanguage } from './context/LanguageContext';
 import { CustomTitleBar } from './components/CustomTitleBar';
 
-export type AppTab = 'home' | 'tracker' | 'studio' | 'cleaner' | 'muter' | 'eps';
+export type AppTab = 'home' | 'tracker' | 'studio' | 'cleaner' | 'muter' | 'eps' | 'ftp';
 
 const TAB_TO_PATH: Record<AppTab, string> = {
   home: '/',
@@ -41,6 +43,7 @@ const TAB_TO_PATH: Record<AppTab, string> = {
   cleaner: '/file-cleaner',
   muter: '/video-muter',
   eps: '/eps-converter',
+  ftp: '/ftp-uploader',
 };
 
 const PATH_TO_TAB: Record<string, AppTab> = {
@@ -50,6 +53,7 @@ const PATH_TO_TAB: Record<string, AppTab> = {
   '/file-cleaner': 'cleaner',
   '/video-muter': 'muter',
   '/eps-converter': 'eps',
+  '/ftp-uploader': 'ftp',
 };
 
 function getInitialTab(): AppTab {
@@ -204,6 +208,11 @@ export function App() {
       id: 'muter',
       label: t.videoMuter,
       icon: VolumeX,
+    },
+    {
+      id: 'ftp',
+      label: t.ftpUploader,
+      icon: HardDriveUpload,
     },
   ];
 
@@ -481,6 +490,9 @@ export function App() {
                   await batchQueueService.addFiles(files);
                 }}
               />
+            </div>
+            <div className={activeTab === 'ftp' ? 'flex-1 min-h-0 h-full px-4 sm:px-5 py-3.5 overflow-hidden flex flex-col' : 'hidden'}>
+              <FtpUploaderView />
             </div>
           </main>
         </div>
