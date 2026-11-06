@@ -149,6 +149,15 @@ export function resolveDreamstimeRoute(filename: string): DreamstimeRouteResolut
     };
   }
 
+  if (ext === '.csv') {
+    return {
+      mediaType: 'image',
+      remoteFolder: '/',
+      remotePath: `/${cleanName}`,
+      ruleLabel: 'CSV Metadata → /',
+    };
+  }
+
   if (RASTER_EXTENSIONS.has(ext)) {
     return {
       mediaType: 'image',

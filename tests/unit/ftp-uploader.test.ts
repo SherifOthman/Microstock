@@ -40,6 +40,11 @@ describe('Dreamstime FTP Uploader (Plain FTP Port 21, Intelligent Sorting & 5x R
     expect(movRoute.remoteFolder).toBe('/video');
     expect(movRoute.remotePath).toBe('/video/B01_NT_VD_005_coffee_pour.MOV');
     expect(movRoute.mediaType).toBe('video');
+
+    const csvRoute = resolveDreamstimeRoute('dreamstime_metadata_export.csv');
+    expect(csvRoute.remoteFolder).toBe('/');
+    expect(csvRoute.remotePath).toBe('/dreamstime_metadata_export.csv');
+    expect(csvRoute.ruleLabel).toContain('CSV');
   });
 
   it('automatically sorts dropped files so Photos appear first, followed by Vectors, followed by Videos', () => {
@@ -232,5 +237,35 @@ describe('Dreamstime FTP Uploader (Plain FTP Port 21, Intelligent Sorting & 5x R
     expect(telemetry.totalFiles).toBe(2);
     expect(telemetry.batchPercent).toBe(100);
     expect(telemetry.skippedFiles).toBe(1);
+  });
+
+  it('supports pause and resume during batch upload safely without halting queue', async () => {
+    const orchestrator = new DreamstimeFtpOrchestrator();
+    orchestrator.addFiles([
+      { name: 'photo_1.jpg', size: 1_000_000 },
+      { name: 'photo_2.jpg', size: 1_000_000 },
+    ]);
+
+    expect(orchestrator.getIsPaused()).toBe(false);
+
+    // Start batch in background
+    const uploadPromise = orchestrator.startBatchUpload({
+      mode: 'dry_run',
+      simulatedChunkIntervalMs: 20,
+    });
+
+    // Pause batch after brief tick
+    await new Promise((r) => setTimeout(r, 10));
+    orchestrator.pauseBatch();
+    expect(orchestrator.getIsPaused()).toBe(true);
+    expect(orchestrator.getTelemetry().isPaused).toBe(true);
+
+    // Resume batch
+    orchestrator.resumeBatch();
+    expect(orchestrator.getIsPaused()).toBe(false);
+    expect(orchestrator.getTelemetry().isPaused).toBe(false);
+
+    const result = await uploadPromise;
+    expect(result.succeededCount).toBe(2);
   });
 });

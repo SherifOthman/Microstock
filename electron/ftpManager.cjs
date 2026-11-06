@@ -21,6 +21,7 @@ const SUPPORTED_MEDIA_EXTENSIONS = new Set([
   '.avi',
   '.mkv',
   '.m4v',
+  '.csv',
 ]);
 
 /**

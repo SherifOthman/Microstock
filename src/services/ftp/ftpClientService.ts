@@ -64,6 +64,7 @@ export class DreamstimeFtpOrchestrator {
   private faultMode: SimulatedFaultMode = 'none';
   private aborted = false;
   private isRunning = false;
+  private isPaused = false;
   private ipcUnsub: (() => void) | null = null;
   private lastTickTime = 0;
   private lastTickBytes = 0;
@@ -368,14 +369,49 @@ export class DreamstimeFtpOrchestrator {
     this.notify();
   }
 
+  pauseBatch(): void {
+    if (!this.isRunning || this.isPaused) return;
+    this.isPaused = true;
+    this.currentSpeedBps = 0;
+    this.telemetry = {
+      ...this.telemetry,
+      isPaused: true,
+      speedBytesPerSec: 0,
+      etaSeconds: null,
+      statusMessage: 'Paused',
+    };
+    this.notify();
+  }
+
+  resumeBatch(): void {
+    if (!this.isRunning || !this.isPaused) return;
+    this.isPaused = false;
+    this.lastSpeedCheckTime = Date.now();
+    this.lastBatchBytesTransferred = this.calculateBatchTransferredBytes();
+    this.telemetry = {
+      ...this.telemetry,
+      isPaused: false,
+      statusMessage: 'Resuming...',
+    };
+    this.notify();
+  }
+
+  getIsPaused(): boolean {
+    return this.isPaused;
+  }
+
   abortBatch(): void {
     this.aborted = true;
+    this.isPaused = false;
     if (typeof window !== 'undefined' && window.electronAPI?.ftp?.abortBatch) {
       window.electronAPI.ftp.abortBatch().catch(() => {});
     }
     this.telemetry = {
       ...this.telemetry,
       isRunning: false,
+      isPaused: false,
+      speedBytesPerSec: 0,
+      etaSeconds: null,
       statusMessage: 'Batch aborted by user',
     };
     this.notify();
@@ -450,7 +486,9 @@ export class DreamstimeFtpOrchestrator {
     const currentSpeed = speedBps !== undefined ? speedBps : this.telemetry.speedBytesPerSec;
     const remainingBytes = Math.max(0, batchTotalBytes - batchBytesTransferred);
     const etaSeconds =
-      this.isRunning && currentSpeed > 0 ? Math.max(0, remainingBytes / currentSpeed) : this.isRunning ? null : 0;
+      this.isRunning && !this.isPaused && currentSpeed > 0
+        ? Math.round(remainingBytes / currentSpeed)
+        : null;
 
     const currentIdx = activeItem
       ? this.queue.findIndex((i) => i.id === activeItem.id) + 1
@@ -533,6 +571,7 @@ export class DreamstimeFtpOrchestrator {
       options.simulatedChunkIntervalMs !== undefined ? options.simulatedChunkIntervalMs : 20;
 
     this.isRunning = true;
+    this.isPaused = false;
     this.aborted = false;
     this.batchStartTime = Date.now();
     await this.setKeepAwake(true);
@@ -564,6 +603,12 @@ export class DreamstimeFtpOrchestrator {
     }
     this.speedTimer = setInterval(() => {
       if (!this.isRunning) return;
+      if (this.isPaused) {
+        this.currentSpeedBps = 0;
+        this.recalculateBatchTelemetry(undefined, 0, 'Paused');
+        this.notify();
+        return;
+      }
       const now = Date.now();
       const elapsedSec = Math.max(0.5, (now - this.lastSpeedCheckTime) / 1000);
       const currentBatchBytes = this.calculateBatchTransferredBytes();
@@ -620,6 +665,12 @@ export class DreamstimeFtpOrchestrator {
               : item.status === 'retry' || item.status === 'retrying';
 
           if (!isEligible) continue;
+
+          // If paused, wait here until resumed or aborted without starting the next file
+          while (this.isPaused && !this.aborted) {
+            await new Promise((r) => setTimeout(r, 200));
+          }
+          if (this.aborted) break;
 
           // Set retryCount to current sweep attempt if it's a retry
           if (sweep > 1) {
@@ -835,6 +886,7 @@ export class DreamstimeFtpOrchestrator {
         this.speedTimer = null;
       }
       this.isRunning = false;
+      this.isPaused = false;
       this.currentSpeedBps = 0;
       await this.setKeepAwake(false);
     }

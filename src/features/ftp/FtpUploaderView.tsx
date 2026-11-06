@@ -28,10 +28,12 @@ import {
   Eye,
   EyeOff,
   FileImage,
+  FileSpreadsheet,
   FileVideo,
   FolderPlus,
   Layers,
   Lock,
+  Pause,
   Play,
   Plus,
   RefreshCw,
@@ -60,13 +62,19 @@ function getRemoteFolderBadgeStyle(folder: DreamstimeRemoteFolder): string {
   }
 }
 
-function getMediaIcon(mediaType: FtpQueueItem['mediaType']) {
+function getMediaIcon(mediaType: FtpQueueItem['mediaType'], filename?: string) {
+  if (filename?.toLowerCase().endsWith('.csv')) {
+    return <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400 shrink-0" />;
+  }
   if (mediaType === 'vector') return <Layers className="w-3.5 h-3.5 text-amber-400 shrink-0" />;
   if (mediaType === 'video') return <FileVideo className="w-3.5 h-3.5 text-purple-400 shrink-0" />;
   return <FileImage className="w-3.5 h-3.5 text-sky-400 shrink-0" />;
 }
 
-function getMediaTypeLabel(mediaType: FtpQueueItem['mediaType'], language: string): string {
+function getMediaTypeLabel(mediaType: FtpQueueItem['mediaType'], language: string, filename?: string): string {
+  if (filename?.toLowerCase().endsWith('.csv')) {
+    return 'CSV';
+  }
   if (mediaType === 'vector') return language === 'ar' ? 'فيكتور' : 'Vector';
   if (mediaType === 'video') return language === 'ar' ? 'فيديو' : 'Video';
   return language === 'ar' ? 'صورة' : 'Photo';
@@ -387,35 +395,45 @@ export const FtpUploaderView: React.FC = () => {
           >
             {/* Left: Fixed Metrics Strip - shrink-0 so it NEVER shifts */}
             <div className="flex items-center gap-4 text-xs font-mono tabular-nums shrink-0 select-none">
-              <div>
+              <div className="flex items-center gap-1.5">
                 <span className="text-muted-foreground">
-                  {isAr ? 'إجمالي الملفات: ' : 'Total Files: '}
+                  {isAr ? 'إجمالي الملفات:' : 'Total Files:'}
                 </span>
-                <span className="font-bold text-foreground">
+                <span className="font-bold text-foreground font-mono" dir="ltr">
                   {telemetry.completedFiles} / {telemetry.totalFiles} ({telemetry.batchPercent}%)
                 </span>
               </div>
-              <div>
-                <span className="text-muted-foreground">
-                  {isAr ? 'سرعة الرفع: ' : 'Upload Speed: '}
-                </span>
-                <span className="font-bold text-emerald-400">
-                  {telemetry.isRunning ? formatTransferSpeed(telemetry.speedBytesPerSec) : '0 KB/s'}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">
-                  {isAr ? 'الوقت المتبقي: ' : 'Time Remaining: '}
-                </span>
-                <span className="font-bold text-foreground">
-                  {formatEtaSeconds(telemetry.etaSeconds)}
-                </span>
-              </div>
+              {(telemetry.isRunning || telemetry.isPaused) && (
+                <>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-muted-foreground">
+                      {isAr ? 'سرعة الرفع:' : 'Upload Speed:'}
+                    </span>
+                    <span className="font-bold text-emerald-400 font-mono" dir="ltr">
+                      {telemetry.isPaused ? '0 KB/s' : formatTransferSpeed(telemetry.speedBytesPerSec)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-muted-foreground">
+                      {isAr ? 'الوقت المتبقي:' : 'Time Remaining:'}
+                    </span>
+                    <span className="font-bold text-foreground font-mono" dir="ltr">
+                      {telemetry.isPaused ? '--:--' : formatEtaSeconds(telemetry.etaSeconds)}
+                    </span>
+                  </div>
+                </>
+              )}
               <div className="text-muted-foreground font-sans text-xs">
                 {telemetry.isRunning ? (
-                  <span className="text-primary font-medium">
-                    {isAr ? 'جارٍ الرفع...' : 'Uploading...'}
-                  </span>
+                  telemetry.isPaused ? (
+                    <span className="text-amber-400 font-medium">
+                      {isAr ? 'متوقف مؤقتاً' : 'Paused'}
+                    </span>
+                  ) : (
+                    <span className="text-primary font-medium">
+                      {isAr ? 'جارٍ الرفع...' : 'Uploading...'}
+                    </span>
+                  )
                 ) : storedProfile?.hasSavedPassword ? (
                   <span className="text-emerald-400 font-medium">
                     {isAr ? 'متصل · جاهز للرفع' : 'Connected · Ready'}
@@ -435,7 +453,7 @@ export const FtpUploaderView: React.FC = () => {
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept=".jpg,.jpeg,.png,.webp,.tif,.tiff,.bmp,.eps,.ai,.svg,.cdr,.mp4,.mov,.webm,.avi,.mkv,.m4v"
+                accept=".jpg,.jpeg,.png,.webp,.tif,.tiff,.bmp,.eps,.ai,.svg,.cdr,.mp4,.mov,.webm,.avi,.mkv,.m4v,.csv"
                 className="hidden"
                 onChange={(e) => {
                   handleFilesSelected(e.target.files);
@@ -513,16 +531,29 @@ export const FtpUploaderView: React.FC = () => {
               )}
 
               {telemetry.isRunning ? (
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => dreamstimeFtpService.abortBatch()}
-                  className="h-8 text-xs gap-1.5 cursor-pointer shrink-0"
-                >
-                  <Square className="w-3.5 h-3.5" />
-                  <span>{isAr ? 'إيقاف' : 'Stop'}</span>
-                </Button>
+                telemetry.isPaused ? (
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="sm"
+                    onClick={() => dreamstimeFtpService.resumeBatch()}
+                    className="h-8 text-xs gap-1.5 cursor-pointer shrink-0 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    <span>{isAr ? 'استئناف' : 'Resume'}</span>
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => dreamstimeFtpService.pauseBatch()}
+                    className="h-8 text-xs gap-1.5 cursor-pointer shrink-0 border-amber-500/40 text-amber-400 hover:bg-amber-500/10"
+                  >
+                    <Pause className="w-3.5 h-3.5" />
+                    <span>{isAr ? 'إيقاف مؤقت' : 'Pause'}</span>
+                  </Button>
+                )
               ) : (
                 <Button
                   type="button"
@@ -657,10 +688,6 @@ export const FtpUploaderView: React.FC = () => {
                 {isAr ? 'المتخطاة' : 'Skipped'} ({skippedItems.length})
               </button>
             </div>
-
-            <span className="text-[11px] font-mono text-muted-foreground hidden sm:inline" dir="ltr">
-              Photos → Vectors → Videos
-            </span>
           </div>
 
           <div className="flex-1 min-h-0 overflow-y-auto">
@@ -692,13 +719,18 @@ export const FtpUploaderView: React.FC = () => {
                     <tr key={item.id} className="hover:bg-secondary/30">
                       <td className="py-2 px-3">
                         <div className="flex items-center gap-2 min-w-0">
-                          {getMediaIcon(item.mediaType)}
+                          {getMediaIcon(item.mediaType, item.filename)}
                           <Tooltip
                             side="right"
                             className="p-1.5 bg-popover/95 backdrop-blur-sm border border-border shadow-xl rounded-lg pointer-events-auto"
                             content={
                               <div className="flex flex-col items-center gap-1.5 p-1 max-w-[200px]">
-                                {item.fileObject || item.localPath ? (
+                                {item.filename.toLowerCase().endsWith('.csv') ? (
+                                  <div className="w-44 h-28 rounded-md border border-border bg-emerald-950/20 flex flex-col items-center justify-center gap-1.5 text-emerald-400 text-xs font-mono">
+                                    <FileSpreadsheet className="w-8 h-8" />
+                                    <span className="text-[10px]">CSV Metadata</span>
+                                  </div>
+                                ) : item.fileObject || item.localPath ? (
                                   <img
                                     src={
                                       item.fileObject
@@ -740,7 +772,7 @@ export const FtpUploaderView: React.FC = () => {
                         </div>
                       </td>
                       <td className="py-2 px-2.5 text-muted-foreground font-medium">
-                        {getMediaTypeLabel(item.mediaType, language)}
+                        {getMediaTypeLabel(item.mediaType, language, item.filename)}
                       </td>
                       <td className="py-2 px-2.5">
                         <span
@@ -872,8 +904,13 @@ export const FtpUploaderView: React.FC = () => {
 
           <div className="space-y-3 py-2">
             <div className="space-y-1">
-              <label className="text-xs font-medium text-foreground block">
-                {isAr ? 'الخادم (Host)' : 'Host'}
+              <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                <span>{isAr ? 'الخادم' : 'Host'}</span>
+                {isAr && (
+                  <span className="text-muted-foreground font-mono text-[11px]" dir="ltr">
+                    (Host)
+                  </span>
+                )}
               </label>
               <Input
                 data-testid="ftp-host-input"
@@ -886,8 +923,13 @@ export const FtpUploaderView: React.FC = () => {
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-medium text-foreground block">
-                {isAr ? 'اسم المستخدم (Username)' : 'Username'}
+              <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                <span>{isAr ? 'اسم المستخدم' : 'Username'}</span>
+                {isAr && (
+                  <span className="text-muted-foreground font-mono text-[11px]" dir="ltr">
+                    (Username)
+                  </span>
+                )}
               </label>
               <Input
                 data-testid="ftp-username-input"
@@ -901,8 +943,13 @@ export const FtpUploaderView: React.FC = () => {
 
             <div className="space-y-1">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-foreground block">
-                  {isAr ? 'كلمة المرور (Password)' : 'Password'}
+                <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                  <span>{isAr ? 'كلمة المرور' : 'Password'}</span>
+                  {isAr && (
+                    <span className="text-muted-foreground font-mono text-[11px]" dir="ltr">
+                      (Password)
+                    </span>
+                  )}
                 </label>
                 {storedProfile?.hasSavedPassword && (
                   <span className="text-[11px] text-emerald-400 font-medium">
