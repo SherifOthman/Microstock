@@ -1,6 +1,6 @@
 {
-  "summary": "Comprehensive Execution Blueprint diagnosing and resolving the unexpected UI freezes/deadlocks across navigation and background states, smart OS notification gating, FTP 550 partial-file pre-deletion (DELE before STOR), global task persistence & lifecycle protection across all 6 tools, Light Mode banner contrast fixes, and fixed right-aligned modal close buttons in RTL.",
-  "updatedAt": "2026-11-06T20:59:39.690684576Z",
+  "summary": "Execution Blueprint for Dual-SQLite Architecture (userdata.sqlite vs. local_queues.sqlite), Zero-Base64 Storage with stockflow:// Protocol Streaming, Smart Once-Daily Dirty-Flag Backups with 7-Day Rolling Retention & Custom Path, Relative Master Workspace Path Resolution, and Scoped IPC / RTL Modal Header Fixes.",
+  "updatedAt": "2026-11-06T21:57:10.460362157Z",
   "requestFeedback": true,
   "userFacing": true
 }

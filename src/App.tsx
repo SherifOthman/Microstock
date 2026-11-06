@@ -6,6 +6,7 @@ import { FileCleanerView } from './features/cleaner/FileCleanerView';
 import { VideoMuterView } from './features/video/VideoMuterView';
 import { EpsConverterView } from './features/eps/EpsConverterView';
 import { FtpUploaderView } from './features/ftp/FtpUploaderView';
+import { SettingsView } from './features/settings/SettingsView';
 import { batchQueueService } from './services/queue/BatchQueueService';
 import { keyRingScheduler } from './services/scheduler/KeyRingScheduler';
 import { db, getAllApiKeys, updateApiKey, useSqliteQuery } from './db';
@@ -25,6 +26,7 @@ import {
   Languages,
   Database,
   HardDriveUpload,
+  Settings,
 } from 'lucide-react';
 import { Dialog } from './components/ui/dialog';
 import { Tooltip } from './components/ui/tooltip';
@@ -34,7 +36,7 @@ import { AppLogo } from './components/icons/AppLogo';
 import { useLanguage } from './context/LanguageContext';
 import { CustomTitleBar } from './components/CustomTitleBar';
 
-export type AppTab = 'home' | 'tracker' | 'studio' | 'cleaner' | 'muter' | 'eps' | 'ftp';
+export type AppTab = 'home' | 'tracker' | 'studio' | 'cleaner' | 'muter' | 'eps' | 'ftp' | 'settings';
 
 const TAB_TO_PATH: Record<AppTab, string> = {
   home: '/',
@@ -44,6 +46,7 @@ const TAB_TO_PATH: Record<AppTab, string> = {
   muter: '/video-muter',
   eps: '/eps-converter',
   ftp: '/ftp-uploader',
+  settings: '/settings',
 };
 
 const PATH_TO_TAB: Record<string, AppTab> = {
@@ -54,6 +57,7 @@ const PATH_TO_TAB: Record<string, AppTab> = {
   '/video-muter': 'muter',
   '/eps-converter': 'eps',
   '/ftp-uploader': 'ftp',
+  '/settings': 'settings',
 };
 
 function getInitialTab(): AppTab {
@@ -377,6 +381,34 @@ export function App() {
               </button>
             </Tooltip>
 
+            {/* Dedicated Settings Tab in Bottom Sidebar Navigation */}
+            <Tooltip
+              content={isRailCollapsed ? (language === 'ar' ? 'الإعدادات' : 'Settings') : undefined}
+              side={language === 'ar' ? 'left' : 'right'}
+            >
+              <button
+                type="button"
+                data-testid="sidebar-settings-tab"
+                onClick={() => handleTabChange('settings')}
+                className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                  activeTab === 'settings'
+                    ? 'bg-primary text-primary-foreground font-semibold shadow-2xs'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
+                }`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <Settings
+                    className={`w-4 h-4 shrink-0 ${
+                      activeTab === 'settings' ? 'text-primary-foreground' : 'text-muted-foreground'
+                    }`}
+                  />
+                  {!isRailCollapsed && (
+                    <span className="truncate">{language === 'ar' ? 'الإعدادات' : 'Settings'}</span>
+                  )}
+                </div>
+              </button>
+            </Tooltip>
+
             {/* Theme & Language Controls Row */}
             <div className={`pt-1.5 border-t border-border flex ${isRailCollapsed ? 'flex-col items-center gap-1.5' : 'items-center justify-between gap-1.5'}`}>
               {/* Language Switcher */}
@@ -511,6 +543,11 @@ export function App() {
             {activeTab === 'ftp' && (
               <div className="flex-1 min-h-0 h-full px-4 sm:px-5 py-3.5 overflow-hidden flex flex-col">
                 <FtpUploaderView />
+              </div>
+            )}
+            {activeTab === 'settings' && (
+              <div className="flex-1 min-h-0 h-full px-4 sm:px-5 py-3.5 overflow-hidden flex flex-col">
+                <SettingsView />
               </div>
             )}
           </main>

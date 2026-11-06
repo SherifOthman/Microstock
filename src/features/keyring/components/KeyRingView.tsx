@@ -3,7 +3,7 @@ import { ApiKeyRecord, ProviderType, AiExecutionMode } from '../../../types';
 import { LocalAiSettingsPanel } from './LocalAiSettingsPanel';
 import { PROVIDERS_META, PROVIDER_ORDER, MODEL_DISPLAY_NAMES } from '../../../constants/providers';
 import { keyRingScheduler, RoutingStrategy } from '../../../services/scheduler/KeyRingScheduler';
-import { updateApiKey, removeApiKey, getAiExecutionMode, setAiExecutionMode } from '../../../db';
+import { updateApiKey, removeApiKey, getAiExecutionMode, setAiExecutionMode, subscribeToDbChanges } from '../../../db';
 import { decryptSecret } from '../../../services/desktop/secureStorage';
 import { AddKeyDialog } from './AddKeyDialog';
 import { Button } from '../../../components/ui/button';
@@ -60,12 +60,15 @@ export const KeyRingView: React.FC = () => {
 
   useEffect(() => {
     let mounted = true;
-    (async () => {
+    const syncMode = async () => {
       const mode = await getAiExecutionMode();
       if (mounted) setAiMode(mode);
-    })();
+    };
+    syncMode();
+    const unsub = subscribeToDbChanges(syncMode, ['settings']);
     return () => {
       mounted = false;
+      unsub();
     };
   }, []);
 

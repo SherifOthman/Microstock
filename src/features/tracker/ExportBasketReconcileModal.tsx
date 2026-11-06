@@ -5,6 +5,7 @@ import {
   SupportedPlatform,
 } from '../../types';
 import { matchDroppedFilesToPendingAssets } from '../../services/tracker/bulkTrackerOperations';
+import { resolveAssetPreviewUrl } from '../../db';
 import { getPlatformLogo } from '../../components/icons/StockLogos';
 import { Dialog } from '../../components/ui/dialog';
 import { Button } from '../../components/ui/button';
@@ -360,6 +361,8 @@ export const ExportBasketReconcileModal: React.FC<ExportBasketReconcileModalProp
                 const mediaType = asset.mediaType || 'image';
                 const cleanHash = (asset.fileHash || '').replace(/^sha256_/, '').slice(0, 8);
 
+                const previewSrc = resolveAssetPreviewUrl(asset);
+
                 return (
                   <button
                     key={asset.id}
@@ -373,13 +376,9 @@ export const ExportBasketReconcileModal: React.FC<ExportBasketReconcileModalProp
                     }`}
                   >
                     <div className="w-10 h-10 rounded-md border border-border bg-background overflow-hidden shrink-0 flex items-center justify-center relative">
-                      {asset.thumbnailBase64 ? (
+                      {previewSrc ? (
                         <img
-                          src={
-                            asset.thumbnailBase64.startsWith('data:')
-                              ? asset.thumbnailBase64
-                              : `data:image/jpeg;base64,${asset.thumbnailBase64}`
-                          }
+                          src={previewSrc}
                           alt={asset.filename}
                           className="w-full h-full object-cover"
                           referrerPolicy="no-referrer"

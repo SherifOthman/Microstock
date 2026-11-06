@@ -426,7 +426,7 @@ if (!gotTheLock) {
 app.on('before-quit', () => {
   isForceQuitting = true;
   try {
-    sqliteDb.performHotBackup('app_quit');
+    sqliteDb.performQuitBackupIfNeeded();
   } catch (err) {
     console.warn('[Electron Main] before-quit backup warning:', err.message);
   }

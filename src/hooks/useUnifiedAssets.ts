@@ -6,7 +6,7 @@
  */
 
 import { useMemo } from 'react';
-import { db, useSqliteQuery } from '../db';
+import { db, useSqliteQuery, resolveAssetPreviewUrl } from '../db';
 import { MasterMetadataRecord } from '../types';
 import { QueueState } from '../services/queue/BatchQueueService';
 import { UnifiedAssetRow } from '../features/studio/components/AssetCard';
@@ -78,7 +78,10 @@ export function useUnifiedAssets(
       rowMap.set(item.filename, {
         id: item.id,
         filename: item.filename,
-        thumbnailUrl: item.thumbnailDataUrl || (item.thumbnailBase64 ? `data:image/jpeg;base64,${item.thumbnailBase64}` : ''),
+        thumbnailUrl:
+          item.thumbnailDataUrl ||
+          (item.thumbnailBase64 ? `data:image/jpeg;base64,${item.thumbnailBase64}` : '') ||
+          resolveAssetPreviewUrl(item.metadataRecord),
         status,
         queueItem: item,
         masterRecord: item.metadataRecord,
@@ -125,19 +128,19 @@ export function useUnifiedAssets(
             }
           }
         }
-        if (!existing.thumbnailUrl) existing.thumbnailUrl = rec.thumbnailBase64;
+        if (!existing.thumbnailUrl) existing.thumbnailUrl = resolveAssetPreviewUrl(rec);
         if (rec.createdAt) existing.createdAt = rec.createdAt;
       } else {
         rowMap.set(rec.filename, {
           id: rec.id,
           filename: rec.filename,
-          thumbnailUrl: rec.thumbnailBase64,
+          thumbnailUrl: resolveAssetPreviewUrl(rec),
           status: recStatus,
           masterRecord: rec,
           error: rec.errorMessage,
           createdAt: rec.createdAt || Date.now(),
           isRetry: recIsRetry,
-        nativePath: rec.nativePath,
+        nativePath: rec.nativePath || rec.masterPath || rec.originalPath,
         });
       }
     });

@@ -55,21 +55,40 @@ const DEFAULT_REJECTION_REASONS = [
   },
 ];
 
+function toLocalDayKey(timestampMs) {
+  const d = new Date(timestampMs);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 /**
- * StockFlow Native SQLite Relational Engine (Main Process)
- * Stores data in a single portable file: <Documents>/StockFlow/stockflow.sqlite
- * Configured with WAL mode for high concurrency, zero-lock reads, and Event-Driven Hot Backups.
+ * StockFlow Dual-SQLite Relational Engine (Main Process)
+ * 1. `userdata.sqlite`     — Permanent user portfolio, metadata, agency tracking, API keys, FTP profiles, settings.
+ * 2. `local_queues.sqlite` — Ephemeral high-frequency task queues (completely ignored during backups).
+ *
+ * Enforces:
+ * - Zero Base64 Bloat (only relative local file paths stored, served via `stockflow://local?path=`)
+ * - Relative Path Management anchored to the configurable Master Workspace Folder
+ * - Smart Once-Per-Day Dirty-Flag Backup on `app-quit` with 7-Day Rolling Retention & Custom Backup Path
  */
 class SqliteDatabaseManager {
   constructor(customBaseDir = null) {
     this.db = null;
+    this.queuesDb = null;
     this.baseDir = typeof customBaseDir === 'string' ? customBaseDir : '';
     this.dbPath = '';
+    this.queuesDbPath = '';
     this.masterVaultDir = '';
+    this.previewsDir = '';
     this.tempStagingDir = '';
     this.exportBasketsDir = '';
     this.backupsDir = '';
     this.isNativeSqlite = false;
+    this.isUserDataDirty = false;
+    this.lastMutationAt = 0;
+    this.backupRetentionDays = 7;
     this.maxBackupRetention = 30;
     this.memoryFallback = {
       masterRecords: new Map(),
@@ -101,7 +120,7 @@ class SqliteDatabaseManager {
     }
     this.memoryFallback.ftpProfiles.set('dreamstime', {
       agencyId: 'dreamstime',
-      protocol: 'ftps',
+      protocol: 'ftp',
       host: 'ftp.dreamstime.com',
       port: 21,
       username: '',
@@ -110,6 +129,11 @@ class SqliteDatabaseManager {
       passiveMode: true,
       updatedAt: now,
     });
+  }
+
+  markDirty() {
+    this.isUserDataDirty = true;
+    this.lastMutationAt = Date.now();
   }
 
   init(app = null, customBaseDir = null) {
@@ -134,13 +158,33 @@ class SqliteDatabaseManager {
     }
 
     this.baseDir = baseDir;
-    this.dbPath = path.join(baseDir, 'stockflow.sqlite');
+    this.dbPath = path.join(baseDir, 'userdata.sqlite');
+    this.queuesDbPath = path.join(baseDir, 'local_queues.sqlite');
     this.masterVaultDir = path.join(baseDir, 'Master_Vault');
+    this.previewsDir = path.join(this.masterVaultDir, '.stockflow_previews');
     this.tempStagingDir = path.join(baseDir, '.stockflow_temp');
     this.exportBasketsDir = path.join(baseDir, 'Export_Baskets');
     this.backupsDir = path.join(baseDir, 'backups');
 
-    for (const dir of [this.masterVaultDir, this.tempStagingDir, this.exportBasketsDir, this.backupsDir]) {
+    // Retire legacy bloated `stockflow.sqlite` if present so we start fresh with clean `userdata.sqlite`
+    for (const legacySuffix of ['', '-wal', '-shm']) {
+      const legacyFile = path.join(baseDir, `stockflow.sqlite${legacySuffix}`);
+      if (fs.existsSync(legacyFile)) {
+        try {
+          fs.unlinkSync(legacyFile);
+        } catch {
+          // ignore if locked
+        }
+      }
+    }
+
+    for (const dir of [
+      this.masterVaultDir,
+      this.previewsDir,
+      this.tempStagingDir,
+      this.exportBasketsDir,
+      this.backupsDir,
+    ]) {
       try {
         fs.mkdirSync(dir, { recursive: true });
       } catch {
@@ -150,22 +194,61 @@ class SqliteDatabaseManager {
 
     try {
       const Database = require('better-sqlite3');
+      // 1. Open permanent database: userdata.sqlite
       this.db = new Database(this.dbPath);
       this.db.pragma('journal_mode = WAL');
       this.db.pragma('synchronous = NORMAL');
       this.db.pragma('foreign_keys = ON');
+
+      // 2. Open ephemeral queue database: local_queues.sqlite
+      this.queuesDb = new Database(this.queuesDbPath);
+      this.queuesDb.pragma('journal_mode = WAL');
+      this.queuesDb.pragma('synchronous = NORMAL');
+
       this.createSchema();
+      this.createQueuesSchema();
       this.migrateColumnsIfNeeded();
       this.seedDefaultAgencies();
       this.seedDefaultRejectionDictionary();
       this.ensureAgencyTrackingForAllAssets();
       this.isNativeSqlite = true;
 
-      // Trigger Event-Driven Backup #1: On Application Startup
-      this.performHotBackup('app_startup');
+      // Hydrate persisted custom Master Workspace Folder & Custom Backup Directory
+      this._hydrateCustomWorkspaceSettings();
+      this.isUserDataDirty = false;
     } catch (err) {
       console.warn('[SQLite] Native better-sqlite3 unavailable, using in-memory relational fallback:', err.message);
       this.isNativeSqlite = false;
+    }
+  }
+
+  _hydrateCustomWorkspaceSettings() {
+    try {
+      const savedMaster = this.getSetting('master_workspace_folder');
+      if (savedMaster?.value && typeof savedMaster.value === 'string' && savedMaster.value.trim()) {
+        const candidate = path.resolve(savedMaster.value.trim());
+        try {
+          fs.mkdirSync(candidate, { recursive: true });
+          this.masterVaultDir = candidate;
+          this.previewsDir = path.join(this.masterVaultDir, '.stockflow_previews');
+          fs.mkdirSync(this.previewsDir, { recursive: true });
+        } catch {
+          // keep default if inaccessible
+        }
+      }
+
+      const savedBackup = this.getSetting('custom_backup_dir');
+      if (savedBackup?.value && typeof savedBackup.value === 'string' && savedBackup.value.trim()) {
+        const candidate = path.resolve(savedBackup.value.trim());
+        try {
+          fs.mkdirSync(candidate, { recursive: true });
+          this.backupsDir = candidate;
+        } catch {
+          // keep default if inaccessible
+        }
+      }
+    } catch {
+      // ignore hydration errors
     }
   }
 
@@ -175,6 +258,135 @@ class SqliteDatabaseManager {
         this.db.close();
       } catch {}
       this.db = null;
+    }
+    if (this.queuesDb) {
+      try {
+        this.queuesDb.close();
+      } catch {}
+      this.queuesDb = null;
+    }
+  }
+
+  // ============================================================================
+  // Relative Path Management (Master Workspace Folder Portability)
+  // ============================================================================
+  toRelativeWorkspacePath(inputPath) {
+    if (!inputPath || typeof inputPath !== 'string') return null;
+    const trimmed = inputPath.trim();
+    if (!trimmed) return null;
+
+    // Already relative
+    if (!path.isAbsolute(trimmed) && !/^[a-zA-Z]:[\\/]/.test(trimmed)) {
+      return trimmed.replace(/\\/g, '/').replace(/^\/+/, '');
+    }
+
+    const normalizedInput = path.normalize(trimmed);
+
+    // 1. Check if inside current masterVaultDir
+    if (this.masterVaultDir) {
+      const normalizedMaster = path.normalize(this.masterVaultDir);
+      const relToMaster = path.relative(normalizedMaster, normalizedInput);
+      if (relToMaster && !relToMaster.startsWith('..') && !path.isAbsolute(relToMaster)) {
+        return relToMaster.replace(/\\/g, '/');
+      }
+    }
+
+    // 2. Check if path contains a portable `Master_Vault/` marker from another machine/location
+    const forwardInput = normalizedInput.replace(/\\/g, '/');
+    const vaultMarkerIdx = forwardInput.indexOf('/Master_Vault/');
+    if (vaultMarkerIdx !== -1) {
+      return forwardInput.slice(vaultMarkerIdx + '/Master_Vault/'.length);
+    }
+
+    // 3. Check if inside baseDir
+    if (this.baseDir) {
+      const normalizedBase = path.normalize(this.baseDir);
+      const relToBase = path.relative(normalizedBase, normalizedInput);
+      if (relToBase && !relToBase.startsWith('..') && !path.isAbsolute(relToBase)) {
+        return relToBase.replace(/\\/g, '/');
+      }
+    }
+
+    // External source path outside the workspace (keep normalized path)
+    return forwardInput;
+  }
+
+  toAbsoluteWorkspacePath(storedPath) {
+    if (!storedPath || typeof storedPath !== 'string') return undefined;
+    const trimmed = storedPath.trim();
+    if (!trimmed) return undefined;
+
+    const isAbs = path.isAbsolute(trimmed) || /^[a-zA-Z]:[\\/]/.test(trimmed);
+    if (isAbs) {
+      const norm = path.normalize(trimmed);
+      if (fs.existsSync(norm)) {
+        return norm;
+      }
+      // If an old absolute path from another PC/folder contains `/Master_Vault/`, relink dynamically
+      const forward = norm.replace(/\\/g, '/');
+      const marker = '/Master_Vault/';
+      const idx = forward.indexOf(marker);
+      if (idx !== -1 && this.masterVaultDir) {
+        const relSub = forward.slice(idx + marker.length);
+        return path.resolve(this.masterVaultDir, relSub);
+      }
+      return norm;
+    }
+
+    // Relative path: resolve against masterVaultDir first, then baseDir if needed
+    const cleanRel = trimmed.replace(/^[/\\]+/, '');
+    const masterRoot = this.masterVaultDir || path.join(this.baseDir || process.cwd(), 'Master_Vault');
+    const candidateInMaster = path.resolve(masterRoot, cleanRel);
+    if (fs.existsSync(candidateInMaster)) {
+      return candidateInMaster;
+    }
+
+    if (this.baseDir) {
+      const candidateInBase = path.resolve(this.baseDir, cleanRel);
+      if (fs.existsSync(candidateInBase)) {
+        return candidateInBase;
+      }
+    }
+
+    return candidateInMaster;
+  }
+
+  buildStockflowProtocolUrl(fullDiskPath) {
+    if (!fullDiskPath || typeof fullDiskPath !== 'string') return '';
+    return `stockflow://local?path=${encodeURIComponent(fullDiskPath)}`;
+  }
+
+  /**
+   * Saves a binary preview JPEG to `<masterVaultDir>/.stockflow_previews/<assetId>.jpg`
+   * if a vector or video only has a buffer/base64 frame in memory, ensuring ZERO Base64 in SQLite.
+   */
+  _persistPreviewToDiskIfNeeded(assetId, previewBufferOrBase64) {
+    if (!assetId || !previewBufferOrBase64) return null;
+    try {
+      let buf = null;
+      if (Buffer.isBuffer(previewBufferOrBase64)) {
+        buf = previewBufferOrBase64;
+      } else if (previewBufferOrBase64 instanceof ArrayBuffer || ArrayBuffer.isView(previewBufferOrBase64)) {
+        buf = Buffer.from(previewBufferOrBase64);
+      } else if (typeof previewBufferOrBase64 === 'string' && previewBufferOrBase64.length > 0) {
+        if (previewBufferOrBase64.startsWith('data:image/svg+xml')) {
+          return null; // SVG placeholders are not written as binary JPEGs
+        }
+        const rawB64 = previewBufferOrBase64.replace(/^data:image\/[^;]+;base64,/, '');
+        if (rawB64.length > 32) {
+          buf = Buffer.from(rawB64, 'base64');
+        }
+      }
+      if (!buf || buf.length === 0) return null;
+
+      const targetDir = this.previewsDir || path.join(this.masterVaultDir || process.cwd(), '.stockflow_previews');
+      fs.mkdirSync(targetDir, { recursive: true });
+      const safeId = String(assetId).replace(/[^a-zA-Z0-9_-]/g, '_');
+      const previewFullPath = path.join(targetDir, `${safeId}.jpg`);
+      fs.writeFileSync(previewFullPath, buf);
+      return this.toRelativeWorkspacePath(previewFullPath);
+    } catch {
+      return null;
     }
   }
 
@@ -207,7 +419,7 @@ class SqliteDatabaseManager {
         eps_extracted_at INTEGER,
         resolution TEXT,
         color_space TEXT,
-        thumbnail_base64 TEXT,
+        thumbnail_base64 TEXT DEFAULT '',
         is_ai_generated INTEGER DEFAULT 1,
         ai_generator_model TEXT,
         base_title TEXT DEFAULT '',
@@ -304,7 +516,6 @@ class SqliteDatabaseManager {
       CREATE INDEX IF NOT EXISTS idx_distributions_agency_status
         ON asset_distributions(agency_id, upload_status);
 
-      -- Pillar 1: Future-Proof Rejection Dictionary Table
       CREATE TABLE IF NOT EXISTS rejection_dictionary (
         id TEXT PRIMARY KEY,
         agency_id TEXT NOT NULL DEFAULT 'all',
@@ -322,7 +533,6 @@ class SqliteDatabaseManager {
       CREATE INDEX IF NOT EXISTS idx_rejection_agency_active
         ON rejection_dictionary(agency_id, is_active);
 
-      -- Pillar 4: Export Baskets Table
       CREATE TABLE IF NOT EXISTS export_baskets (
         id TEXT PRIMARY KEY,
         agency_id TEXT NOT NULL,
@@ -338,7 +548,6 @@ class SqliteDatabaseManager {
       CREATE INDEX IF NOT EXISTS idx_baskets_agency_status
         ON export_baskets(agency_id, status);
 
-      -- Pillar 1: Future-Proof AgencyTracking Table
       CREATE TABLE IF NOT EXISTS agency_tracking (
         id TEXT PRIMARY KEY,
         asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
@@ -382,7 +591,6 @@ class SqliteDatabaseManager {
       CREATE INDEX IF NOT EXISTS idx_tracking_rejection_reason
         ON agency_tracking(rejection_reason_id);
 
-      -- Pillar 5: Event-Driven Hot Backup Audit Log
       CREATE TABLE IF NOT EXISTS backup_logs (
         id TEXT PRIMARY KEY,
         trigger_event TEXT NOT NULL,
@@ -396,10 +604,9 @@ class SqliteDatabaseManager {
       CREATE INDEX IF NOT EXISTS idx_backup_logs_created_at
         ON backup_logs(created_at);
 
-      -- Pillar 6: Microstock FTP Uploader Credential Vault & Persistent Session Logs
       CREATE TABLE IF NOT EXISTS ftp_profiles (
         agency_id TEXT PRIMARY KEY,
-        protocol TEXT NOT NULL DEFAULT 'ftps',
+        protocol TEXT NOT NULL DEFAULT 'ftp',
         host TEXT NOT NULL DEFAULT 'ftp.dreamstime.com',
         port INTEGER NOT NULL DEFAULT 21,
         username TEXT NOT NULL DEFAULT '',
@@ -446,8 +653,16 @@ class SqliteDatabaseManager {
 
       CREATE INDEX IF NOT EXISTS idx_ftp_transfer_logs_session
         ON ftp_transfer_logs(session_id, completed_at DESC);
+    `);
+  }
 
-      -- Pillar 7: Global State Persistence & Crash Recovery Queue Store
+  /**
+   * Ephemeral Queue Store Schema inside `local_queues.sqlite`
+   * Completely separated from `userdata.sqlite` so temporary queues never bloat backups.
+   */
+  createQueuesSchema() {
+    if (!this.queuesDb) return;
+    this.queuesDb.exec(`
       CREATE TABLE IF NOT EXISTS persistent_task_queues (
         module_id TEXT PRIMARY KEY,
         session_id TEXT,
@@ -460,9 +675,6 @@ class SqliteDatabaseManager {
     `);
   }
 
-  /**
-   * Non-destructive migration for existing `assets` databases created prior to the Distribution Tracker upgrade
-   */
   migrateColumnsIfNeeded() {
     if (!this.db) return;
     const existingCols = new Set(
@@ -511,7 +723,9 @@ class SqliteDatabaseManager {
       }
     }
 
+    // Enforce Zero-Base64 Rule on any existing rows if present
     try {
+      this.db.exec(`UPDATE assets SET thumbnail_base64 = '' WHERE thumbnail_base64 != '' AND thumbnail_base64 IS NOT NULL;`);
       this.db.exec(`
         CREATE INDEX IF NOT EXISTS idx_assets_file_hash ON assets(file_hash);
         CREATE INDEX IF NOT EXISTS idx_assets_pipeline ON assets(status, pipeline_stage);
@@ -583,8 +797,37 @@ class SqliteDatabaseManager {
   }
 
   // ============================================================================
-  // Pillar 5: Event-Driven Hot Backup Engine (30-File Rolling Retention)
+  // Pillar 5: Smart Backup Engine (Once-Daily Dirty Flag + 7-Day Rolling Retention)
   // ============================================================================
+  hasBackupToday(referenceMs = Date.now()) {
+    const todayKey = toLocalDayKey(referenceMs);
+    const recentLogs = this.getBackupLogs(10);
+    for (const log of recentLogs) {
+      if (log?.createdAt && toLocalDayKey(log.createdAt) === todayKey) {
+        if (!this.isNativeSqlite || (log.backupFilePath && fs.existsSync(log.backupFilePath))) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Executed automatically on `app-quit` (`before-quit`).
+   * Only creates a backup if `userdata.sqlite` was modified (`isUserDataDirty === true`)
+   * AND no backup has been created yet today.
+   */
+  performQuitBackupIfNeeded() {
+    if (!this.isUserDataDirty) {
+      return { skipped: true, reason: 'not_dirty' };
+    }
+    if (this.hasBackupToday()) {
+      return { skipped: true, reason: 'already_backed_up_today' };
+    }
+    const log = this.performHotBackup('app_quit');
+    return { skipped: false, backup: log, backupFilePath: log?.backupFilePath };
+  }
+
   performHotBackup(triggerEvent = 'manual') {
     const startTime = Date.now();
     const validTrigger = triggerEvent || 'manual';
@@ -593,7 +836,7 @@ class SqliteDatabaseManager {
       const mockLog = {
         id: crypto.randomUUID(),
         triggerEvent: validTrigger,
-        backupFilePath: path.join(this.backupsDir || '/backups', `stockflow_backup_${startTime}_${validTrigger}.sqlite`),
+        backupFilePath: path.join(this.backupsDir || '/backups', `userdata_backup_${startTime}_${validTrigger}.sqlite`),
         fileSizeBytes: 4096,
         assetCountSnapshot: this.memoryFallback.masterRecords.size,
         durationMs: 1,
@@ -603,13 +846,14 @@ class SqliteDatabaseManager {
       if (this.memoryFallback.backupLogs.length > this.maxBackupRetention) {
         this.memoryFallback.backupLogs.length = this.maxBackupRetention;
       }
+      this.isUserDataDirty = false;
       return mockLog;
     }
 
     try {
       fs.mkdirSync(this.backupsDir, { recursive: true });
 
-      // Flush WAL to main database file safely before taking snapshot
+      // Flush WAL to userdata.sqlite safely before taking snapshot (local_queues.sqlite is completely ignored)
       try {
         this.db.pragma('wal_checkpoint(PASSIVE)');
       } catch {
@@ -622,7 +866,7 @@ class SqliteDatabaseManager {
         .replace('T', '_');
       const safeTrigger = String(validTrigger).replace(/[^a-zA-Z0-9_-]/g, '');
       const shortId = crypto.randomUUID().slice(0, 6);
-      const backupFilename = `stockflow_backup_${isoStamp}_${safeTrigger}_${shortId}.sqlite`;
+      const backupFilename = `userdata_backup_${isoStamp}_${safeTrigger}_${shortId}.sqlite`;
       const backupFilePath = path.join(this.backupsDir, backupFilename);
 
       fs.copyFileSync(this.dbPath, backupFilePath);
@@ -657,8 +901,10 @@ class SqliteDatabaseManager {
           logRecord.createdAt
         );
 
-      // Rolling Retention Policy: Keep newest 30 backup files, prune oldest
-      this.pruneOldBackups(this.maxBackupRetention);
+      this.isUserDataDirty = false;
+
+      // Rolling Retention Policy: Delete backups older than 7 days (and cap at maxBackupRetention)
+      this.pruneOldBackups(this.backupRetentionDays, this.maxBackupRetention);
 
       return logRecord;
     } catch (err) {
@@ -667,12 +913,27 @@ class SqliteDatabaseManager {
     }
   }
 
-  pruneOldBackups(maxFiles = 30) {
+  /**
+   * Rolling Retention Policy:
+   * - Deletes backup files older than `maxAgeDays` (default 7 days)
+   * - Also enforces a hard ceiling of `maxFiles` (default 30 files)
+   * - Always preserves at least the 1 newest backup file
+   */
+  pruneOldBackups(maxAgeDays = 7, maxFiles = 30) {
     if (!this.backupsDir || !fs.existsSync(this.backupsDir)) return 0;
     try {
+      const now = Date.now();
+      const maxAgeMs = Math.max(1, Number(maxAgeDays || 7)) * 24 * 60 * 60 * 1000;
+
       const files = fs
         .readdirSync(this.backupsDir)
-        .filter((f) => f.endsWith('.sqlite') || f.endsWith('.db'))
+        .filter(
+          (f) =>
+            (f.endsWith('.sqlite') || f.endsWith('.db')) &&
+            f !== 'userdata.sqlite' &&
+            f !== 'local_queues.sqlite' &&
+            f !== 'stockflow.sqlite'
+        )
         .map((name) => {
           const fullPath = path.join(this.backupsDir, name);
           const stat = fs.statSync(fullPath);
@@ -681,9 +942,13 @@ class SqliteDatabaseManager {
         .sort((a, b) => b.mtimeMs - a.mtimeMs);
 
       let deleted = 0;
-      if (files.length > maxFiles) {
-        const toDelete = files.slice(maxFiles);
-        for (const item of toDelete) {
+      for (let i = 0; i < files.length; i++) {
+        const item = files[i];
+        // Always keep the newest backup (index 0)
+        if (i === 0) continue;
+        const isExpiredByAge = now - item.mtimeMs > maxAgeMs;
+        const isOverMaxCount = i >= maxFiles;
+        if (isExpiredByAge || isOverMaxCount) {
           try {
             fs.unlinkSync(item.fullPath);
             deleted++;
@@ -717,18 +982,60 @@ class SqliteDatabaseManager {
   }
 
   getWorkspacePaths() {
+    let userDataSizeBytes = 0;
+    let queuesSizeBytes = 0;
+    try {
+      if (this.dbPath && fs.existsSync(this.dbPath)) {
+        userDataSizeBytes = fs.statSync(this.dbPath).size;
+      }
+      if (this.queuesDbPath && fs.existsSync(this.queuesDbPath)) {
+        queuesSizeBytes = fs.statSync(this.queuesDbPath).size;
+      }
+    } catch {}
+
     return {
       baseDir: this.baseDir,
       dbPath: this.dbPath,
+      queuesDbPath: this.queuesDbPath,
       masterVaultDir: this.masterVaultDir,
       tempStagingDir: this.tempStagingDir,
       exportBasketsDir: this.exportBasketsDir,
       backupsDir: this.backupsDir,
+      isUserDataDirty: Boolean(this.isUserDataDirty),
+      hasBackupToday: this.hasBackupToday(),
+      userDataSizeBytes,
+      queuesSizeBytes,
     };
   }
 
+  setMasterWorkspaceFolder(folderPath) {
+    if (!folderPath || typeof folderPath !== 'string' || !folderPath.trim()) {
+      throw new Error('A valid Master Workspace Folder path is required.');
+    }
+    const resolved = path.resolve(folderPath.trim());
+    fs.mkdirSync(resolved, { recursive: true });
+    this.masterVaultDir = resolved;
+    this.previewsDir = path.join(this.masterVaultDir, '.stockflow_previews');
+    fs.mkdirSync(this.previewsDir, { recursive: true });
+
+    this.putSetting({ key: 'master_workspace_folder', value: resolved });
+    return this.getWorkspacePaths();
+  }
+
+  setCustomBackupDirectory(folderPath) {
+    if (!folderPath || typeof folderPath !== 'string' || !folderPath.trim()) {
+      throw new Error('A valid Custom Backup Directory path is required.');
+    }
+    const resolved = path.resolve(folderPath.trim());
+    fs.mkdirSync(resolved, { recursive: true });
+    this.backupsDir = resolved;
+
+    this.putSetting({ key: 'custom_backup_dir', value: resolved });
+    return this.getWorkspacePaths();
+  }
+
   // ============================================================================
-  // Row Mapping & Master Records
+  // Row Mapping & Master Records (Zero Base64 + Dynamic Relative Path Resolution)
   // ============================================================================
   rowToMasterRecord(row, agencyMapForAsset = null) {
     if (!row) return undefined;
@@ -788,20 +1095,31 @@ class SqliteDatabaseManager {
         ? Boolean(row.m_is_ai_generated)
         : Boolean(row.is_ai_generated ?? 1);
 
+    // Dynamically construct full paths from stored relative paths
+    const resolvedMasterPath = this.toAbsoluteWorkspacePath(row.master_path);
+    const resolvedPreviewPath = this.toAbsoluteWorkspacePath(row.preview_path);
+    const resolvedOriginalPath = this.toAbsoluteWorkspacePath(row.original_path);
+    const primaryDiskPath = resolvedPreviewPath || resolvedMasterPath || resolvedOriginalPath;
+    const previewUrl = primaryDiskPath ? this.buildStockflowProtocolUrl(primaryDiskPath) : '';
+
     return {
       id: row.id,
       batchId: row.batch_id || '',
       filename: row.filename,
       originalFilename: row.original_filename ?? undefined,
-      originalPath: row.original_path ?? undefined,
-      masterPath: row.master_path ?? undefined,
-      previewPath: row.preview_path ?? undefined,
-      nativePath: row.master_path || row.original_path || undefined,
+      originalPath: resolvedOriginalPath,
+      masterPath: resolvedMasterPath,
+      previewPath: resolvedPreviewPath,
+      relativeMasterPath: row.master_path ?? undefined,
+      relativePreviewPath: row.preview_path ?? undefined,
+      nativePath: resolvedMasterPath || resolvedOriginalPath || undefined,
+      previewUrl: previewUrl || undefined,
       fileHash: row.file_hash ?? undefined,
       perceptualHash: row.perceptual_hash ?? undefined,
       fileSize: row.file_size ?? undefined,
       compressedSize: row.compressed_size ?? undefined,
-      thumbnailBase64: row.thumbnail_base64 || '',
+      // Zero-Base64 Rule: Never store or emit Base64 blobs from SQLite
+      thumbnailBase64: '',
       mediaType: row.media_type || 'image',
       videoMeta,
       isAiGenerated: isAi,
@@ -921,6 +1239,17 @@ class SqliteDatabaseManager {
     const catJson = rec.categories ? JSON.stringify(rec.categories) : null;
     const isAiInt = rec.isAiGenerated === false ? 0 : 1;
 
+    // Convert paths to portable relative paths inside Master Workspace Folder
+    const relMasterPath = this.toRelativeWorkspacePath(rec.masterPath);
+    const relOriginalPath = this.toRelativeWorkspacePath(rec.originalPath || rec.nativePath);
+    let relPreviewPath = this.toRelativeWorkspacePath(rec.previewPath);
+
+    // If a vector/video has no previewPath on disk yet, optionally write its rasterized JPEG preview to disk
+    // and never store Base64 in SQLite.
+    if (!relPreviewPath && (rec.mediaType === 'vector' || rec.mediaType === 'video') && rec.thumbnailBase64) {
+      relPreviewPath = this._persistPreviewToDiskIfNeeded(rec.id, rec.thumbnailBase64);
+    }
+
     const upsertAsset = this.db.prepare(`
       INSERT INTO assets (
         id, batch_id, original_path, master_path, preview_path,
@@ -933,7 +1262,7 @@ class SqliteDatabaseManager {
         @id, @batch_id, @original_path, @master_path, @preview_path,
         @filename, @original_filename, @file_hash, @perceptual_hash,
         @media_type, @file_size, @compressed_size,
-        @width, @height, @duration_seconds, @has_audio, @resolution, @thumbnail_base64,
+        @width, @height, @duration_seconds, @has_audio, @resolution, '',
         @is_ai_generated, @base_title, @detailed_description, @keywords_json, @categories_json,
         @pipeline_stage, @status, @error_message, @created_at, @updated_at
       )
@@ -954,11 +1283,7 @@ class SqliteDatabaseManager {
         duration_seconds = COALESCE(excluded.duration_seconds, assets.duration_seconds),
         has_audio = COALESCE(excluded.has_audio, assets.has_audio),
         resolution = COALESCE(excluded.resolution, assets.resolution),
-        thumbnail_base64 = CASE
-          WHEN excluded.thumbnail_base64 IS NOT NULL AND excluded.thumbnail_base64 != ''
-          THEN excluded.thumbnail_base64
-          ELSE assets.thumbnail_base64
-        END,
+        thumbnail_base64 = '',
         is_ai_generated = excluded.is_ai_generated,
         base_title = excluded.base_title,
         detailed_description = excluded.detailed_description,
@@ -1004,9 +1329,9 @@ class SqliteDatabaseManager {
     upsertAsset.run({
       id: rec.id,
       batch_id: rec.batchId || '',
-      original_path: rec.originalPath || rec.nativePath || null,
-      master_path: rec.masterPath || null,
-      preview_path: rec.previewPath || null,
+      original_path: relOriginalPath,
+      master_path: relMasterPath,
+      preview_path: relPreviewPath,
       filename: rec.filename || '',
       original_filename: rec.originalFilename || rec.filename || null,
       file_hash: rec.fileHash || null,
@@ -1019,7 +1344,6 @@ class SqliteDatabaseManager {
       duration_seconds: rec.videoMeta?.durationSeconds ?? null,
       has_audio: rec.videoMeta?.hasAudio ? 1 : 0,
       resolution: rec.videoMeta?.resolution ?? null,
-      thumbnail_base64: rec.thumbnailBase64 || '',
       is_ai_generated: isAiInt,
       base_title: rec.baseTitle || '',
       detailed_description: rec.detailedDescription || '',
@@ -1067,10 +1391,12 @@ class SqliteDatabaseManager {
   getDbInfo() {
     return {
       dbPath: this.dbPath,
+      queuesDbPath: this.queuesDbPath,
       baseDir: this.baseDir,
       masterVaultDir: this.masterVaultDir,
       exportBasketsDir: this.exportBasketsDir,
       backupsDir: this.backupsDir,
+      isUserDataDirty: Boolean(this.isUserDataDirty),
       engine: this.isNativeSqlite ? 'sqlite-wal' : 'memory-fallback',
     };
   }
@@ -1083,6 +1409,7 @@ class SqliteDatabaseManager {
         .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
         .map((r) => ({
           ...r,
+          thumbnailBase64: '',
           agencyTrackings: trackingMap.get(r.id) || this._ensureMemoryAgencyTrackingForAsset(r.id),
         }));
     }
@@ -1115,6 +1442,7 @@ class SqliteDatabaseManager {
       if (!rec) return undefined;
       return {
         ...rec,
+        thumbnailBase64: '',
         agencyTrackings: trackingMap.get(id) || this._ensureMemoryAgencyTrackingForAsset(id),
       };
     }
@@ -1149,9 +1477,10 @@ class SqliteDatabaseManager {
   }
 
   putMasterRecord(record) {
+    this.markDirty();
     if (!this.isNativeSqlite) {
       const agencyTrackings = this._ensureMemoryAgencyTrackingForAsset(record.id, record.createdAt || Date.now());
-      this.memoryFallback.masterRecords.set(record.id, { ...record, agencyTrackings });
+      this.memoryFallback.masterRecords.set(record.id, { ...record, thumbnailBase64: '', agencyTrackings });
       return record.id;
     }
     const tx = this.db.transaction((rec) => {
@@ -1163,12 +1492,12 @@ class SqliteDatabaseManager {
 
   bulkPutMasterRecords(records) {
     if (!Array.isArray(records) || records.length === 0) return;
+    this.markDirty();
     if (!this.isNativeSqlite) {
       for (const r of records) {
         const agencyTrackings = this._ensureMemoryAgencyTrackingForAsset(r.id, r.createdAt || Date.now());
-        this.memoryFallback.masterRecords.set(r.id, { ...r, agencyTrackings });
+        this.memoryFallback.masterRecords.set(r.id, { ...r, thumbnailBase64: '', agencyTrackings });
       }
-      this.performHotBackup('batch_metadata');
       return;
     }
     const tx = this.db.transaction((items) => {
@@ -1177,30 +1506,31 @@ class SqliteDatabaseManager {
       }
     });
     tx(records);
-    this.performHotBackup('batch_metadata');
   }
 
   updateMasterRecord(id, changes) {
     const existing = this.getMasterRecord(id);
     if (!existing) return 0;
-    const merged = { ...existing, ...changes, id };
+    const merged = { ...existing, ...changes, id, thumbnailBase64: '' };
     this.putMasterRecord(merged);
     return 1;
   }
 
   modifyAllMasterRecords(changes) {
+    this.markDirty();
     if (!this.isNativeSqlite) {
       for (const [id, rec] of this.memoryFallback.masterRecords.entries()) {
-        this.memoryFallback.masterRecords.set(id, { ...rec, ...changes });
+        this.memoryFallback.masterRecords.set(id, { ...rec, ...changes, thumbnailBase64: '' });
       }
       return;
     }
     const all = this.getMasterRecords();
-    const updated = all.map((r) => ({ ...r, ...changes }));
+    const updated = all.map((r) => ({ ...r, ...changes, thumbnailBase64: '' }));
     this.bulkPutMasterRecords(updated);
   }
 
   deleteMasterRecord(id) {
+    this.markDirty();
     if (!this.isNativeSqlite) {
       this.memoryFallback.masterRecords.delete(id);
       for (const agencyId of SUPPORTED_AGENCIES) {
@@ -1213,6 +1543,7 @@ class SqliteDatabaseManager {
 
   bulkDeleteMasterRecords(ids) {
     if (!Array.isArray(ids) || ids.length === 0) return;
+    this.markDirty();
     if (!this.isNativeSqlite) {
       for (const id of ids) {
         this.memoryFallback.masterRecords.delete(id);
@@ -1230,6 +1561,7 @@ class SqliteDatabaseManager {
   }
 
   clearMasterRecords() {
+    this.markDirty();
     if (!this.isNativeSqlite) {
       this.memoryFallback.masterRecords.clear();
       this.memoryFallback.agencyTracking.clear();
@@ -1259,16 +1591,12 @@ class SqliteDatabaseManager {
         isDuplicate: true,
         existingAssetId: row.id,
         existingFilename: row.filename,
-        masterPath: row.master_path,
+        masterPath: this.toAbsoluteWorkspacePath(row.master_path),
       };
     }
     return { isDuplicate: false };
   }
 
-  /**
-   * Copies a source file to the hidden `.stockflow_temp` folder (never moving or modifying source),
-   * computes its SHA-256 content hash, and checks if it already exists in the SQLite Master Vault.
-   */
   stageAndHashFile({ sourcePath, fileBuffer, filename, batchId = 'batch_default' }) {
     const cleanBatch = String(batchId || 'batch_default').replace(/[^a-zA-Z0-9_-]/g, '_');
     const tempBatchDir = path.join(this.tempStagingDir || path.join(process.cwd(), '.stockflow_temp'), cleanBatch);
@@ -1279,7 +1607,6 @@ class SqliteDatabaseManager {
 
     try {
       if (sourcePath && fs.existsSync(sourcePath)) {
-        // Strictly COPY (never move) from source directory to hidden temp staging
         fs.copyFileSync(sourcePath, tempFilePath);
       } else if (fileBuffer) {
         fs.writeFileSync(tempFilePath, Buffer.from(fileBuffer));
@@ -1293,7 +1620,6 @@ class SqliteDatabaseManager {
 
       const dupCheck = this.checkDuplicateHash(fileHash);
       if (dupCheck.isDuplicate) {
-        // Atomic cleanup of temp file if duplicate
         try {
           fs.unlinkSync(tempFilePath);
         } catch {}
@@ -1325,9 +1651,6 @@ class SqliteDatabaseManager {
     }
   }
 
-  /**
-   * Atomic Rollback: Wipes temporary staging files and ensures no partial DB record exists for a failed item.
-   */
   rollbackIngestedItem({ assetId, tempFilePath, previewTempPath }) {
     if (tempFilePath && typeof tempFilePath === 'string' && fs.existsSync(tempFilePath)) {
       try {
@@ -1345,16 +1668,11 @@ class SqliteDatabaseManager {
     return { rolledBack: true };
   }
 
-  /**
-   * Atomic Commit: Moves verified temp file(s) to the centralized Master_Vault directory
-   * and commits the Asset + Metadata + 6 AgencyTracking rows in a single transaction.
-   */
   commitAtomicallyToMasterVault(payload) {
     const {
       record,
       tempFilePath,
       previewBuffer,
-      triggerBackup = false,
     } = payload || {};
 
     if (!record || !record.id || !record.filename) {
@@ -1378,16 +1696,18 @@ class SqliteDatabaseManager {
     );
     fs.mkdirSync(vaultTargetDir, { recursive: true });
 
-    let masterPath = record.masterPath || path.join(vaultTargetDir, record.filename);
-    let previewPath = record.previewPath || null;
+    const masterFullPath = record.masterPath
+      ? this.toAbsoluteWorkspacePath(record.masterPath)
+      : path.join(vaultTargetDir, record.filename);
+    let previewFullPath = record.previewPath ? this.toAbsoluteWorkspacePath(record.previewPath) : null;
 
     try {
       if (tempFilePath && fs.existsSync(tempFilePath)) {
         try {
-          fs.renameSync(tempFilePath, masterPath);
+          fs.renameSync(tempFilePath, masterFullPath);
         } catch (moveErr) {
           if (moveErr.code === 'EXDEV') {
-            fs.copyFileSync(tempFilePath, masterPath);
+            fs.copyFileSync(tempFilePath, masterFullPath);
             fs.unlinkSync(tempFilePath);
           } else {
             throw moveErr;
@@ -1398,28 +1718,29 @@ class SqliteDatabaseManager {
       if (previewBuffer && record.mediaType === 'vector') {
         const ext = path.extname(record.filename);
         const base = path.basename(record.filename, ext);
-        previewPath = path.join(vaultTargetDir, `${base}.jpg`);
-        fs.writeFileSync(previewPath, Buffer.from(previewBuffer));
+        previewFullPath = path.join(vaultTargetDir, `${base}.jpg`);
+        fs.writeFileSync(previewFullPath, Buffer.from(previewBuffer));
+      } else if (!previewFullPath && (record.mediaType === 'vector' || record.mediaType === 'video') && record.thumbnailBase64) {
+        const relPreview = this._persistPreviewToDiskIfNeeded(record.id, record.thumbnailBase64);
+        if (relPreview) {
+          previewFullPath = this.toAbsoluteWorkspacePath(relPreview);
+        }
       }
 
+      // Store portable relative paths in SQLite and strip any Base64 strings
       const finalizedRecord = {
         ...record,
-        masterPath,
-        previewPath: previewPath || undefined,
-        nativePath: masterPath,
+        masterPath: this.toRelativeWorkspacePath(masterFullPath),
+        previewPath: previewFullPath ? this.toRelativeWorkspacePath(previewFullPath) : undefined,
+        nativePath: masterFullPath,
+        thumbnailBase64: '',
         pipelineStage: 'committed',
         status: 'completed',
       };
 
       this.putMasterRecord(finalizedRecord);
-
-      if (triggerBackup) {
-        this.performHotBackup('batch_ingest');
-      }
-
       return this.getMasterRecord(record.id);
     } catch (err) {
-      // Rollback any moved file or temp file if DB commit failed
       try {
         if (tempFilePath && fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
       } catch {}
@@ -1470,6 +1791,7 @@ class SqliteDatabaseManager {
     if (!title || !String(title).trim()) {
       throw new Error('Rejection reason title is required.');
     }
+    this.markDirty();
     const cleanTitle = String(title).trim();
     const cleanDesc = String(description || '').trim();
     const now = Date.now();
@@ -1517,20 +1839,17 @@ class SqliteDatabaseManager {
       description: row.description || '',
       severity: row.severity || 'standard',
       usageCount: row.usage_count || 0,
-      isActive: Boolean(row.is_active),
+      isActive: Boolean(r_active(row)),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
   }
 
-  /**
-   * Creates an Export Basket on disk (staging copies of selected Master files + generated CSV)
-   * and transitions all selected assets for that agency to `Pending Upload`.
-   */
   createExportBasket({ agencyId, basketName, assetIds, csvFilename, csvContent, additionalCsvs = [] }) {
     if (!agencyId || !Array.isArray(assetIds) || assetIds.length === 0) {
       throw new Error('Agency and at least one asset ID are required to create an Export Basket.');
     }
+    this.markDirty();
 
     const now = Date.now();
     const basketId = `basket_${crypto.randomUUID().slice(0, 8)}`;
@@ -1615,7 +1934,6 @@ class SqliteDatabaseManager {
           updatedAt: now,
         });
       }
-      this.performHotBackup('batch_export');
       return basketRecord;
     }
 
@@ -1669,9 +1987,6 @@ class SqliteDatabaseManager {
     });
 
     tx();
-    // Event-Driven Backup Trigger: Immediately after Export Basket creation
-    this.performHotBackup('batch_export');
-
     return basketRecord;
   }
 
@@ -1702,11 +2017,6 @@ class SqliteDatabaseManager {
     }));
   }
 
-  /**
-   * Bulk updates or reconciles agency statuses for one or many assets.
-   * Supports reverting failed portal uploads back to `New`, confirming `Uploaded` / `Accepted`,
-   * or logging `Rejected` with a RejectionDictionary reason.
-   */
   reconcileAgencyStatuses({
     assetIds,
     agencyId,
@@ -1719,6 +2029,7 @@ class SqliteDatabaseManager {
     if (!Array.isArray(assetIds) || assetIds.length === 0 || !agencyId || !targetStatus) {
       return { updatedCount: 0 };
     }
+    this.markDirty();
 
     const now = Date.now();
 
@@ -1755,7 +2066,6 @@ class SqliteDatabaseManager {
           reason.usageCount = (reason.usageCount || 0) + assetIds.length;
         }
       }
-      this.performHotBackup('batch_reconcile');
       return { updatedCount };
     }
 
@@ -1822,7 +2132,6 @@ class SqliteDatabaseManager {
           .run(assetIds.length, now, rejectionReasonId);
       }
 
-      // Auto-mark export baskets as reconciled if all their items have left 'Pending Upload'
       this.db
         .prepare(`
           UPDATE export_baskets
@@ -1837,10 +2146,6 @@ class SqliteDatabaseManager {
     });
 
     tx();
-
-    // Event-Driven Backup Trigger: Immediately after Batch Reconciliation
-    this.performHotBackup('batch_reconcile');
-
     return { updatedCount: assetIds.length };
   }
 
@@ -1929,6 +2234,7 @@ class SqliteDatabaseManager {
   }
 
   putApiKey(record) {
+    this.markDirty();
     if (!this.isNativeSqlite) {
       this.memoryFallback.apiKeys.set(record.id, { ...record });
       return record.id;
@@ -1963,6 +2269,7 @@ class SqliteDatabaseManager {
 
   bulkPutApiKeys(records) {
     if (!Array.isArray(records) || records.length === 0) return;
+    this.markDirty();
     if (!this.isNativeSqlite) {
       for (const r of records) {
         this.memoryFallback.apiKeys.set(r.id, { ...r });
@@ -1986,6 +2293,7 @@ class SqliteDatabaseManager {
   }
 
   deleteApiKey(id) {
+    this.markDirty();
     if (!this.isNativeSqlite) {
       this.memoryFallback.apiKeys.delete(id);
       return;
@@ -1994,6 +2302,7 @@ class SqliteDatabaseManager {
   }
 
   deleteApiKeysByProvider(providerId) {
+    this.markDirty();
     if (!this.isNativeSqlite) {
       for (const [id, rec] of this.memoryFallback.apiKeys.entries()) {
         if (rec.providerId === providerId) {
@@ -2006,6 +2315,7 @@ class SqliteDatabaseManager {
   }
 
   clearApiKeys() {
+    this.markDirty();
     if (!this.isNativeSqlite) {
       this.memoryFallback.apiKeys.clear();
       return;
@@ -2046,6 +2356,7 @@ class SqliteDatabaseManager {
   }
 
   putBatch(record) {
+    this.markDirty();
     if (!this.isNativeSqlite) {
       this.memoryFallback.batches.set(record.id, { ...record });
       return record.id;
@@ -2070,6 +2381,7 @@ class SqliteDatabaseManager {
   }
 
   deleteBatch(id) {
+    this.markDirty();
     if (!this.isNativeSqlite) {
       this.memoryFallback.batches.delete(id);
       return;
@@ -2078,6 +2390,7 @@ class SqliteDatabaseManager {
   }
 
   clearBatches() {
+    this.markDirty();
     if (!this.isNativeSqlite) {
       this.memoryFallback.batches.clear();
       return;
@@ -2102,6 +2415,7 @@ class SqliteDatabaseManager {
   putSetting(item) {
     const k = item.key;
     const val = item.value;
+    this.markDirty();
     if (!this.isNativeSqlite) {
       this.memoryFallback.settings.set(k, { key: k, value: val });
       return k;
@@ -2113,6 +2427,7 @@ class SqliteDatabaseManager {
   }
 
   clearSettings() {
+    this.markDirty();
     if (!this.isNativeSqlite) {
       this.memoryFallback.settings.clear();
       return;
@@ -2171,6 +2486,7 @@ class SqliteDatabaseManager {
   }
 
   saveFtpProfile(payload = {}) {
+    this.markDirty();
     const agencyId = payload.agencyId || 'dreamstime';
     const existing = this.getFtpProfileWithSecret(agencyId);
     const now = Date.now();
@@ -2223,6 +2539,7 @@ class SqliteDatabaseManager {
   }
 
   createFtpSession(payload = {}) {
+    this.markDirty();
     const now = Date.now();
     const session = {
       id: payload.id || crypto.randomUUID(),
@@ -2269,14 +2586,12 @@ class SqliteDatabaseManager {
 
   updateFtpSession(sessionId, updates = {}) {
     if (!sessionId) return null;
+    this.markDirty();
     if (!this.isNativeSqlite) {
       const existing = this.memoryFallback.ftpSessions.get(sessionId);
       if (!existing) return null;
       const merged = { ...existing, ...updates };
       this.memoryFallback.ftpSessions.set(sessionId, merged);
-      if (updates.status && updates.status !== 'running') {
-        this.performHotBackup('ftp_batch_complete');
-      }
       return merged;
     }
 
@@ -2298,9 +2613,6 @@ class SqliteDatabaseManager {
     };
 
     this.createFtpSession(merged);
-    if (updates.status && updates.status !== 'running') {
-      this.performHotBackup('ftp_batch_complete');
-    }
     return merged;
   }
 
@@ -2331,13 +2643,14 @@ class SqliteDatabaseManager {
   }
 
   logFtpTransfer(payload = {}) {
+    this.markDirty();
     const now = Date.now();
     const entry = {
       id: payload.id || crypto.randomUUID(),
       sessionId: payload.sessionId,
       agencyId: payload.agencyId || 'dreamstime',
       filename: payload.filename || 'unknown',
-      localPath: payload.localPath || null,
+      localPath: payload.localPath ? this.toRelativeWorkspacePath(payload.localPath) : null,
       fileSize: Number(payload.fileSize || 0),
       mediaType: payload.mediaType || 'image',
       remoteDirectory: payload.remoteDirectory || '/',
@@ -2405,7 +2718,7 @@ class SqliteDatabaseManager {
       sessionId: r.session_id,
       agencyId: r.agency_id,
       filename: r.filename,
-      localPath: r.local_path || undefined,
+      localPath: r.local_path ? this.toAbsoluteWorkspacePath(r.local_path) : undefined,
       fileSize: r.file_size,
       mediaType: r.media_type,
       remoteDirectory: r.remote_directory,
@@ -2420,6 +2733,7 @@ class SqliteDatabaseManager {
   }
 
   clearFtpLogs() {
+    this.markDirty();
     if (!this.isNativeSqlite) {
       this.memoryFallback.ftpSessions.clear();
       this.memoryFallback.ftpTransferLogs = [];
@@ -2431,7 +2745,8 @@ class SqliteDatabaseManager {
   }
 
   // ============================================================================
-  // Pillar 7: Global State Persistence & Crash Recovery (persistent_task_queues)
+  // Pillar 7: Ephemeral Queue Persistence in `local_queues.sqlite`
+  // Completely isolated from `userdata.sqlite` and ignored during backups.
   // ============================================================================
   saveQueueSnapshot(payload = {}) {
     const moduleId = String(payload.moduleId || 'ftp').trim();
@@ -2452,7 +2767,7 @@ class SqliteDatabaseManager {
       updatedAt: payload.updatedAt || now,
     };
 
-    if (!this.isNativeSqlite) {
+    if (!this.isNativeSqlite || !this.queuesDb) {
       this.memoryFallback.persistentTaskQueues.set(moduleId, record);
       return {
         moduleId: record.moduleId,
@@ -2463,7 +2778,7 @@ class SqliteDatabaseManager {
       };
     }
 
-    this.db
+    this.queuesDb
       .prepare(`
         INSERT OR REPLACE INTO persistent_task_queues (
           module_id, session_id, batch_status, agency_id, queue_json, telemetry_json, updated_at
@@ -2491,7 +2806,7 @@ class SqliteDatabaseManager {
   getQueueSnapshot(moduleId = 'ftp') {
     const cleanModuleId = String(moduleId || 'ftp').trim();
 
-    if (!this.isNativeSqlite) {
+    if (!this.isNativeSqlite || !this.queuesDb) {
       const existing = this.memoryFallback.persistentTaskQueues.get(cleanModuleId);
       if (!existing) return null;
       let queue = [];
@@ -2517,7 +2832,7 @@ class SqliteDatabaseManager {
       };
     }
 
-    const row = this.db
+    const row = this.queuesDb
       .prepare('SELECT * FROM persistent_task_queues WHERE module_id = ?')
       .get(cleanModuleId);
     if (!row) return null;
@@ -2548,15 +2863,19 @@ class SqliteDatabaseManager {
 
   clearQueueSnapshot(moduleId = 'ftp') {
     const cleanModuleId = String(moduleId || 'ftp').trim();
-    if (!this.isNativeSqlite) {
+    if (!this.isNativeSqlite || !this.queuesDb) {
       this.memoryFallback.persistentTaskQueues.delete(cleanModuleId);
       return { cleared: true, moduleId: cleanModuleId };
     }
-    this.db
+    this.queuesDb
       .prepare('DELETE FROM persistent_task_queues WHERE module_id = ?')
       .run(cleanModuleId);
     return { cleared: true, moduleId: cleanModuleId };
   }
+}
+
+function r_active(row) {
+  return row ? row.is_active : 1;
 }
 
 const sqliteDb = new SqliteDatabaseManager();

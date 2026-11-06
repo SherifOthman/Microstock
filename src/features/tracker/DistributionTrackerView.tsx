@@ -6,7 +6,7 @@ import {
   TrackerAgencyStatus,
   MediaType,
 } from '../../types';
-import { db, useSqliteQuery, DEFAULT_PLATFORM_LIMITS } from '../../db';
+import { db, useSqliteQuery, DEFAULT_PLATFORM_LIMITS, resolveAssetPreviewUrl } from '../../db';
 import { generatePlatformCsv } from '../../services/export/csvExporter';
 import {
   atomicIngestionService,
@@ -1065,9 +1065,9 @@ export const DistributionTrackerView: React.FC<DistributionTrackerViewProps> = (
                 >
                   {/* Large 4:3 Visual Thumbnail Frame */}
                   <div className="relative aspect-[4/3] w-full bg-secondary overflow-hidden">
-                    {rec.thumbnailBase64 ? (
+                    {resolveAssetPreviewUrl(rec) ? (
                       <img
-                        src={rec.thumbnailBase64}
+                        src={resolveAssetPreviewUrl(rec)}
                         alt={cleanTitle}
                         referrerPolicy="no-referrer"
                         onClick={() => setInspectedAssetId(rec.id)}
@@ -1363,9 +1363,9 @@ export const DistributionTrackerView: React.FC<DistributionTrackerViewProps> = (
                       onClick={() => setInspectedAssetId(rec.id)}
                       className="flex-1 min-w-[200px] flex items-center gap-2.5 cursor-pointer truncate"
                     >
-                      {rec.thumbnailBase64 ? (
+                      {resolveAssetPreviewUrl(rec) ? (
                         <img
-                          src={rec.thumbnailBase64}
+                          src={resolveAssetPreviewUrl(rec)}
                           alt={cleanTitle}
                           referrerPolicy="no-referrer"
                           className="w-7 h-7 rounded object-cover shrink-0 border border-border"
@@ -1530,9 +1530,9 @@ export const DistributionTrackerView: React.FC<DistributionTrackerViewProps> = (
             {/* Left Preview Column */}
             <div className="md:col-span-5 space-y-2.5">
               <div className="aspect-[4/3] rounded-xl border border-border overflow-hidden bg-secondary">
-                {inspectedAsset.thumbnailBase64 && (
+                {resolveAssetPreviewUrl(inspectedAsset) && (
                   <img
-                    src={inspectedAsset.thumbnailBase64}
+                    src={resolveAssetPreviewUrl(inspectedAsset)}
                     alt={getCleanAssetDisplayTitle(inspectedAsset)}
                     referrerPolicy="no-referrer"
                     className="w-full h-full object-cover"

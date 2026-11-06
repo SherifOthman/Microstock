@@ -1,170 +1,128 @@
-# StockFlow Enterprise Stability, Persistence & UX Polish Blueprint
+# Dual-Database Storage, Zero-Base64 Native Streaming & Portable Workspace Blueprint
 
-This blueprint diagnoses the root causes of the unexpected UI freezes across the application and details the architectural fixes for process-wide stability, smart OS notifications, FTP `550 Overwrite` recovery, universal tool persistence, Light Mode contrast, and RTL modal ergonomics.
-
----
+This Execution Blueprint re-architects StockFlow's persistence layer by splitting permanent portfolio data (`userdata.sqlite`) from high-frequency ephemeral task queues (`local_queues.sqlite`), completely eliminating Base64 database bloat in favor of native `stockflow://local?path=` disk streaming, introducing smart once-per-day dirty-flag backups with 7-day rolling retention and a custom backup folder, converting stored asset paths to portable relative paths anchored to a Master Workspace Folder, and fixing reactive IPC scopes and Arabic RTL modal headers.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> **Root-Cause Diagnosis of the Unexpected Freezes**: After auditing the Electron Main Process, SQLite IPC bridge, and React component lifecycle, we found that the freezes are **not** caused by a single component—they are caused by **four compounding bottlenecks** that can deadlock the Renderer or Main Process at any time (whether navigating tabs, uploading in the background, or idling):
-> 1. **Hidden Keep-Alive DOM Tree (`display: none` for all 7 tabs simultaneously)**: Currently, the root application shell keeps all 7 heavy workspaces mounted in the DOM at all times using CSS `hidden`. Every database notification triggers **14 concurrent IPC queries** (including 4 simultaneous full-table `masterRecords` fetches carrying megabytes of Base64 thumbnails) and forces all 7 views—and their `@tanstack/react-virtual` `ResizeObserver` loops—to re-render simultaneously in the background.
-> 2. **Windows System Tray GDI & Native Menu Rebuild Storm**: During active tasks, the persistence heartbeat invokes `task:updateLifecycleState` every 1 second, which allocates a brand-new `nativeImage` bitmap buffer, calls `tray.setImage()`, and rebuilds the native Win32 context menu (`Menu.buildFromTemplate` + `tray.setContextMenu()`) **every single second**. On Windows, mutating native Tray GDI handles and context menus at 1 Hz blocks the Electron Main Process UI thread and deadlocks IPC.
-> 3. **Unscoped Database Broadcasts (`notifyDbChanged`)**: Logging a single FTP file transfer or updating a session timestamp broadcasts a global DB change event that forces the Overview, Distribution Tracker, Metadata Studio, and FTP Uploader to re-fetch and deserialize the entire `master_records` table over IPC.
-> 4. **Continuous Background IPC Polling**: The custom title bar polls `window-is-maximized` over IPC every 1,000ms indefinitely, and the FTP telemetry hook runs a 500ms `setInterval` even when the FTP tab is not visible.
+> The following architectural decisions incorporate your confirmed choices from Phase 1:
 
-- **Confirmed Decision 1 (True Unmount on Navigation + Singleton/SQLite State)**: Replace the `display: none` keep-alive wrapper with true conditional rendering per active tab so inactive views cleanly unmount, run their `useEffect` teardowns, release `blob:` URLs, and detach `ResizeObserver` instances—while preserving 100% of their queue state in our global persistence layer.
-- **Confirmed Decision 2 (Silent Background Minimize & Focus-Aware Completion Toast)**: Completely remove the "Running in Background" OS toast on window close, and gate the "Batch Complete" OS notification behind `!mainWindow.isVisible() || mainWindow.isMinimized() || !mainWindow.isFocused()` with click-to-restore support.
-- **Confirmed Decision 3 (Pre-Upload `DELE` Before `STOR`)**: Issue a raw `DELE <remote_filename>` wrapped in a silent `try/catch` immediately prior to `uploadFrom` whenever uploading a file (or resuming after an interrupted stream) so partial server remnants on Dreamstime never trigger `550 Permission denied`.
+- **Confirmed Decision 1 — Clean Start with Dual SQLite Files**: On startup, StockFlow initializes a clean `userdata.sqlite` (permanent portfolio, metadata, agency tracking, API keys, FTP credentials, and app settings) alongside a separate `local_queues.sqlite` (ephemeral `persistent_task_queues`). Any legacy `stockflow.sqlite` file is retired so the 200MB Base64 bloat is immediately eliminated.
+- **Confirmed Decision 2 — Dedicated Settings Tab in Sidebar**: A dedicated **Settings** (`⚙️ Settings` / `الإعدادات`) view will be added to the bottom navigation rail, giving contributors a single control center to configure their **Master Workspace Folder**, **Custom Backup Directory** (e.g., Google Drive / OneDrive sync folder), manual backup trigger, and storage diagnostics.
 
 ---
 
 ## 1. Overview & Core Concept
 
-- **What It Does**: Eliminates unexpected UI freezes and Main Process deadlocks, silences noisy background notifications, resolves Dreamstime's `550 Overwrite` error on interrupted uploads, extends crash-resilient state persistence and `[X]` close protection to all 6 workspace tools, and polishes Light Mode contrast and RTL modal close button placement.
-- **Target Audience / Persona**: Professional microstock contributors running long multi-gigabyte batches across AI tagging, EPS rasterization, lossless audio stripping, file cleaning, and FTP distribution while multitasking or minimizing StockFlow to the Windows System Tray.
-- **Key Value**: Zero UI lockups when switching tabs or running background tasks, seamless crash/restart recovery across every tool in the suite, and distraction-free native OS notifications.
+- **What It Does**: Separates permanent contributor data from high-frequency background queue state, strips all Base64 image strings from SQLite, converts stored file paths to portable relative paths, and replaces aggressive multi-trigger backups with a smart once-daily dirty-checked backup on application exit.
+- **Target Audience / Persona**: Professional microstock contributors managing thousands of photos, vectors, and 4K videos across multiple machines or cloud-synced backup folders (Google Drive, Dropbox, OneDrive).
+- **Key Value**: Shrinks database size from 200MB+ down to a few kilobytes/megabytes, prevents cloud-sync conflicts caused by queue churn or redundant backups, makes the portfolio portable across PCs and drives, and guarantees instant UI reactivity for API Keys and Settings.
 
 ---
 
 ## 2. User Experience & Visual Design
 
-- **1. Zero-Lag Tab Navigation & Unmount Cleanup**:
-  - Switching between *Overview*, *Distribution Tracker*, *Metadata Studio*, *File Cleaner*, *EPS Engine*, *Audio Stripper*, and *FTP Uploader* immediately unmounts the departing view, cancelling any pending `useSqliteQuery` subscriptions, revoking temporary `blob:` preview URLs, and stopping UI-only timers while background singleton workers continue uninterrupted.
-- **2. Smart OS Notification Flow**:
-  - **Closing (`[X]`) During Active or Paused Tasks**: The window hides smoothly into the Windows System Tray with **zero** "Running in background" popup toast.
-  - **Batch Completion Notification**: When an upload or processing batch finishes, the Main Process checks window visibility and focus:
-    - If the user is actively looking at StockFlow (`isVisible() && !isMinimized() && isFocused()`), **no OS toast is shown** (the in-app completion banner provides immediate feedback).
-    - If StockFlow is minimized, hidden to the System Tray, or behind another application (`!isVisible() || isMinimized() || !isFocused()`), a single native Windows notification fires. Clicking the notification immediately restores and focuses the StockFlow window.
-- **3. High-Contrast Dual-Theme Alert Banners (Light & Dark Mode)**:
-  - **Session Restored Banner (Yellow/Amber)**: Uses `bg-amber-500/10 dark:bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200` with `text-amber-700 dark:text-amber-400` icons so text is crisp and legible against white/slate Light Mode backgrounds as well as Dark Mode.
-  - **Upload Complete Banner (Green/Emerald & Warning Amber)**: Uses `bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-200` (and `bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200` when failures exist) so completion summaries never appear washed out in Light Mode.
-- **4. Fixed Right-Aligned `[X]` Close Button Across LTR & RTL**:
-  - Every modal dialog (`DialogContent` and `MediaLightboxModal`) anchors its `[X]` close button strictly at the top-right (`right-4 left-auto`) regardless of whether the interface is in English (LTR) or Arabic (RTL).
-  - Dialog headers apply symmetric end/right clearance (`pe-8 pr-10`) so right-aligned Arabic titles never collide with or overlap the top-right `[X]` button.
+- **Key User Flows**:
+  1. **Workspace & Backup Configuration (Settings Tab)**: Clicking **Settings** in the bottom-left sidebar opens a clean, two-section workspace console:
+     - **Master Workspace Folder Card**: Displays the active root directory where StockFlow stores and resolves relative asset paths, with a **Change Master Folder** directory picker and an **Open in Explorer** action.
+     - **Smart Backup & Retention Card**: Displays the active Backup Directory (defaulting to `<BaseDir>/backups` or user-selected Google Drive folder), a **Select Backup Folder** picker, a live indicator showing whether `userdata.sqlite` has unsaved modifications since the last backup, a **Backup Now** manual button, and a compact table of the last 7 daily backups with file sizes in tabular numerals (`tabular-nums`).
+  2. **Native Media Streaming Across All Views**: Gallery cards in Distribution Tracker, Metadata Studio, Export Basket Reconciliation, and Media Lightbox load thumbnails directly from disk via `stockflow://local?path=<resolved_full_path>` (or `<video preload="metadata">` for video clips when no JPEG preview exists), with zero Base64 strings stored in SQLite.
+  3. **Bilingual LTR/RTL Modal Headers**: Opening any modal in Arabic (`dir="rtl"`) or English (`dir="ltr"`) keeps the `[X]` close button pinned at `top-4 right-4` while reserving `48px` (`pr-12`) on the physical right side of `DialogHeader` so Arabic right-aligned titles never collide with the close button.
+- **Visual Identity & Theme**:
+  - *Aesthetic Direction*: High-density utilitarian SaaS workspace console with crisp 1px structural borders (`border-border`), single-elevation cards (`bg-card`), and zero decorative clutter.
+  - *Color Palette & Mood*: Dual-theme support (`light` and `dark`) with semantic status indicators (emerald for verified paths/backups, amber for pending dirty state, destructive red for missing disk paths).
+  - *Typography & Hierarchy*: Clean sans-serif UI labels paired with monospace tabular figures (`font-mono tabular-nums`) for file sizes, timestamps, and paths.
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Elimination of Multi-Tab DOM Keep-Alive & Scoped SQLite Pub/Sub**
-  - *Chosen Approach*: Conditionally render only the active tab in the main workspace, cache Tray icons/menus in the Main Process so they only update on actual state transitions (`idle` $\leftrightarrow$ `running` $\leftrightarrow$ `paused`), and scope `notifyDbChanged(immediate, scope)` by domain (`'master' | 'ftp' | 'keys' | 'settings'`).
-  - *Why*: Rendering all 7 tabs simultaneously caused every SQLite write to trigger 4 parallel full-table `master_records` IPC serializations and hidden virtualizer layout loops. Scoping DB events and unmounting inactive views cuts IPC payload volume by over 90% and eliminates Renderer/Main thread contention.
-  - *Alternatives Considered*: Keeping `display: none` and throttling `notifyDbChanged` to 2 seconds—rejected because deserializing 4 copies of `master_records` simultaneously still spikes the main thread for 300–800ms per tick.
-- **Decision 2: Pre-Emptive `DELE` Before `STOR` on FTP Uploads**
-  - *Chosen Approach*: Before calling `client.uploadFrom(readableStream, targetName)` in the Electron FTP worker, execute `await this.client.remove(targetName)` (which sends `DELE <targetName>`) inside a silent `try/catch` block whenever a partial file was detected by `SIZE` or when retrying an interrupted transfer.
-  - *Why*: Dreamstime's FTP server denies `STOR` overwrite requests (`550 Permission denied`) if a 0-byte or partially uploaded file from a dropped socket already exists in the directory. Explicitly deleting the partial remnant before opening the `STOR` data channel guarantees a clean write.
-  - *Alternatives Considered*: Using FTP `APPE` (Append) or `REST` (Restart)—rejected because Dreamstime's FTP daemon frequently disables `APPE`/`REST` or corrupts video headers on appended streams.
-- **Decision 3: Unified Global Task Lifecycle & Persistence Registry**
-  - *Chosen Approach*: Connect all 6 tools (*FTP Uploader*, *Metadata Studio*, *Distribution Tracker Ingestion*, *File Cleaner*, *EPS Engine*, and *Audio Stripper*) to a unified **Global Lifecycle Aggregator** in `queuePersistenceService` and `usePersistentTaskQueue`.
-  - *Why*: If *any* tool has an active or paused batch (`isRunning || isPaused`), the Main Process receives the aggregated lifecycle status so `powerSaveBlocker` stays engaged and clicking `[X]` safely minimizes to the System Tray instead of killing an in-progress AI tagging, EPS rendering, audio stripping, or file-cleaning batch.
+### 1. Database Splitting (`userdata.sqlite` vs. `local_queues.sqlite`)
+- **Chosen Approach**: Instantiate two independent `better-sqlite3` connections inside the Main Process database manager:
+  1. **`userdata.sqlite`** (WAL mode, `synchronous = NORMAL`): Houses `assets`, `asset_metadata`, `agency_tracking`, `rejection_dictionary`, `export_baskets`, `api_keys`, `batches`, `settings`, `ftp_profiles`, `ftp_sessions`, `ftp_transfer_logs`, and `backup_logs`.
+  2. **`local_queues.sqlite`** (WAL mode, `synchronous = NORMAL`): Houses only `persistent_task_queues` (`saveQueueSnapshot`, `getQueueSnapshot`, `clearQueueSnapshot`).
+- **Why**: Background tools (FTP Uploader, Metadata Studio, EPS Engine, Audio Stripper, File Cleaner, Distribution Tracker) write queue snapshots every 1.2 seconds during active batches. Isolating `persistent_task_queues` into `local_queues.sqlite` prevents WAL checkpoint contention on `userdata.sqlite`, keeps `userdata.sqlite` tiny and clean, and ensures backups never include transient queue state.
+
+### 2. Zero-Base64 Persistence Rule & Native `stockflow://` Streaming
+- **Chosen Approach**:
+  - Remove `thumbnail_base64` storage from `userdata.sqlite` (`assets` table schema and `upsertSingleMasterRecord`). Any incoming `thumbnailBase64` property on a record is stripped before SQLite `INSERT`/`UPDATE`.
+  - Notice that AI Vision providers still need a transient in-memory base64 frame during `BatchQueueService` / `atomicIngestionService` execution, which is discarded immediately after the API call finishes.
+  - For Vector (`.eps`/`.ai`) or Video (`.mp4`/`.mov`) assets that generate a rasterized preview JPEG during ingestion, write the binary JPEG to disk inside `<MasterWorkspace>/.stockflow_previews/<assetId>.jpg` (or alongside the master file) and store its **relative path** in `preview_path`.
+  - When `rowToMasterRecord` hydrates records for the renderer, it resolves `preview_path` or `master_path` or `original_path` into an absolute OS path and constructs a native `stockflow://local?path=<encodeURIComponent(fullPath)>` URL.
+- **Why**: Eliminates 100% of Base64 text bloat in SQLite (reducing 200MB databases to <2MB for thousands of assets) while leveraging Chromium's native streaming image/video decoder over the privileged `stockflow://` protocol.
+
+### 3. Smart Backup Strategy (Once-Daily Dirty Flag on `app-quit` + 7-Day Rolling Retention + Custom Path)
+- **Chosen Approach**:
+  - **Remove Automatic Multi-Trigger Backups**: Remove `performHotBackup` calls from `app_startup`, `batch_metadata`, `batch_ingest`, `batch_export`, `batch_reconcile`, and `ftp_batch_complete`.
+  - **Dirty Tracking (`isUserDataDirty`)**: Maintain an in-memory `this.isUserDataDirty = false` flag (and persist `last_mutation_at` in `settings`). Every write operation to `userdata.sqlite` (`putMasterRecord`, `bulkPutMasterRecords`, `updateMasterRecord`, `deleteMasterRecord`, `commitAtomicallyToMasterVault`, `createExportBasket`, `reconcileAgencyStatuses`, `putApiKey`, `putSetting`, `saveFtpProfile`, etc.) sets `this.isUserDataDirty = true`. Writes to `local_queues.sqlite` **never** mark `userdata.sqlite` dirty.
+  - **Once-Per-Day `app-quit` Gate**: In `app.on('before-quit')`, invoke `sqliteDb.performQuitBackupIfNeeded()`:
+    1. Check `if (!this.isUserDataDirty) return null;`
+    2. Check the most recent backup timestamp in `backup_logs` (or backup directory files). If a backup was already created on the current local calendar day (`YYYY-MM-DD`)—or within the last 24 hours—skip creating another automated backup.
+    3. Otherwise, run `PRAGMA wal_checkpoint(TRUNCATE)` on `userdata.sqlite`, copy **only** `userdata.sqlite` to the configured `customBackupDir` (or default `<baseDir>/backups`) as `userdata_backup_YYYY-MM-DD_<shortId>.sqlite`, and reset `this.isUserDataDirty = false`.
+  - **7-Day Rolling Retention**: `pruneOldBackups()` scans the active backup directory and deletes any `userdata_backup_*.sqlite` / `stockflow_backup_*.sqlite` files older than **7 days** (`now - stat.mtimeMs > 7 * 24 * 60 * 60 * 1000`), while always keeping at least the newest backup file if all files are older than 7 days.
+  - **Manual Override**: Clicking **Backup Now** in the Settings tab triggers an immediate snapshot of `userdata.sqlite` to the configured backup directory regardless of the daily throttle.
+
+### 4. Relative Path Management (Master Workspace Folder)
+- **Chosen Approach**:
+  - Store `masterWorkspaceFolder` in `userdata.sqlite` (`settings` key `'master_workspace_folder'`, defaulting to `<Documents>/StockFlow/Master_Vault`).
+  - Provide two bidirectional path helpers in `electron/sqliteDb.cjs`:
+    - `toRelativeWorkspacePath(inputPath)`: If `inputPath` is inside `masterWorkspaceFolder`, converts it via `path.relative(this.masterVaultDir, inputPath)` normalized to forward slashes (`/`), e.g. `AI/Photos/B01/B01_AI_PH_001.jpg`. If the file resides on a different drive/outside the workspace and wasn't copied into the vault, stores a normalized path or relative path from `baseDir`.
+    - `toAbsoluteWorkspacePath(storedPath)`: If `storedPath` is empty, returns `undefined`. If `storedPath` is relative (or starts with a legacy absolute prefix containing `Master_Vault/`), dynamically joins `path.resolve(this.masterVaultDir, extractedRelativePart)` so moving the Master Workspace Folder to another folder or PC immediately relinks all assets.
+  - Apply `toRelativeWorkspacePath` on every write (`upsertSingleMasterRecord`, `commitAtomicallyToMasterVault`, `createExportBasket`) and `toAbsoluteWorkspacePath` on every read (`rowToMasterRecord`, `getExportBaskets`).
+
+### 5. Scoped IPC Event Fixes & RTL Modal Header Padding
+- **Chosen Approach**:
+  - **Fix `subscribeToDbChanges` & `notifyDbChanged`**:
+    1. Change the default `watchScopes` parameter in `subscribeToDbChanges(listener, watchScopes = ['all', 'master', 'ftp', 'keys', 'settings'])` so any subscriber that omits `watchScopes` listens to all domain scopes rather than silently dropping `'keys'` and `'settings'`.
+    2. Fix `setAiExecutionMode`, `saveLocalAiConfig`, `saveAppSettings`, and `setDesktopSetting` in `src/db/index.ts` so they explicitly emit `notifyDbChanged(true, 'settings')` (instead of defaulting to `'master'`).
+    3. Fix `db.apiKeys.put`, `db.apiKeys.update`, `db.apiKeys.delete`, `db.apiKeys.bulkPut`, and `db.apiKeys.clear` to emit `notifyDbChanged(true, 'keys')` immediately (`immediate = true`), and subscribe `KeyRingScheduler` to `subscribeToDbChanges(() => this.refreshKeys(), ['keys'])` (guarded against internal self-writes) so `useApiKeys` / `KeyRingView` / `StudioView` / `App.tsx` update instantaneously whenever keys change.
+  - **Fix RTL Modal Header Overlap (`DialogHeader`)**:
+    1. In `src/components/ui/dialog.tsx`, the `[X]` close button is physically fixed at `top-4 right-4 left-auto`.
+    2. In `DialogHeader`, place `pr-12 rtl:ps-12` **after** `className` inside `cn('flex flex-col gap-1 text-start', className, 'pr-12 rtl:ps-12')`. Placing `pr-12 rtl:ps-12` after `className` prevents `<DialogHeader className="px-5 ...">` in `LegacyDialogProps` from overriding `padding-right` via `tailwind-merge`, guaranteeing a 48px safe zone on the right side in both Arabic RTL and English LTR.
 
 ---
 
-## 4. Technical Architecture & Data Strategy *(Technical Reference)*
+## 4. Technical Architecture & Data Strategy
 
-### Architecture & Component Diagram
+### Architecture & Dual-SQLite Diagram
 
 ```
-┌───────────────────────────────────────────────────────────────────────────────────┐
-│                        RENDERER PROCESS (React + Singleton Services)              │
-│                                                                                   │
-│  ┌─────────────────────────────────────────────────────────────────────────────┐  │
-│  │ Active View Conditional Router (Only 1 Workspace Mounted in DOM at a Time)  │  │
-│  │  • Overview   • Tracker   • Studio   • Cleaner   • EPS   • Muter   • FTP    │  │
-│  └──────────────────────┬──────────────────────────────────────┬───────────────┘  │
-│                         │ Scoped DB Subscriptions              │ Hydrate / Sync   │
-│                         ▼                                      ▼                  │
-│  ┌────────────────────────────────────┐  ┌─────────────────────────────────────┐  │
-│  │ Scoped SQLite Query Bus            │  │ Global Task Persistence & Lifecycle │  │
-│  │ • Scopes: 'master' | 'ftp' |       │  │ • FTP Orchestrator  • BatchQueue    │  │
-│  │   'keys' | 'settings'              │  │ • AtomicIngestion   • FileCleaner   │  │
-│  │ • Abort-safe useEffect cleanup     │  │ • EpsConverter      • VideoMuter    │  │
-│  │ • In-flight IPC deduplication      │  │ • Throttled 1s SQLite Write-Behind  │  │
-│  └──────────────────────┬─────────────┘  └─────────────────────┬───────────────┘  │
-└─────────────────────────┼──────────────────────────────────────┼──────────────────┘
-                          │ IPC (sqlite:call)                    │ IPC (State Transitions Only)
-┌─────────────────────────▼──────────────────────────────────────▼──────────────────┐
-│                             ELECTRON MAIN PROCESS                                 │
-│                                                                                   │
-│  ┌──────────────────────────┐  ┌─────────────────────────┐  ┌──────────────────┐  │
-│  │ SQLite WAL Engine        │  │ Cached System Tray &    │  │ Native FTP       │  │
-│  │ • persistent_task_queues │  │ Smart Notification Gate │  │ Worker           │  │
-│  │ • Fast non-blocking      │  │ • Pre-allocated Icons   │  │ • SIZE check     │  │
-│  │   prepared statements    │  │ • Focus/Visible check   │  │ • Silent DELE    │  │
-│  │                          │  │ • Click-to-Restore      │  │   before STOR    │  │
-│  └──────────────────────────┘  └─────────────────────────┘  └──────────────────┘  │
-└───────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                         React Renderer Process (UI Views)                        │
+│                                                                                  │
+│  ┌─────────────────────┐  ┌─────────────────────┐  ┌──────────────────────────┐  │
+│  │  Distribution       │  │  KeyRing & Studio   │  │  New Settings Tab        │  │
+│  │  Tracker & Gallery  │  │  (Scoped IPC:       │  │  • Master Workspace Path │  │
+│  │  <img src="         │  │   'keys','settings')│  │  • Custom Backup Folder  │  │
+│  │   stockflow://..."> │  │                     │  │  • 7-Day Backup History  │  │
+│  └──────────┬──────────┘  └──────────┬──────────┘  └─────────────┬────────────┘  │
+└─────────────┼────────────────────────┼───────────────────────────┼───────────────┘
+              │                        │                           │
+              ▼                        ▼                           ▼
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                     Electron Main Process (sqliteDb.cjs)                         │
+│                                                                                  │
+│  ┌───────────────────────────────────────┐  ┌─────────────────────────────────┐  │
+│  │  1. Permanent DB: userdata.sqlite     │  │ 2. Ephemeral DB:                │  │
+│  │  • assets (NO Base64, Relative Paths) │  │    local_queues.sqlite          │  │
+│  │  • asset_metadata & agency_tracking   │  │ • persistent_task_queues        │  │
+│  │  • api_keys, settings, ftp_profiles   │  │ • High-frequency 1.2s writes    │  │
+│  │  • Tracks: isUserDataDirty = true     │  │ • Completely ignored by Backups │  │
+│  └───────────────────┬───────────────────┘  └─────────────────────────────────┘  │
+│                      │                                                           │
+│                      ▼ (On app-quit ONLY if isUserDataDirty && < 1 backup today) │
+│  ┌────────────────────────────────────────────────────────────────────────────┐  │
+│  │  Smart Backup Engine -> <CustomBackupDir>/userdata_backup_YYYY-MM-DD.sqlite│  │
+│  │  • Auto-prunes backup files older than 7 days                              │  │
+│  └────────────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Detailed Execution Steps by Requirement
-
-#### 1. Eliminating UI Freezes & Memory Leaks on Navigation
-- **True Tab Unmounting**: Update the main workspace container so only the currently selected `activeTab` is mounted in the React tree. When the user switches tabs, React immediately runs all `useEffect` cleanup functions on the previous tab, stopping its `ResizeObserver` virtualizers and freeing DOM memory.
-- **Scoped SQLite Change Bus & In-Flight Deduplication**:
-  - Update `notifyDbChanged(immediate, scope)` so FTP transfer logging (`db.ftp.logTransfer`, `db.ftp.updateSession`) emits `'ftp'` scope events and `persistent_task_queues` writes emit **no** UI re-query event at all.
-  - Only `'master'` scope writes trigger `db.masterRecords` re-queries.
-  - Add in-flight promise deduplication for `getMasterRecords` so if multiple components request `db.masterRecords.toArray()` within the same frame, only 1 IPC call crosses the Electron bridge.
-- **Main Process Tray Icon & Menu Caching**:
-  - Pre-allocate the 3 `nativeImage` icons (`idle`, `running`, `paused`) once when `TrayManager.init()` runs.
-  - In `updateTaskState()`, compare the incoming state against the previous state: only call `this.tray.setImage()` and `this.tray.setContextMenu(Menu.buildFromTemplate(...))` when `status` (`idle` | `running` | `paused`) or `language` actually changes—never on 1-second progress percentage ticks.
-  - Throttle `this.tray.setToolTip()` updates to at most once every 3 seconds.
-- **Event-Driven Window Maximize State & Timer Cleanups**:
-  - Remove the 1,000ms `setInterval` IPC polling from `CustomTitleBar` and check state only on window resize events.
-  - In `FtpUploaderView`, merge the 500ms telemetry interval into a lightweight 1,000ms tick that only runs while `telemetry.isRunning && !telemetry.isPaused`, and cleanly clears on unmount.
-
-#### 2. Smart OS Notification Logic
-- **Disable "Running in Background" Toast**:
-  - In `mainWindow.on('close')` inside the Main Process, remove `trayManager.notifyMinimizedToTray()` completely. When a task is active or paused, `event.preventDefault()` and `mainWindow.hide()` will silently minimize StockFlow to the System Tray without any popup toast.
-- **Focus-Aware "Batch Complete" Notification with Click-to-Restore**:
-  - In the Main Process handler for `app:notifyBatchComplete` (and `notify-upload-complete`), inspect `mainWindow`:
-    ```js
-    const isActivelyFocused =
-      mainWindow &&
-      !mainWindow.isDestroyed() &&
-      mainWindow.isVisible() &&
-      !mainWindow.isMinimized() &&
-      mainWindow.isFocused();
-    if (isActivelyFocused) {
-      return { success: true, skippedBecauseFocused: true };
-    }
-    ```
-  - When the window is minimized, hidden in the Tray, or unfocused, fire the `Notification` and attach `notif.on('click', () => trayManager.showMainWindow())` so clicking the toast brings StockFlow to the foreground.
-
-#### 3. Fixing the `550 Overwrite` FTP Bug
-- **Silent Pre-Upload `DELE` Command**:
-  - In the Electron FTP worker's `uploadSingleFileWithRetry` method:
-    1. Perform the existing `SIZE <targetName>` check. If `remoteSize === localSize && localSize > 0`, return `status: 'skipped'` (duplicate protection remains intact).
-    2. Otherwise (whether `remoteSize >= 0` indicating a partial/corrupted file on the server, or `attempt > 1` after a dropped stream, or prior to `STOR`), execute a raw delete wrapped in an ignored `try/catch`:
-       ```js
-       try {
-         await this.client.send(`DELE ${targetName}`);
-       } catch {
-         // Ignore 550 File not found when no partial file exists
-       }
-       ```
-    3. Immediately proceed to `await this.client.uploadFrom(readableStream, targetName)` so Dreamstime always writes to a clean target filename.
-
-#### 4. Wiring Persistence & Lifecycle Safety to All Other Tools
-- **Global Task Lifecycle Aggregator**:
-  - Upgrade `queuePersistenceService` to maintain a map of active tool states (`ftp`, `studio`, `tracker`, `cleaner`, `eps`, `muter`).
-  - Whenever any tool updates its status, `queuePersistenceService` computes the highest-priority global status (`running` if any tool is running, `paused` if any tool is paused/interrupted, otherwise `idle`) and syncs it to the Main Process (`task:updateLifecycleState` + `powerSaveBlocker`).
-- **Tool-by-Tool Persistence & Hydration**:
-  - **Metadata Studio (`BatchQueueService`)**: Persist queue items (using `nativePath`, metadata status, and retry counters) to `persistent_task_queues` (`tool_id = 'studio'`). On app launch, hydrate unfinished items in `paused` state so the user can click **Resume** in Metadata Studio. Report `running` / `paused` / `idle` to the Global Lifecycle Aggregator.
-  - **Distribution Tracker (`atomicIngestionService`)**: Persist active ingestion queue items (`tool_id = 'tracker'`), report `running` status during vault ingestion so `[X]` protects active file commits, and hydrate unfinished ingestion items on startup.
-  - **File Cleaner (`useFileCleaner`)**: Persist the active cleaner queue (`nativePath`, `originalName`, `cleanedName`, `customName`, `subFolder`, `batchFolder`, `assetOrigin`, and cleaner options) under `tool_id = 'cleaner'`. When the user navigates away or restarts the app, re-hydrate the files directly from disk via `electronAPI.readLocalFile(nativePath)` and report `isProcessing` / `isBulkMoving` to the Global Lifecycle Aggregator.
-  - **EPS Engine (`useEpsConverter`)**: Persist queued EPS items (`nativePath`, `originalName`, `outputJpgName`, `status`, `previewThumbnailUrl`) under `tool_id = 'eps'`. Reconstruct `File` handles from `nativePath` on hydration, and report `isConvertingBatch` to the Global Lifecycle Aggregator.
-  - **Audio Stripper (`useVideoMuter`)**: Persist queued video items (`nativePath`, `originalName`, `size`, `hasAudio`, `status`, `mutedSize`) under `tool_id = 'muter'`. Reconstruct `File` handles from `nativePath` on hydration, and report `isMutingBatch` / `isExporting` to the Global Lifecycle Aggregator.
-
-#### 5. Light Mode Contrast Polish
-- Update `FtpUploaderView`:
-  - **Crash Recovery ("Session Restored") Banner**: Replace `text-amber-300` with `bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200` and icon `text-amber-600 dark:text-amber-400`.
-  - **Upload Complete Alert Bar**: Replace `text-amber-300` / `text-emerald-400` with `bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200` (warning state) and `bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-200` (success state).
-  - Also update the telemetry badges (`Data`, `Speed`, `Time Left`, `Time Elapsed`) to use dual-theme text classes (`text-sky-700 dark:text-sky-400`, `text-emerald-700 dark:text-emerald-400`, `text-amber-700 dark:text-amber-400`, `text-purple-700 dark:text-purple-400`) so the entire FTP bar is crisp in Light Mode.
-
-#### 6. Enforce Right-Aligned Close Button in RTL
-- **Standard Modals (`DialogContent` & `DialogHeader`)**:
-  - Remove `isRtl ? 'left-4 right-auto' : 'right-4 left-auto'` from `DialogContent` so the close button always uses `right-4 left-auto`.
-  - Update `DialogHeader` to use `pr-10` (physical right padding) instead of logical `pe-6`, ensuring that in both LTR and RTL (where Arabic titles align to the right edge), header text always leaves a clean 40px buffer before the fixed top-right `[X]` button.
-- **Media Preview Lightbox (`MediaLightboxModal`)**:
-  - Set `dir="ltr"` on the top header bar of `MediaLightboxModal` so the `[X]` close button and zoom controls remain permanently anchored on the right side in both English and Arabic.
+### Interactive Component & State Mapping
+- **Settings View (`src/features/settings/SettingsView.tsx`)**:
+  - **Master Workspace Folder Picker**: Calls `window.electronAPI.selectDirectory()`, invokes `db.tracker.setMasterWorkspaceFolder(newPath)`, updates `settings`, and triggers `notifyDbChanged(true, 'settings')` + `notifyDbChanged(true, 'master')` so all asset paths re-resolve immediately.
+  - **Custom Backup Folder Picker**: Calls `window.electronAPI.selectDirectory()`, invokes `db.tracker.setCustomBackupDirectory(newPath)`, persists to `settings`, and refreshes the backup log list.
+  - **Manual Backup Action**: Calls `db.tracker.performHotBackup('manual')`, checkpoints `userdata.sqlite`, copies it to the custom backup folder, prunes backups > 7 days old, and updates the UI status badge.
+- **Zero-Base64 Asset Hydration**:
+  - `rowToMasterRecord` resolves `masterPath`, `previewPath`, and `originalPath` via `toAbsoluteWorkspacePath(...)` and sets `previewUrl: 'stockflow://local?path=' + encodeURIComponent(resolvedPath)` while keeping `thumbnailBase64: ''` in SQLite.
+  - Gallery components (`DistributionTrackerView`, `ExportBasketReconcileModal`, `StudioView`, `MediaLightboxModal`) prioritize `stockflow://local?path=` URLs from disk paths.

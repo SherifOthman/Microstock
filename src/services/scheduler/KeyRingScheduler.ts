@@ -1,5 +1,5 @@
 import { ApiKeyRecord, AppSettings, ProviderType } from '../../types';
-import { db, getAllApiKeys, getAppSettings, updateApiKey, migratePlaintextApiKeys } from '../../db';
+import { db, getAllApiKeys, getAppSettings, updateApiKey, migratePlaintextApiKeys, subscribeToDbChanges } from '../../db';
 import { getProviderAdapter } from '../providers';
 import { decryptSecret } from '../desktop/secureStorage';
 
@@ -19,12 +19,18 @@ export class KeyRingScheduler {
   private keysCache: Map<string, ApiKeyRecord> = new Map();
   private listeners: Set<KeyRingStateListener> = new Set();
   private isInitialized = false;
+  private isPersistingInternal = 0;
   private autoMaintenanceTimer?: any;
   private providerFailureCount: Map<ProviderType, number> = new Map();
   private routingMode: RoutingStrategy = 'priority';
 
   private constructor() {
     this.startMaintenanceLoop();
+    subscribeToDbChanges(() => {
+      if (this.isPersistingInternal === 0) {
+        this.refreshKeys().catch(() => {});
+      }
+    }, ['keys']);
   }
 
   public static getInstance(): KeyRingScheduler {
@@ -56,13 +62,14 @@ export class KeyRingScheduler {
   }
 
   /**
-   * Initializes the scheduler by loading all keys from IndexedDB
+   * Initializes the scheduler by loading all keys from SQLite
    */
   public async init(): Promise<void> {
-    if (this.isInitialized) return;
-    await migratePlaintextApiKeys();
+    if (!this.isInitialized) {
+      await migratePlaintextApiKeys();
+      this.isInitialized = true;
+    }
     await this.refreshKeys();
-    this.isInitialized = true;
   }
 
   /**
@@ -559,10 +566,13 @@ export class KeyRingScheduler {
   }
 
   private async persistKeyUpdate(keyId: string, changes: Partial<ApiKeyRecord>): Promise<void> {
+    this.isPersistingInternal++;
     try {
       await updateApiKey(keyId, changes);
     } catch (e) {
-      console.error('Failed to persist key update in Dexie', e);
+      console.error('Failed to persist key update in SQLite', e);
+    } finally {
+      this.isPersistingInternal = Math.max(0, this.isPersistingInternal - 1);
     }
   }
 

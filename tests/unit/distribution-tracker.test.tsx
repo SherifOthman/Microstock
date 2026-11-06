@@ -267,22 +267,88 @@ describe('Microstock Distribution Tracker (Master Brain) & Event-Driven Hot Back
     expect(exp2Adobe.customRejectionNote).toBe('Need to heal bottom-left corner in Photoshop.');
   });
 
-  it('4. executes Event-Driven SQLite Hot Backups and enforces the 30-file rolling retention policy', () => {
-    // Trigger 1: Startup backup was already created during dbManager.init()
-    const initialBackups = dbManager.getBackupLogs(30);
-    expect(initialBackups.length).toBeGreaterThanOrEqual(1);
-    expect(initialBackups[0].triggerEvent).toBe('app_startup');
+  it('4. enforces Dual-SQLite split (userdata.sqlite vs local_queues.sqlite), Zero-Base64 rule, Relative Master Paths, and Smart Daily Quit Backups with 7-day rolling retention', () => {
+    // 1. Verify Dual-SQLite files exist on disk
+    expect(path.basename(dbManager.dbPath)).toBe('userdata.sqlite');
+    expect(path.basename(dbManager.queuesDbPath)).toBe('local_queues.sqlite');
+    expect(fs.existsSync(dbManager.dbPath)).toBe(true);
+    expect(fs.existsSync(dbManager.queuesDbPath)).toBe(true);
 
-    // Trigger 35 event-driven backups across batch operations and verify rolling retention caps files on disk at 30
-    for (let i = 1; i <= 35; i++) {
-      dbManager.performHotBackup(i % 2 === 0 ? 'batch_ingest' : 'batch_reconcile');
-    }
+    // 2. Writing to ephemeral local_queues.sqlite must NOT mark userdata.sqlite dirty
+    expect(dbManager.isUserDataDirty).toBe(false);
+    dbManager.saveQueueSnapshot({
+      moduleId: 'ftp',
+      batchStatus: 'running',
+      queue: [{ id: 'q1', filename: 'ephemeral.jpg' }],
+    });
+    expect(dbManager.isUserDataDirty).toBe(false);
+    expect(dbManager.getQueueSnapshot('ftp')?.queue.length).toBe(1);
 
-    const backupFilesOnDisk = fs
-      .readdirSync(dbManager.backupsDir)
-      .filter((f: string) => f.startsWith('stockflow_backup_') && f.endsWith('.sqlite'));
+    // 3. Quit backup skips when userdata.sqlite is clean
+    const skippedClean = dbManager.performQuitBackupIfNeeded();
+    expect(skippedClean.skipped).toBe(true);
+    expect(skippedClean.reason).toBe('not_dirty');
 
-    expect(backupFilesOnDisk.length).toBe(30);
+    // 4. Upsert a Master Record with Base64 data -> verify Zero-Base64 in SQLite & Relative Master Path storage
+    const fakeJpg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64');
+    const assetPath = path.join(dbManager.masterVaultDir, 'B99_hero.jpg');
+    fs.writeFileSync(assetPath, Buffer.from('hero-img-bytes'));
+
+    dbManager.putMasterRecord({
+      id: 'rel-zero-b64',
+      batchId: 'B99',
+      filename: 'B99_hero.jpg',
+      masterPath: assetPath,
+      thumbnailBase64: `data:image/jpeg;base64,${fakeJpg}`,
+      mediaType: 'image',
+      isAiGenerated: false,
+      baseTitle: 'Clean Architecture Asset',
+      detailedDescription: 'Zero Base64 bloat in userdata.sqlite',
+      rankedKeywords: ['architecture', 'sqlite', 'clean'],
+      status: 'completed',
+    });
+
+    // userdata.sqlite is now dirty
+    expect(dbManager.isUserDataDirty).toBe(true);
+
+    // Inspect raw SQLite row in userdata.sqlite: thumbnail_base64 MUST be '' and master_path MUST be relative ('B99_hero.jpg')
+    const rawRow = dbManager.db
+      .prepare('SELECT thumbnail_base64, master_path FROM assets WHERE id = ?')
+      .get('rel-zero-b64');
+    expect(rawRow.thumbnail_base64).toBe('');
+    expect(rawRow.master_path).toBe('B99_hero.jpg');
+
+    // Inspect hydrated record: masterPath is dynamically reconstructed as absolute, and previewUrl uses stockflow://local?path=
+    const hydrated = dbManager.getMasterRecord('rel-zero-b64');
+    expect(hydrated.thumbnailBase64).toBe('');
+    expect(hydrated.masterPath).toBe(assetPath);
+    expect(hydrated.previewUrl).toContain('stockflow://local?path=');
+
+    // 5. Perform Quit Backup -> runs once for today and resets dirty flag
+    const firstQuitBackup = dbManager.performQuitBackupIfNeeded();
+    expect(firstQuitBackup.skipped).toBeFalsy();
+    expect(firstQuitBackup.backupFilePath).toContain('userdata_backup_');
+    expect(dbManager.isUserDataDirty).toBe(false);
+
+    // Modifying again on the same day should skip automated quit backup because a backup already exists today
+    dbManager.putSetting({ key: 'test_key', value: 'updated_same_day' });
+    expect(dbManager.isUserDataDirty).toBe(true);
+    const secondQuitSameDay = dbManager.performQuitBackupIfNeeded();
+    expect(secondQuitSameDay.skipped).toBe(true);
+    expect(secondQuitSameDay.reason).toBe('already_backed_up_today');
+
+    // 6. Verify 7-Day Rolling Retention prunes backups older than 7 days
+    const oldBackupPath = path.join(
+      dbManager.backupsDir,
+      'userdata_backup_2020-01-01T00-00-00-000Z_app_quit.sqlite'
+    );
+    fs.writeFileSync(oldBackupPath, Buffer.from('old-sqlite-snapshot'));
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+    fs.utimesSync(oldBackupPath, tenDaysAgo, tenDaysAgo);
+
+    dbManager.pruneOldBackups(7, 30);
+    expect(fs.existsSync(oldBackupPath)).toBe(false);
+    expect(fs.existsSync(firstQuitBackup.backupFilePath)).toBe(true);
   });
 
   it('5. evaluates full 6-agency Pre-Flight Warning rules (Adobe, Shutterstock, Freepik, Vecteezy, Dreamstime, 123RF)', async () => {

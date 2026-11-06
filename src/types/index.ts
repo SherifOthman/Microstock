@@ -89,6 +89,9 @@ export interface MasterMetadataRecord {
   originalPath?: string;
   masterPath?: string;
   previewPath?: string;
+  relativeMasterPath?: string;
+  relativePreviewPath?: string;
+  previewUrl?: string;
   originalFilename?: string;
   fileHash?: string;
   perceptualHash?: string;
@@ -227,10 +230,15 @@ export interface TrackerSummaryStats {
 export interface WorkspacePathsInfo {
   baseDir: string;
   dbPath: string;
+  queuesDbPath?: string;
   masterVaultDir: string;
   tempStagingDir: string;
   exportBasketsDir: string;
   backupsDir: string;
+  isUserDataDirty?: boolean;
+  hasBackupToday?: boolean;
+  userDataSizeBytes?: number;
+  queuesSizeBytes?: number;
 }
 
 export interface BatchRecord {

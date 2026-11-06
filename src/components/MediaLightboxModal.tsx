@@ -15,6 +15,7 @@ import {
   Image as ImageIcon,
 } from 'lucide-react';
 import { MasterMetadataRecord, MediaType } from '../types';
+import { resolveAssetPreviewUrl } from '../db';
 import { QueueItem } from '../services/queue/BatchQueueService';
 import { rasterizeEpsFile } from '../services/eps/epsEngine';
 
@@ -74,6 +75,9 @@ function resolveAssetFields(raw: LightboxAsset | null) {
     raw.nativePath ||
     (file as any)?.__nativePath ||
     (file as any)?.path ||
+    raw.masterRecord?.masterPath ||
+    raw.masterRecord?.originalPath ||
+    raw.masterRecord?.nativePath ||
     '';
 
   if (!nativePath && file && typeof window !== 'undefined' && (window as any).electronAPI?.getPathForFile) {
@@ -89,6 +93,7 @@ function resolveAssetFields(raw: LightboxAsset | null) {
     preRenderedDataUrl ||
     raw.previewUrl ||
     raw.thumbnailUrl ||
+    resolveAssetPreviewUrl(raw.masterRecord) ||
     normalizeDataUrl(raw.queueItem?.thumbnailDataUrl) ||
     normalizeDataUrl(raw.masterRecord?.thumbnailBase64) ||
     normalizeDataUrl(raw.queueItem?.thumbnailBase64) ||

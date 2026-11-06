@@ -54,9 +54,27 @@ export function invalidateMasterRecordsCache(): void {
   inFlightMasterRecordsPromise = null;
 }
 
+export function resolveAssetPreviewUrl(rec?: Partial<MasterMetadataRecord> | null): string {
+  if (!rec) return '';
+  if (rec.previewUrl && typeof rec.previewUrl === 'string' && rec.previewUrl.trim()) {
+    return rec.previewUrl;
+  }
+  const diskPath = rec.previewPath || rec.masterPath || rec.originalPath || rec.nativePath;
+  if (diskPath && typeof diskPath === 'string' && diskPath.trim()) {
+    return `stockflow://local?path=${encodeURIComponent(diskPath.trim())}`;
+  }
+  // Only fall back to in-memory data URL if running in non-disk test/preview environment
+  if (rec.thumbnailBase64 && typeof rec.thumbnailBase64 === 'string' && rec.thumbnailBase64.trim()) {
+    return rec.thumbnailBase64.startsWith('data:') || rec.thumbnailBase64.startsWith('stockflow://') || rec.thumbnailBase64.startsWith('blob:')
+      ? rec.thumbnailBase64
+      : `data:image/jpeg;base64,${rec.thumbnailBase64}`;
+  }
+  return '';
+}
+
 export function subscribeToDbChanges(
   listener: () => void,
-  watchScopes: DbChangeScope[] = ['all', 'master']
+  watchScopes: DbChangeScope[] = ['all', 'master', 'ftp', 'keys', 'settings']
 ): () => void {
   const wrapped: DbChangeListener = (firedScopes) => {
     if (firedScopes.has('all') || watchScopes.includes('all')) {
@@ -240,17 +258,10 @@ const testMemoryStore = {
     DEFAULT_TEST_REJECTION_REASONS.map((r) => [r.id, { ...r }])
   ),
   exportBaskets: new Map<string, ExportBasketRecord>(),
-  backupLogs: [
-    {
-      id: 'backup_init_startup',
-      triggerEvent: 'app_startup',
-      backupFilePath: '/StockFlow/backups/stockflow_backup_startup.sqlite',
-      fileSizeBytes: 8192,
-      assetCountSnapshot: 0,
-      durationMs: 2,
-      createdAt: Date.now(),
-    },
-  ] as BackupLogRecord[],
+  backupLogs: [] as BackupLogRecord[],
+  isUserDataDirty: false,
+  masterVaultDir: '/StockFlow/Master_Vault',
+  backupsDir: '/StockFlow/backups',
   apiKeys: new Map<string, ApiKeyRecord>(),
   batches: new Map<string, BatchRecord>(),
   settings: new Map<string, SettingItem>(),
@@ -322,13 +333,14 @@ function recordTestBackup(triggerEvent: BackupLogRecord['triggerEvent']): Backup
   const log: BackupLogRecord = {
     id: crypto.randomUUID(),
     triggerEvent,
-    backupFilePath: `/StockFlow/backups/stockflow_${now}_${triggerEvent}.sqlite`,
+    backupFilePath: `${testMemoryStore.backupsDir}/userdata_backup_${now}_${triggerEvent}.sqlite`,
     fileSizeBytes: 8192,
     assetCountSnapshot: testMemoryStore.masterRecords.size,
     durationMs: 2,
     createdAt: now,
   };
   testMemoryStore.backupLogs.unshift(log);
+  testMemoryStore.isUserDataDirty = false;
   if (testMemoryStore.backupLogs.length > 30) {
     testMemoryStore.backupLogs.length = 30;
   }
@@ -340,22 +352,63 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
   switch (method) {
     case 'getDbInfo':
       return {
-        dbPath: ':memory:',
+        dbPath: '/StockFlow/userdata.sqlite',
+        queuesDbPath: '/StockFlow/local_queues.sqlite',
         baseDir: '/StockFlow',
-        masterVaultDir: '/StockFlow/Master_Vault',
+        masterVaultDir: testMemoryStore.masterVaultDir,
         exportBasketsDir: '/StockFlow/Export_Baskets',
-        backupsDir: '/StockFlow/backups',
+        backupsDir: testMemoryStore.backupsDir,
+        isUserDataDirty: testMemoryStore.isUserDataDirty,
         engine: 'test-memory',
       };
     case 'getWorkspacePaths':
       return {
         baseDir: '/StockFlow',
-        dbPath: '/StockFlow/stockflow.sqlite',
-        masterVaultDir: '/StockFlow/Master_Vault',
+        dbPath: '/StockFlow/userdata.sqlite',
+        queuesDbPath: '/StockFlow/local_queues.sqlite',
+        masterVaultDir: testMemoryStore.masterVaultDir,
         tempStagingDir: '/StockFlow/.stockflow_temp',
         exportBasketsDir: '/StockFlow/Export_Baskets',
-        backupsDir: '/StockFlow/backups',
+        backupsDir: testMemoryStore.backupsDir,
+        isUserDataDirty: testMemoryStore.isUserDataDirty,
+        hasBackupToday: testMemoryStore.backupLogs.length > 0,
+        userDataSizeBytes: 24576,
+        queuesSizeBytes: 8192,
       } satisfies WorkspacePathsInfo;
+    case 'setMasterWorkspaceFolder': {
+      const folder = String(args[0] || '/StockFlow/Master_Vault').trim();
+      testMemoryStore.masterVaultDir = folder;
+      testMemoryStore.settings.set('master_workspace_folder', {
+        key: 'master_workspace_folder',
+        value: folder,
+      });
+      testMemoryStore.isUserDataDirty = true;
+      return invokeFallbackDbRpc('getWorkspacePaths');
+    }
+    case 'setCustomBackupDirectory': {
+      const folder = String(args[0] || '/StockFlow/backups').trim();
+      testMemoryStore.backupsDir = folder;
+      testMemoryStore.settings.set('custom_backup_dir', {
+        key: 'custom_backup_dir',
+        value: folder,
+      });
+      testMemoryStore.isUserDataDirty = true;
+      return invokeFallbackDbRpc('getWorkspacePaths');
+    }
+    case 'performQuitBackupIfNeeded': {
+      if (!testMemoryStore.isUserDataDirty) {
+        return { skipped: true, reason: 'not_dirty' };
+      }
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const alreadyToday = testMemoryStore.backupLogs.some(
+        (b) => new Date(b.createdAt).toISOString().slice(0, 10) === todayStr
+      );
+      if (alreadyToday) {
+        return { skipped: true, reason: 'already_backed_up_today' };
+      }
+      const backup = recordTestBackup('app_quit');
+      return { skipped: false, backup };
+    }
     case 'getMasterRecords':
       return Array.from(testMemoryStore.masterRecords.values())
         .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
@@ -1001,6 +1054,26 @@ export class StockFlowSqliteDB {
     getWorkspacePaths: async (): Promise<WorkspacePathsInfo> => {
       return await invokeDbRpc('getWorkspacePaths');
     },
+    setMasterWorkspaceFolder: async (folderPath: string): Promise<WorkspacePathsInfo> => {
+      const res = await invokeDbRpc('setMasterWorkspaceFolder', folderPath);
+      notifyDbChanged(true, 'settings');
+      notifyDbChanged(true, 'master');
+      return res;
+    },
+    setCustomBackupDirectory: async (folderPath: string): Promise<WorkspacePathsInfo> => {
+      const res = await invokeDbRpc('setCustomBackupDirectory', folderPath);
+      notifyDbChanged(true, 'settings');
+      return res;
+    },
+    performQuitBackupIfNeeded: async (): Promise<{
+      skipped: boolean;
+      reason?: string;
+      backup?: BackupLogRecord | null;
+    }> => {
+      const res = await invokeDbRpc('performQuitBackupIfNeeded');
+      notifyDbChanged(true, 'settings');
+      return res;
+    },
     getStats: async (): Promise<TrackerSummaryStats> => {
       return await invokeDbRpc('getTrackerStats');
     },
@@ -1033,7 +1106,7 @@ export class StockFlowSqliteDB {
       triggerBackup?: boolean;
     }): Promise<MasterMetadataRecord> => {
       const res = await invokeDbRpc('commitAtomicallyToMasterVault', payload);
-      notifyDbChanged(true);
+      notifyDbChanged(true, 'master');
       return res;
     },
     rollbackIngestedItem: async (payload: {
@@ -1042,7 +1115,7 @@ export class StockFlowSqliteDB {
       previewTempPath?: string;
     }): Promise<{ rolledBack: boolean }> => {
       const res = await invokeDbRpc('rollbackIngestedItem', payload);
-      notifyDbChanged(true);
+      notifyDbChanged(true, 'master');
       return res;
     },
     getRejectionDictionary: async (agencyId?: SupportedPlatform | 'all'): Promise<RejectionReasonRecord[]> => {
@@ -1056,7 +1129,7 @@ export class StockFlowSqliteDB {
       code?: string;
     }): Promise<RejectionReasonRecord> => {
       const res = await invokeDbRpc('addRejectionReason', payload);
-      notifyDbChanged(true);
+      notifyDbChanged(true, 'master');
       return res;
     },
     createExportBasket: async (payload: {
@@ -1068,7 +1141,7 @@ export class StockFlowSqliteDB {
       additionalCsvs?: Array<{ filename: string; csvString: string }>;
     }): Promise<ExportBasketRecord> => {
       const res = await invokeDbRpc('createExportBasket', payload);
-      notifyDbChanged(true);
+      notifyDbChanged(true, 'master');
       return res;
     },
     getExportBaskets: async (agencyId?: SupportedPlatform): Promise<ExportBasketRecord[]> => {
@@ -1084,14 +1157,15 @@ export class StockFlowSqliteDB {
       agencyAssetId?: string | null;
     }): Promise<{ updatedCount: number }> => {
       const res = await invokeDbRpc('reconcileAgencyStatuses', payload);
-      notifyDbChanged(true);
+      notifyDbChanged(true, 'master');
       return res;
     },
     performHotBackup: async (
       triggerEvent: BackupLogRecord['triggerEvent'] = 'manual'
     ): Promise<BackupLogRecord | null> => {
       const res = await invokeDbRpc('performHotBackup', triggerEvent);
-      notifyDbChanged(true);
+      notifyDbChanged(true, 'settings');
+      notifyDbChanged(true, 'master');
       return res;
     },
     getBackupLogs: async (limit = 30): Promise<BackupLogRecord[]> => {
@@ -1224,7 +1298,7 @@ export class StockFlowSqliteDB {
     }),
     put: async (record: ApiKeyRecord): Promise<string> => {
       const id = await invokeDbRpc('putApiKey', record);
-      notifyDbChanged(false, 'keys');
+      notifyDbChanged(true, 'keys');
       return id;
     },
     bulkPut: async (records: ApiKeyRecord[]): Promise<void> => {
@@ -1233,7 +1307,7 @@ export class StockFlowSqliteDB {
     },
     update: async (id: string, changes: Partial<ApiKeyRecord>): Promise<number> => {
       const res = await invokeDbRpc('updateApiKey', id, changes);
-      notifyDbChanged(false, 'keys');
+      notifyDbChanged(true, 'keys');
       return res;
     },
     delete: async (id: string): Promise<void> => {
@@ -1274,18 +1348,18 @@ export class StockFlowSqliteDB {
     },
     put: async (item: SettingItem): Promise<string> => {
       const k = await invokeDbRpc('putSetting', item);
-      notifyDbChanged(false, 'settings');
+      notifyDbChanged(true, 'settings');
       return k;
     },
     clear: async (): Promise<void> => {
       await invokeDbRpc('clearSettings');
-      notifyDbChanged(false, 'settings');
+      notifyDbChanged(true, 'settings');
     },
   };
 
   async transaction<T>(_mode: string, _table: any, scope: () => Promise<T>): Promise<T> {
     const res = await scope();
-    notifyDbChanged();
+    notifyDbChanged(true, 'all');
     return res;
   }
 }
@@ -1381,6 +1455,7 @@ export async function saveAppSettings(settings: Partial<AppSettings>): Promise<A
   const current = await getAppSettings();
   const updated = { ...current, ...settings };
   await db.settings.put({ key: 'app_settings', value: updated });
+  notifyDbChanged(true, 'settings');
   return updated;
 }
 
@@ -1391,7 +1466,7 @@ export async function getAiExecutionMode(): Promise<AiExecutionMode> {
 
 export async function setAiExecutionMode(mode: AiExecutionMode): Promise<void> {
   await saveAppSettings({ aiExecutionMode: mode });
-  notifyDbChanged();
+  notifyDbChanged(true, 'settings');
 }
 
 export async function getLocalAiConfig(): Promise<LocalAiConfig> {
@@ -1403,7 +1478,7 @@ export async function saveLocalAiConfig(config: Partial<LocalAiConfig>): Promise
   const current = await getLocalAiConfig();
   const updated: LocalAiConfig = { ...current, ...config };
   await saveAppSettings({ localAiConfig: updated });
-  notifyDbChanged();
+  notifyDbChanged(true, 'settings');
   return updated;
 }
 
