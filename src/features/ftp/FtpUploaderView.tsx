@@ -98,18 +98,18 @@ function getMediaTypeLabel(item: FtpQueueItem, language: string): string {
 function renderMediaPreviewContent(item: FtpQueueItem, size: 'hover' | 'modal') {
   const boxClass =
     size === 'modal'
-      ? 'w-full max-h-[65vh] rounded-lg border border-border bg-black/60 object-contain'
-      : 'w-52 h-32 object-cover rounded-md border border-border bg-black/50 shadow-inner';
+      ? 'w-full max-h-[75vh] h-auto rounded-lg border border-border bg-black/70 object-contain shadow-md'
+      : 'w-full max-h-72 h-auto rounded-lg border border-border bg-black/60 object-contain shadow-inner';
 
   if (item.filename.toLowerCase().endsWith('.csv')) {
     return (
       <div
         className={`${
-          size === 'modal' ? 'w-full h-48' : 'w-52 h-32'
-        } rounded-md border border-border bg-emerald-950/20 flex flex-col items-center justify-center gap-1.5 text-emerald-400 text-xs font-mono`}
+          size === 'modal' ? 'w-full h-52' : 'w-full h-40'
+        } rounded-lg border border-border bg-emerald-950/20 flex flex-col items-center justify-center gap-2 text-emerald-400 text-xs font-mono`}
       >
-        <FileSpreadsheet className="w-8 h-8" />
-        <span className="text-[11px]">CSV Metadata</span>
+        <FileSpreadsheet className="w-10 h-10 text-emerald-400" />
+        <span className="text-xs font-medium tracking-wide">CSV Metadata Asset</span>
       </div>
     );
   }
@@ -119,17 +119,17 @@ function renderMediaPreviewContent(item: FtpQueueItem, size: 'hover' | 'modal') 
     return (
       <div
         className={`${
-          size === 'modal' ? 'w-full h-48' : 'w-52 h-32'
-        } rounded-md border border-border bg-secondary/40 flex flex-col items-center justify-center gap-1.5 text-muted-foreground text-xs font-mono`}
+          size === 'modal' ? 'w-full h-52' : 'w-full h-40'
+        } rounded-lg border border-border bg-secondary/40 flex flex-col items-center justify-center gap-2 text-muted-foreground text-xs font-mono`}
       >
         {item.mediaType === 'video' ? (
-          <FileVideo className="w-7 h-7 text-purple-400" />
+          <FileVideo className="w-10 h-10 text-purple-400" />
         ) : item.isVectorBundle || item.mediaType === 'vector' ? (
-          <Layers className="w-7 h-7 text-amber-400" />
+          <Layers className="w-10 h-10 text-amber-400" />
         ) : (
-          <FileImage className="w-7 h-7 text-sky-400" />
+          <FileImage className="w-10 h-10 text-sky-400" />
         )}
-        <span className="text-[10px]">
+        <span className="text-xs font-medium">
           {item.mediaType === 'vector' && !item.isVectorBundle
             ? 'EPS Vector Asset'
             : 'Preview Ready'}
@@ -913,24 +913,24 @@ export const FtpUploaderView: React.FC = () => {
                           {getMediaIcon(item)}
                           <Tooltip
                             side="right"
-                            className="p-2 bg-popover/95 backdrop-blur-sm border border-border shadow-xl rounded-lg pointer-events-auto"
+                            className="p-3 bg-popover/95 backdrop-blur-md border border-border shadow-2xl rounded-xl pointer-events-auto max-w-[460px] w-[380px] sm:w-[440px]"
                             content={
-                              <div className="flex flex-col items-center gap-1.5 max-w-[220px]">
+                              <div className="flex flex-col items-center gap-2 w-full text-center">
                                 {renderMediaPreviewContent(item, 'hover')}
                                 <span
-                                  className="text-[10px] font-mono text-foreground font-medium truncate max-w-[200px] text-center"
+                                  className="text-xs font-mono text-muted-foreground font-medium break-all w-full text-center px-1"
                                   dir="ltr"
                                 >
                                   {item.displayName || item.filename}
                                 </span>
                                 {item.isVectorBundle && item.jpgPart && item.epsPart && (
-                                  <span
-                                    className="text-[9px] font-mono text-amber-400 text-center"
+                                  <div
+                                    className="text-[10px] font-mono text-amber-400/90 text-center space-y-0.5 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1 w-full"
                                     dir="ltr"
                                   >
-                                    1) {item.jpgPart.filename} → / {'\n'}
-                                    2) {item.epsPart.filename} → /additional
-                                  </span>
+                                    <div>1) {item.jpgPart.filename} → /</div>
+                                    <div>2) {item.epsPart.filename} → /additional</div>
+                                  </div>
                                 )}
                               </div>
                             }
@@ -1087,13 +1087,14 @@ export const FtpUploaderView: React.FC = () => {
       </div>
 
       {/* Media Lightbox Preview Modal (Opened on clicking filename or magnifier icon) */}
+      {/* Media Preview Modal Dialog (Enlarged max-w-2xl / w-[650px]) */}
       <DialogRoot
         open={Boolean(previewModalItem)}
         onOpenChange={(open) => {
           if (!open) setPreviewModalItem(null);
         }}
       >
-        <DialogContent className="sm:max-w-lg" dir={isAr ? 'rtl' : 'ltr'}>
+        <DialogContent className="sm:max-w-2xl w-[95vw] md:w-[650px]" dir={isAr ? 'rtl' : 'ltr'}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-sm font-bold font-mono" dir="ltr">
               {previewModalItem && getMediaIcon(previewModalItem)}
@@ -1104,17 +1105,24 @@ export const FtpUploaderView: React.FC = () => {
           </DialogHeader>
           {previewModalItem && (
             <div className="space-y-3 py-2">
-              {renderMediaPreviewContent(previewModalItem, 'modal')}
-              <div className="flex items-center justify-between text-xs text-muted-foreground font-mono">
-                <span>
-                  {getMediaTypeLabel(previewModalItem, language)} ·{' '}
-                  {formatBytes(previewModalItem.fileSize)}
-                </span>
-                <span dir="ltr">
-                  {previewModalItem.isVectorBundle
-                    ? '/ → /additional'
-                    : previewModalItem.remotePath}
-                </span>
+              <div className="w-full flex items-center justify-center overflow-hidden rounded-lg bg-black/40">
+                {renderMediaPreviewContent(previewModalItem, 'modal')}
+              </div>
+              <div className="flex flex-col gap-1.5 text-xs text-muted-foreground font-mono">
+                <div className="flex items-center justify-between">
+                  <span>
+                    {getMediaTypeLabel(previewModalItem, language)} ·{' '}
+                    {formatBytes(previewModalItem.fileSize)}
+                  </span>
+                  <span dir="ltr">
+                    {previewModalItem.isVectorBundle
+                      ? '/ → /additional'
+                      : previewModalItem.remotePath}
+                  </span>
+                </div>
+                <div className="text-[11px] text-muted-foreground/80 break-all" dir="ltr">
+                  {previewModalItem.localPath}
+                </div>
               </div>
             </div>
           )}
