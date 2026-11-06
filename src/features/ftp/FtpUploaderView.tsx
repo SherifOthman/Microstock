@@ -3,7 +3,10 @@ import { db, useSqliteQuery } from '../../db';
 import {
   DreamstimeRemoteFolder,
   formatBytes,
+  formatBytesPrecise,
   formatEtaSeconds,
+  formatSpeedPrecise,
+  formatTimeLeftHms,
   formatUnifiedUploadProgressLine,
   FtpQueueItem,
   FtpTelemetryFrame,
@@ -396,6 +399,16 @@ export const FtpUploaderView: React.FC = () => {
     telemetry.completedFiles === telemetry.totalFiles &&
     !telemetry.isRunning;
 
+  const totalRemainingBytes = Math.max(0, telemetry.batchTotalBytes - telemetry.batchBytesTransferred);
+  const globalEtaSeconds =
+    telemetry.isRunning && !telemetry.isPaused && telemetry.speedBytesPerSec > 0
+      ? Math.round(totalRemainingBytes / telemetry.speedBytesPerSec)
+      : null;
+  const activeFileNumber = Math.min(
+    telemetry.totalFiles,
+    Math.max(1, telemetry.currentFileIndex || telemetry.completedFiles + 1)
+  );
+
   const visibleQueue =
     activeSubTab === 'succeeded'
       ? succeededItems
@@ -510,16 +523,51 @@ export const FtpUploaderView: React.FC = () => {
               className="flex items-center justify-between gap-4 min-h-[36px] flex-wrap"
               dir={isAr ? 'rtl' : 'ltr'}
             >
-              {/* Left: Unified Single-Line Precision Telemetry */}
-              <div className="flex items-center gap-3 text-xs font-mono tabular-nums shrink-0 select-none">
+              {/* Left: Visually Distinct Telemetry Badges (Flexbox gap-4) */}
+              <div className="flex items-center gap-4 text-xs font-mono tabular-nums shrink-0 select-none">
                 {telemetry.isRunning || telemetry.isPaused ? (
-                  <span
+                  <div
                     data-testid="ftp-unified-progress-line"
-                    className="text-foreground font-semibold tracking-tight"
+                    className="flex items-center gap-4 flex-wrap"
                     dir="ltr"
                   >
-                    {formatUnifiedUploadProgressLine(telemetry, isAr)}
-                  </span>
+                    {/* Files Badge: Neutral */}
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-secondary/80 border border-border text-foreground font-mono text-xs shadow-xs">
+                      <span>📁</span>
+                      <span>
+                        {activeFileNumber} / {telemetry.totalFiles} {isAr ? 'ملفات' : 'Files'}
+                      </span>
+                    </div>
+
+                    {/* Data Badge: Blue/Indigo subtle */}
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-sky-500/10 border border-sky-500/25 text-sky-400 font-mono text-xs shadow-xs">
+                      <span>☁️</span>
+                      <span>
+                        {formatBytesPrecise(telemetry.batchBytesTransferred)} /{' '}
+                        {formatBytesPrecise(telemetry.batchTotalBytes)}
+                      </span>
+                    </div>
+
+                    {/* Speed Badge: Green/Emerald subtle */}
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 font-mono text-xs shadow-xs">
+                      <span>⚡</span>
+                      <span>
+                        {telemetry.isPaused
+                          ? '0.00 KB/s'
+                          : formatSpeedPrecise(telemetry.speedBytesPerSec)}
+                      </span>
+                    </div>
+
+                    {/* Time Left Badge: Orange/Amber subtle */}
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-amber-500/10 border border-amber-500/25 text-amber-400 font-mono text-xs shadow-xs">
+                      <span>⏳</span>
+                      <span>
+                        {telemetry.isPaused
+                          ? '--:--:--'
+                          : formatTimeLeftHms(globalEtaSeconds)}
+                      </span>
+                    </div>
+                  </div>
                 ) : isBatchFinished ? (
                   <div className="flex items-center gap-2 text-xs">
                     <span className="font-bold text-foreground font-sans">
