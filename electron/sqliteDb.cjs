@@ -83,6 +83,7 @@ class SqliteDatabaseManager {
       ftpProfiles: new Map(),
       ftpSessions: new Map(),
       ftpTransferLogs: [],
+      persistentTaskQueues: new Map(),
     };
     this._seedMemoryFallbackDefaults();
   }
@@ -445,6 +446,17 @@ class SqliteDatabaseManager {
 
       CREATE INDEX IF NOT EXISTS idx_ftp_transfer_logs_session
         ON ftp_transfer_logs(session_id, completed_at DESC);
+
+      -- Pillar 7: Global State Persistence & Crash Recovery Queue Store
+      CREATE TABLE IF NOT EXISTS persistent_task_queues (
+        module_id TEXT PRIMARY KEY,
+        session_id TEXT,
+        batch_status TEXT NOT NULL DEFAULT 'idle',
+        agency_id TEXT NOT NULL DEFAULT 'dreamstime',
+        queue_json TEXT NOT NULL DEFAULT '[]',
+        telemetry_json TEXT NOT NULL DEFAULT '{}',
+        updated_at INTEGER NOT NULL
+      );
     `);
   }
 
@@ -2416,6 +2428,134 @@ class SqliteDatabaseManager {
     this.db.prepare('DELETE FROM ftp_transfer_logs').run();
     this.db.prepare('DELETE FROM ftp_sessions').run();
     return { cleared: true };
+  }
+
+  // ============================================================================
+  // Pillar 7: Global State Persistence & Crash Recovery (persistent_task_queues)
+  // ============================================================================
+  saveQueueSnapshot(payload = {}) {
+    const moduleId = String(payload.moduleId || 'ftp').trim();
+    const now = Date.now();
+    const record = {
+      moduleId,
+      sessionId: payload.sessionId || null,
+      batchStatus: payload.batchStatus || 'idle',
+      agencyId: payload.agencyId || 'dreamstime',
+      queueJson:
+        typeof payload.queueJson === 'string'
+          ? payload.queueJson
+          : JSON.stringify(payload.queue || []),
+      telemetryJson:
+        typeof payload.telemetryJson === 'string'
+          ? payload.telemetryJson
+          : JSON.stringify(payload.telemetry || {}),
+      updatedAt: payload.updatedAt || now,
+    };
+
+    if (!this.isNativeSqlite) {
+      this.memoryFallback.persistentTaskQueues.set(moduleId, record);
+      return {
+        moduleId: record.moduleId,
+        sessionId: record.sessionId,
+        batchStatus: record.batchStatus,
+        agencyId: record.agencyId,
+        updatedAt: record.updatedAt,
+      };
+    }
+
+    this.db
+      .prepare(`
+        INSERT OR REPLACE INTO persistent_task_queues (
+          module_id, session_id, batch_status, agency_id, queue_json, telemetry_json, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        record.moduleId,
+        record.sessionId,
+        record.batchStatus,
+        record.agencyId,
+        record.queueJson,
+        record.telemetryJson,
+        record.updatedAt
+      );
+
+    return {
+      moduleId: record.moduleId,
+      sessionId: record.sessionId,
+      batchStatus: record.batchStatus,
+      agencyId: record.agencyId,
+      updatedAt: record.updatedAt,
+    };
+  }
+
+  getQueueSnapshot(moduleId = 'ftp') {
+    const cleanModuleId = String(moduleId || 'ftp').trim();
+
+    if (!this.isNativeSqlite) {
+      const existing = this.memoryFallback.persistentTaskQueues.get(cleanModuleId);
+      if (!existing) return null;
+      let queue = [];
+      let telemetry = {};
+      try {
+        queue = JSON.parse(existing.queueJson || '[]');
+      } catch {
+        queue = [];
+      }
+      try {
+        telemetry = JSON.parse(existing.telemetryJson || '{}');
+      } catch {
+        telemetry = {};
+      }
+      return {
+        moduleId: existing.moduleId,
+        sessionId: existing.sessionId || undefined,
+        batchStatus: existing.batchStatus,
+        agencyId: existing.agencyId,
+        queue,
+        telemetry,
+        updatedAt: existing.updatedAt,
+      };
+    }
+
+    const row = this.db
+      .prepare('SELECT * FROM persistent_task_queues WHERE module_id = ?')
+      .get(cleanModuleId);
+    if (!row) return null;
+
+    let queue = [];
+    let telemetry = {};
+    try {
+      queue = JSON.parse(row.queue_json || '[]');
+    } catch {
+      queue = [];
+    }
+    try {
+      telemetry = JSON.parse(row.telemetry_json || '{}');
+    } catch {
+      telemetry = {};
+    }
+
+    return {
+      moduleId: row.module_id,
+      sessionId: row.session_id || undefined,
+      batchStatus: row.batch_status,
+      agencyId: row.agency_id,
+      queue,
+      telemetry,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  clearQueueSnapshot(moduleId = 'ftp') {
+    const cleanModuleId = String(moduleId || 'ftp').trim();
+    if (!this.isNativeSqlite) {
+      this.memoryFallback.persistentTaskQueues.delete(cleanModuleId);
+      return { cleared: true, moduleId: cleanModuleId };
+    }
+    this.db
+      .prepare('DELETE FROM persistent_task_queues WHERE module_id = ?')
+      .run(cleanModuleId);
+    return { cleared: true, moduleId: cleanModuleId };
   }
 }
 

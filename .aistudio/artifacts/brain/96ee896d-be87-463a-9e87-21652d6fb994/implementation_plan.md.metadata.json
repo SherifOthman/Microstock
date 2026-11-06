@@ -1,6 +1,6 @@
 {
-  "summary": "StockFlow Refactoring Blueprint diagnosing FTP ghost uploads and false 550 skips, defining the single-session basic-ftp state machine with 30s zero-byte stall detection, atomic Vector Bundle (JPG -> / then EPS -> /additional) pairing, 1000ms delta telemetry math, media-aware HoverCard previews, and global Electron OS notifications.",
-  "updatedAt": "2026-11-06T11:28:30.101952332Z",
+  "summary": "StockFlow Enterprise Infrastructure Blueprint covering Global State Persistence & Crash Recovery (SQLite WAL + Write-Behind Debounced Queue Store) and Background Execution with Windows System Tray Integration.",
+  "updatedAt": "2026-11-06T14:04:26.091777133Z",
   "requestFeedback": true,
   "userFacing": true
 }

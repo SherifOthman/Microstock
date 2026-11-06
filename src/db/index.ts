@@ -219,6 +219,18 @@ const testMemoryStore = {
   ]),
   ftpSessions: new Map<string, FtpSessionRecord>(),
   ftpTransferLogs: [] as FtpTransferLogRecord[],
+  persistentTaskQueues: new Map<
+    string,
+    {
+      moduleId: string;
+      sessionId?: string;
+      batchStatus: string;
+      agencyId: string;
+      queue: any[];
+      telemetry: Record<string, any>;
+      updatedAt: number;
+    }
+  >(),
 };
 
 function ensureTestAgencyTracking(assetId: string, now = Date.now()): Record<SupportedPlatform, AgencyTrackingRecord> {
@@ -795,6 +807,51 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
       }
       return { cleared: true };
     }
+    case 'saveQueueSnapshot': {
+      const payload = args[0] || {};
+      const moduleId = String(payload.moduleId || 'ftp').trim();
+      const now = Date.now();
+      const queue =
+        typeof payload.queueJson === 'string'
+          ? JSON.parse(payload.queueJson || '[]')
+          : Array.isArray(payload.queue)
+          ? JSON.parse(JSON.stringify(payload.queue))
+          : [];
+      const telemetry =
+        typeof payload.telemetryJson === 'string'
+          ? JSON.parse(payload.telemetryJson || '{}')
+          : payload.telemetry
+          ? JSON.parse(JSON.stringify(payload.telemetry))
+          : {};
+      const rec = {
+        moduleId,
+        sessionId: payload.sessionId || undefined,
+        batchStatus: payload.batchStatus || 'idle',
+        agencyId: payload.agencyId || 'dreamstime',
+        queue,
+        telemetry,
+        updatedAt: payload.updatedAt || now,
+      };
+      testMemoryStore.persistentTaskQueues.set(moduleId, rec);
+      return {
+        moduleId: rec.moduleId,
+        sessionId: rec.sessionId,
+        batchStatus: rec.batchStatus,
+        agencyId: rec.agencyId,
+        updatedAt: rec.updatedAt,
+      };
+    }
+    case 'getQueueSnapshot': {
+      const moduleId = String(args[0] || 'ftp').trim();
+      const rec = testMemoryStore.persistentTaskQueues.get(moduleId);
+      if (!rec) return null;
+      return JSON.parse(JSON.stringify(rec));
+    }
+    case 'clearQueueSnapshot': {
+      const moduleId = String(args[0] || 'ftp').trim();
+      testMemoryStore.persistentTaskQueues.delete(moduleId);
+      return { cleared: true, moduleId };
+    }
     default:
       return undefined;
   }
@@ -1024,6 +1081,44 @@ export class StockFlowSqliteDB {
       const res = await invokeDbRpc('clearFtpLogs', agencyId);
       notifyDbChanged(true);
       return res;
+    },
+  };
+
+  queues = {
+    saveSnapshot: async <TItem = any, TTelemetry = Record<string, any>>(payload: {
+      moduleId: 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio';
+      sessionId?: string;
+      batchStatus: 'idle' | 'running' | 'paused' | 'completed';
+      agencyId?: SupportedPlatform;
+      queue: TItem[];
+      telemetry?: TTelemetry;
+      updatedAt?: number;
+    }): Promise<{
+      moduleId: string;
+      sessionId?: string;
+      batchStatus: string;
+      agencyId: string;
+      updatedAt: number;
+    }> => {
+      return await invokeDbRpc('saveQueueSnapshot', payload);
+    },
+    getSnapshot: async <TItem = any, TTelemetry = Record<string, any>>(
+      moduleId: 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio' = 'ftp'
+    ): Promise<{
+      moduleId: string;
+      sessionId?: string;
+      batchStatus: 'idle' | 'running' | 'paused' | 'completed';
+      agencyId: SupportedPlatform;
+      queue: TItem[];
+      telemetry: TTelemetry;
+      updatedAt: number;
+    } | null> => {
+      return (await invokeDbRpc('getQueueSnapshot', moduleId)) || null;
+    },
+    clearSnapshot: async (
+      moduleId: 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio' = 'ftp'
+    ): Promise<{ cleared: boolean; moduleId: string }> => {
+      return await invokeDbRpc('clearQueueSnapshot', moduleId);
     },
   };
 

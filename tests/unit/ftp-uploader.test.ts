@@ -367,4 +367,106 @@ describe('Dreamstime FTP Uploader (Plain FTP Port 21, Vector Pair Bundling, Prec
     const result = await uploadPromise;
     expect(result.succeededCount).toBe(2);
   });
+
+  it('persists active queue to SQLite and hydrates after crash/power loss in Paused state with partial Vector Bundle Phase A preserved', async () => {
+    const firstOrchestrator = new DreamstimeFtpOrchestrator();
+    firstOrchestrator.addFiles([
+      { name: 'photo_done.jpg', path: '/vault/photo_done.jpg', size: 2_000_000 },
+      { name: 'bundle_art.jpg', path: '/vault/bundle_art.jpg', size: 1_500_000 },
+      { name: 'bundle_art.eps', path: '/vault/bundle_art.eps', size: 4_500_000 },
+      { name: 'video_midflight.mp4', path: '/vault/video_midflight.mp4', size: 12_000_000 },
+    ]);
+
+    const q = firstOrchestrator.getQueue();
+    expect(q.length).toBe(3);
+
+    // Simulate state just before a sudden power loss:
+    // 1. photo_done.jpg finished ('succeeded')
+    q[0].status = 'succeeded';
+    q[0].bytesTransferred = q[0].fileSize;
+    q[0].progressPercent = 100;
+
+    // 2. Vector Bundle completed Phase A (JPG preview uploaded to /), crashed during Phase B (EPS)
+    q[1].status = 'uploading';
+    q[1].jpgPart!.uploaded = true;
+    q[1].epsPart!.uploaded = false;
+    q[1].bytesTransferred = 3_000_000;
+    q[1].progressPercent = 50;
+
+    // 3. video_midflight.mp4 was 'queued'
+    q[2].status = 'queued';
+
+    await db.queues.saveSnapshot({
+      moduleId: 'ftp',
+      sessionId: 'sess_crash_test',
+      batchStatus: 'running',
+      agencyId: 'dreamstime',
+      queue: q,
+      telemetry: firstOrchestrator.getTelemetry(),
+    });
+
+    // Simulate fresh app restart after crash/power loss
+    const restartedOrchestrator = new DreamstimeFtpOrchestrator();
+    const hydration = await restartedOrchestrator.hydrateFromDisk();
+
+    expect(hydration.restored).toBe(true);
+    expect(hydration.wasInterrupted).toBe(true);
+    expect(hydration.recoverablePendingCount).toBe(2);
+    expect(restartedOrchestrator.getHasRecoverableSession()).toBe(true);
+
+    const restoredQueue = restartedOrchestrator.getQueue();
+    expect(restoredQueue.length).toBe(3);
+
+    // Completed item remains 'succeeded'
+    expect(restoredQueue[0].status).toBe('succeeded');
+    expect(restoredQueue[0].progressPercent).toBe(100);
+
+    // Mid-flight Vector Bundle is sanitized to 'queued' with Phase A (jpgPart.uploaded) preserved!
+    expect(restoredQueue[1].isVectorBundle).toBe(true);
+    expect(restoredQueue[1].status).toBe('queued');
+    expect(restoredQueue[1].jpgPart?.uploaded).toBe(true);
+    expect(restoredQueue[1].epsPart?.uploaded).toBe(false);
+    expect(restoredQueue[1].bytesTransferred).toBe(1_500_000);
+    expect(restoredQueue[1].progressPercent).toBe(25);
+
+    // Queued video remains 'queued'
+    expect(restoredQueue[2].status).toBe('queued');
+
+    // Now simulate clicking the 1-Click "Resume Upload" button (or Tray "Resume Uploads")
+    const resumeResult = await restartedOrchestrator.startBatchUpload({
+      mode: 'dry_run',
+      simulatedChunkIntervalMs: 1,
+    });
+
+    expect(resumeResult.succeededCount).toBe(3);
+    expect(resumeResult.failedCount).toBe(0);
+    expect(restartedOrchestrator.getHasRecoverableSession()).toBe(false);
+  });
+
+  it('handles Windows System Tray commands (pause-all, resume-all, prepare-force-quit) accurately', async () => {
+    const orchestrator = new DreamstimeFtpOrchestrator();
+    orchestrator.addFiles([
+      { name: 'photo_tray_1.jpg', size: 1_000_000 },
+      { name: 'photo_tray_2.jpg', size: 1_000_000 },
+    ]);
+
+    const runPromise = orchestrator.startBatchUpload({
+      mode: 'dry_run',
+      simulatedChunkIntervalMs: 25,
+    });
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Tray menu: "Pause Uploads"
+    orchestrator.handleTrayCommand('pause-all');
+    expect(orchestrator.getIsPaused()).toBe(true);
+
+    // Tray menu: "Resume Uploads"
+    orchestrator.handleTrayCommand('resume-all');
+    expect(orchestrator.getIsPaused()).toBe(false);
+
+    const res = await runPromise;
+    expect(res.succeededCount).toBe(2);
+  });
 });
+

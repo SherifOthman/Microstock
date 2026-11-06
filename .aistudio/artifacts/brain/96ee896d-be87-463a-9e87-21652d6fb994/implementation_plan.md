@@ -1,139 +1,130 @@
-# StockFlow FTP Architecture & State Machine Refactoring Blueprint
-
-This blueprint diagnoses the root causes behind the FTP state desynchronization ("Ghost Uploads" and false `Skipped` badges at 100%) observed in your live Dreamstime tests, and specifies the architectural refactoring for **Single-Socket Serialized Transfers**, **Atomic Vector Bundle (`JPG + EPS`) Pairing**, **1000ms Delta Telemetry**, **Media-Aware Hover Previews**, and **Global Native OS Notifications**.
+# StockFlow Infrastructure Blueprint: Global State Persistence, Crash Recovery & System Tray Architecture
 
 ---
 
-## User Review & Confirmed Architecture Decisions
+## 1. Global State Persistence & Crash Recovery Architecture
 
-> [!IMPORTANT]
-> The following core architectural decisions have been confirmed and govern this refactoring:
+### 1.1 Storage Engine Decision: SQLite (`WAL` Mode) with Write-Behind Debouncing
+We will use our existing native **SQLite (`better-sqlite3`) engine in Write-Ahead Logging (`WAL`) mode** (`<Documents>/StockFlow/stockflow.sqlite`) rather than `electron-store` or raw JSON files.
 
-- **Confirmed Decision 1 — Vector Bundle (`JPG + EPS`) Remote Routing**: Paired vector assets (`basename.jpg` + `basename.eps`/`.ai`) are grouped into a single **`Vector Bundle`** row in the UI, sorted after standalone photos and before videos. During execution, the worker uploads the **`.jpg` preview to root `/` first**, awaits the FTP server's `226 Transfer complete` confirmation, and **only then uploads the `.eps`/`.ai` file to `/additional`**.
-- **Confirmed Decision 2 — Persistent Single-Socket Session & Activity-Based Stall Detection**: The hardcoded 35-second renderer timeout is permanently removed. The Electron FTP worker maintains **one persistent Plain FTP connection (Port 21)** across the batch and uses a **30-second zero-byte stall watchdog** inside `trackProgress`—meaning a 50 MB video uploading steadily at 150 KB/s for 6 minutes will never time out as long as bytes continue to flow.
-
----
-
-## 1. Root-Cause Diagnosis: Why "Ghost Uploads" & False `Skipped` Happened
-
-Cross-referencing your Windows Resource Monitor screenshots (`~165–195 KB/s` throughput) and Dreamstime's upload dashboard (`dreamstime.com/upload`) against the current state machine reveals **four interacting bugs**:
-
-### Bug A: The Unaborted 35-Second `Promise.race` Cutoff (Root Cause of Ghost Uploads)
-- **What Happened**: The renderer wrapped `uploadFile` in a hardcoded **35-second `Promise.race` timeout** without aborting the active `basic-ftp` socket in the Electron Main Process.
-- **The Math**: At your `~180 KB/s` upload speed, `Futuristic_tech_HUD` (`7.4 MB`) required **~42 seconds** and `Ice_cubes` (`10.3 MB`) required **~58 seconds**.
-- **The Desync**: At `t = 35.0s` (when `Futuristic_tech_HUD` was at **97%** in your screenshot), the renderer's `Promise.race` resolved with a fake timeout, marked the row `Retry 1/5`, and immediately commanded the Main Process to start uploading the next file (`Ice_cubes`) on a **second concurrent FTP connection**. Meanwhile, Connection #1 remained open in the background and finished uploading the remaining 3% to Dreamstime 7 seconds later ("Ghost Upload").
-
-### Bug B: Concurrent Socket Collisions & False `550 Skipped` Badges at 100%
-- **What Happened**: Because Connection #1 silently finished uploading `Futuristic_tech_HUD` in the background (or was still holding a write lock on the remote file), when the Round-Robin sweep came back to retry `Futuristic_tech_HUD`, Dreamstime's FTP server rejected the duplicate/concurrent `STOR` command or directory change with an FTP `550` response.
-- **Why It Showed `100% — Skipped`**: Late `ftp:telemetry` progress events from Connection #1 pushed the row's progress bar to `100%`, while the retry sweep's `550` response overwrote `item.status` to `'skipped'` without resetting or reconciling that the initial stream had already succeeded.
-
-### Bug C: Over-Broad `5xx` Regex Classification
-- **What Happened**: Any error string or code matching `/^5\d\d|550|552|553/` was blindly classified as "Skipped (Duplicate)". In standard FTP (RFC 959), `550` during `CWD /video` simply means the directory change failed or the control socket was out of sync, **not** that the file is a duplicate. Furthermore, `basic-ftp` control/data socket desynchronization (`500`/`502`/`530`) was falsely bucketed as `Skipped` instead of triggering a clean socket reconnect.
-
-### Bug D: Why Video Hover Previews Showed Only Text (`Ice_cubes_dropping...`)
-- **What Happened**: The hover preview attempted to render every file inside an `<img src="stockflow://local?path=..." />` tag with an `onError` handler that set `display: none`. Because `.mp4` and `.mov` videos cannot render inside an `<img>` element, `onError` immediately hid the media box, leaving only the truncated filename text inside the tooltip. Additionally, calling `URL.createObjectURL(file)` inline on every render recreated blob URLs on every 1-second progress tick.
+**Why SQLite WAL Beats `electron-store` / JSON for High-Volume Queues:**
+1. **Zero-Corrupt Atomic Commits on Power Loss:** `electron-store` rewrites and re-serializes an entire JSON file on every update. If power drops mid-write on a 500-file batch, a JSON file can be truncated or corrupted. SQLite in `WAL` (`PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;`) guarantees atomic transactions that survive sudden OS crashes or forced process termination (`SIGKILL`).
+2. **Non-Blocking Write-Behind Coalescing:** Instead of writing to disk on every 100ms byte-progress tick (which would thrash disk I/O), we separate **Structural State Transitions** from **Byte Progress Telemetry**:
+   - **Immediate Transactional Flush (`0ms`):** Triggered only on state transitions (`queued` $\rightarrow$ `uploading`, `Phase A JPG uploaded`, `succeeded`, `skipped`, `failed`, `paused`, `clearQueue`, `addFiles`, `removeItem`). Using a pre-compiled `better-sqlite3` prepared statement inside a single transaction takes `< 0.4ms`.
+   - **Throttled Checkpoint Flush (`2500ms` coalesce):** While a large video is streaming, byte progress is kept in memory and only checkpointed to SQLite at most once every 2.5 seconds or on `before-quit`.
+3. **Plug-and-Play Multi-Module Schema:** A single unified table (`persistent_task_queues`) keyed by `module_id` (`'ftp'`, `'studio'`, `'eps'`, `'cleaner'`, `'audio'`) allows any StockFlow tool to persist and hydrate its queue using the exact same IPC contract and React hook.
 
 ---
 
-## 2. User Experience & Visual Design
+### 1.2 Database Schema (`electron/sqliteDb.cjs`)
+We will add a dedicated `persistent_task_queues` table to `sqliteDb.cjs`:
 
-### Key User Flows & Visual Hierarchy
-- **Aesthetic & Layout Posture**: High-craft dark UI (`#09090b` canvas, `#121215` card surface, `1px` structural borders) with full-width Transfer Queue dominance and zero tutorial clutter.
-- **Typography & Tabular Discipline**: UI labels use clean sans-serif hierarchy; all file sizes, byte deltas, speeds, percentages, and timers use `font-mono tabular-nums` so numbers never jitter during 1000ms ticks.
-- **Single-Line Professional Telemetry Header**:
-  - While actively uploading, displays the exact unified status string:
-    `Upload progress: 1/5 files - 687.73 KB / 5.49 MB @ 625.03 KB/s Time left: 00:01:01`
-  - Full Arabic localization with proper RTL layout (`تقدم الرفع: 1/5 ملفات - 687.73 KB / 5.49 MB @ 625.03 KB/s الوقت المتبقي: 00:01:01`).
-- **Contextual Empty State vs. Active Queue**:
-  - **When Queue is Empty (`queue.length === 0`)**: The top toolbar hides `Add Files`, `Add Folder`, `Start Upload`, and `Clear All`. The center of the viewport displays an interactive Dropzone card with prominent **`+ Add Files`** and **`Add Folder`** buttons.
-  - **When Queue is Populated (`queue.length > 0`)**: Action buttons appear in the fixed-width toolbar (`+ Add Files`, `Add Folder`, `Start Upload / Pause / Resume`, and `Clear All`).
-  - **True `Clear All`**: Resets the queue array to `[]` and resets all batch telemetry counters (`Uploaded`, `Skipped`, `Failed`, `Speed`, `Time left`) to zero.
-- **Truthful Completion Banner & Progress Bar**:
-  - When a batch finishes, displays the exact breakdown:
-    `Batch Finished — Uploaded: X | Skipped: Y | Failed: Z`
-  - If any files failed (`Failed > 0`), the batch progress bar reflects the true ratio of uploaded bytes/files with an amber/crimson state rather than a misleading green 100% bar.
-
----
-
-## 3. Key Architectural Decisions & Logical Flows
-
-### Decision 1: Strictly Serialized Single-Connection State Machine & 30s Zero-Byte Watchdog
-- **Chosen Approach**:
-  1. **Remove Renderer `Promise.race` Timeout**: The Renderer awaits the Main Process IPC call (`ftp:uploadFile`) until the Main Process definitively resolves `{ success, bytesTransferred, errorCode, errorMessage }`.
-  2. **Single Persistent `basic-ftp` Client per Batch**: The Electron Main Process opens one Plain FTP connection (`port: 21`, `secure: false`) at the start of the batch and reuses it sequentially for File 1, File 2, File 3... Only if a network error or stall occurs does the Main Process explicitly call `client.close()` to kill the underlying TCP socket before opening a fresh connection for the next attempt.
-  3. **30-Second Zero-Byte Stall Watchdog (Inside Main Process)**: Inside `PlainFtpAdapter.uploadFile`, a watchdog timer resets to `30,000ms` **every time `trackProgress` reports `info.bytes > lastBytes`**. If bytes are flowing (even at `20 KB/s` on a `100 MB` video), the watchdog continuously resets and **never** interrupts the upload. Only if **zero bytes** are transferred for 30 consecutive seconds does the Main Process call `client.close()` (killing the socket so no Ghost Upload can continue) and return `ETIMEDOUT_STALL`.
-  4. **Strict `550` Duplicate Isolation**: A file is only marked `Skipped` if the server explicitly returns `550` **during the `STOR` command** with an overwrite/exists message, OR if pre-checked against the remote directory listing (`client.list(remoteFolder)`) before `STOR`. All socket drops (`ECONNRESET`, `ETIMEDOUT_STALL`, `421`, `425`, `426`, `EPIPE`) are classified as retryable transient errors (`Retry 1/5` ... `Retry 5/5`).
-
-### Decision 2: Vector Pair Dependency Logic (`JPG + EPS` Atomic Bundle)
-- **Chosen Approach**:
-  1. **Ingestion & Pairing Engine (`bundleAndSortFtpQueue`)**:
-     - When files or folders are added, normalize each filename's stem (e.g., `B01_001_AI_helmet.jpg` and `B01_001_AI_helmet.eps` share the stem `b01_001_ai_helmet`).
-     - If a `.jpg`/`.jpeg` and a `.eps`/`.ai`/`.svg` share the same stem (either dropped together or matched against an existing queued item), merge them into a single **`FtpQueueItem` of kind `'vector_bundle'`** (`displayTitle: "Vector Bundle: B01_001_AI_helmet"`).
-     - **Strict Queue Sorting Order**:
-       1. **Standalone Photos (`.jpg`, `.png`)** $\rightarrow$ `/`
-       2. **Vector Bundles (`JPG + EPS` pairs)** & **Standalone Vectors** $\rightarrow$ `/` then `/additional`
-       3. **Videos (`.mp4`, `.mov`)** $\rightarrow$ `/video`
-  2. **Sequential Two-Phase Execution for `vector_bundle`**:
-     - **Phase A (Preview Upload)**: Upload the `.jpg` file (`jpgFile` / `jpgLocalPath`) to root `/`. Track progress from `0%` to `50%` (weighted by `jpgSize + epsSize`). Await server `226` completion.
-     - **Phase B (Vector Counterpart Upload)**: Only after Phase A succeeds, navigate to `/additional` and upload the `.eps` file (`epsFile` / `epsLocalPath`). Track combined bundle progress up to `100%`.
-     - **Failure Guard**: If Phase A (`.jpg`) fails on a sweep, Phase B (`.eps`) is **not** attempted on that sweep (preventing orphaned EPS files on Dreamstime). If Phase A already succeeded on Sweep 1 and Phase B fails on Sweep 1, Sweep 2 remembers `jpgUploaded = true` and only retries Phase B (`.eps`).
-
-### Decision 3: Precision 1000ms Delta Telemetry Engine
-- **Chosen Approach**:
-  - Inside `PlainFtpAdapter` (`trackProgress`), every chunk updates `currentFileBytesTransferred`.
-  - A dedicated `1000ms` high-precision ticker computes:
-    - $\Delta\text{Bytes} = \text{totalBatchBytesTransferred}(t) - \text{totalBatchBytesTransferred}(t - 1000\text{ms})$
-    - $\text{Instantaneous Speed (B/s)} = \Delta\text{Bytes} / \Delta t_{\text{sec}}$ (with a 3-second sliding window average so 1-second TCP buffer bursts don't flicker to `0 KB/s`).
-    - $\text{Time Left (HH:MM:SS)} = \text{remainingBatchBytes} / \text{Speed}$.
-  - Formats sizes and speeds with two-decimal precision (`687.73 KB / 5.49 MB @ 625.03 KB/s Time left: 00:01:01`).
-
-### Decision 4: Media-Aware HoverCard Previews & Global OS Notifications
-- **Media-Aware Preview Popover**:
-  - Pre-generates and caches preview URLs once when items are added to the queue (never inside React's render loop).
-  - Renders `<video src={previewUrl} muted autoPlay loop playsInline />` for `.mp4`/`.mov`/`.webm` files, and `<img src={previewUrl} />` for photos and Vector Bundles (using the bundle's `.jpg` preview).
-  - Supports both hover and click on the filename / magnifier icon.
-- **Global Electron OS Notification Service (`app:notifyBatchComplete`)**:
-  - Centralized IPC service in Electron Main Process (`electron/main.cjs`) exposed via `window.electronAPI.notifyBatchComplete({ module: 'ftp' | 'studio' | 'cleaner' | 'eps' | 'audio', title, body })` so FTP Uploader, Metadata Studio, and background engines trigger native Windows notifications upon completion.
-
----
-
-## 4. Technical Architecture & State Flow Diagram
-
+```sql
+CREATE TABLE IF NOT EXISTS persistent_task_queues (
+  module_id TEXT PRIMARY KEY,          -- 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio'
+  session_id TEXT,                     -- Active batch session UUID
+  batch_status TEXT NOT NULL,          -- 'idle' | 'running' | 'paused' | 'completed'
+  agency_id TEXT DEFAULT 'dreamstime', -- Target agency context
+  queue_json TEXT NOT NULL,            -- Serialized array of queue items (localPath, remotePath, status, jpgPart, epsPart, retryCount, etc.)
+  telemetry_json TEXT NOT NULL,        -- Serialized snapshot of batch counters & elapsed time
+  updated_at INTEGER NOT NULL          -- Unix timestamp (ms)
+);
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                        FtpUploaderView (React UI)                            │
-│  ┌────────────────────────────────────────────────────────────────────────┐  │
-│  │ Unified Telemetry Header (1000ms Ticker):                              │  │
-│  │ "Upload progress: 1/5 files - 687.73 KB / 5.49 MB @ 625.03 KB/s        │  │
-│  │  Time left: 00:01:01"                                                  │  │
-│  └────────────────────────────────────────────────────────────────────────┘  │
-│  ┌────────────────────────────────────────────────────────────────────────┐  │
-│  │ Static Queue Grid (Sorted on Drop/Add):                                │  │
-│  │  1. Standalone Photos (.jpg)             -> /                          │  │
-│  │  2. Vector Bundles (JPG + EPS grouped)   -> / then /additional         │  │
-│  │  3. Videos (.mp4, .mov)                  -> /video                     │  │
-│  │  [Hover/Click Filename -> Cached <img /> or <video autoPlay muted />]  │  │
-│  └────────────────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────┬───────────────────────────────────────┘
-                                       │ IPC (Strictly Serialized — 1 File at a Time)
-                                       ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                 ElectronFtpManager (Node.js Main Process)                    │
-│                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────┐  │
-│  │ Single Persistent PlainFtpAdapter (Port 21, secure: false)             │  │
-│  │  • Connects once per batch; reuses control socket sequentially         │  │
-│  │  • Pre-checks remote directory list to detect true existing files      │  │
-│  │  • 30s Zero-Byte Stall Watchdog (resets on every trackProgress byte)   │  │
-│  │  • On stall/drop: client.close() kills TCP socket (Zero Ghost Uploads) │  │
-│  └────────────────────────────────────────────────────────────────────────┘  │
-│                                      │                                       │
-│                    ┌─────────────────┴─────────────────┐                     │
-│                    ▼                                   ▼                     │
-│     [Standard Asset (Photo / Video)]     [Vector Bundle (JPG + EPS)]         │
-│      1. CWD target folder                 1. CWD / -> Upload .jpg (0..50%)   │
-│      2. STOR file (0..100%)               2. Await 226 Transfer Complete     │
-│      3. Await 226 Transfer Complete       3. CWD /additional -> Upload .eps  │
-│                                           4. Await 226 Transfer Complete     │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+
+> **Note on File Handles Across Restarts:** Browser `File` blob objects (`fileObject`) and `blob:` URLs cannot survive an app restart, whereas native filesystem paths (`localPath` and `jpgPart.localPath` / `epsPart.localPath`) do. On hydration:
+> - Each restored item reconstructs its `previewUrl` deterministically as `stockflow://local?path=${encodeURIComponent(localPath)}`.
+> - The Electron FTP worker (`electron/ftpManager.cjs`) already streams directly from `fs.createReadStream(localPath)` whenever `localPath` exists on disk.
+
+---
+
+### 1.3 Crash Recovery & Hydration Lifecycle (`Paused` State with 1-Click Resume)
+1. **Continuous Write-Behind Sync (`src/services/persistence/queuePersistenceService.ts`):**
+   - Exposes `saveModuleQueueSnapshot(moduleId, snapshot, immediate)` with a `300ms` debounce for rapid UI mutations (e.g., dropping 100 files) and immediate execution when a file finishes (`succeeded`, `skipped`, `failed`) or when the user pauses/clears the queue.
+2. **Startup Hydration & Mid-Flight Sanitization (`hydrateModuleQueueSnapshot(moduleId)`):**
+   - When StockFlow starts, `DreamstimeFtpOrchestrator.initializeFromDisk()` queries `db.queues.getSnapshot('ftp')`.
+   - If a snapshot exists with unfinished items (`status === 'uploading'`, `'queued'`, `'retry'`, or `'retrying'`):
+     - Any item that was mid-flight (`status === 'uploading'`) when the crash/power loss occurred is sanitized back to `status = 'queued'` (with `bytesTransferred = 0`, `progressPercent = 0`).
+     - **Vector Bundle Partial Recovery:** If a `Vector Bundle (JPG + EPS)` had already completed Phase A (`jpgPart.uploaded === true`) before the crash, `jpgPart.uploaded` is preserved so resuming starts directly at Phase B (`EPS` $\rightarrow$ `/additional`) without re-uploading the preview JPEG.
+     - If `batch_status` was `'running'` or `'paused'` and pending items remain, the orchestrator hydrates in a **Paused / Interrupted Recovery state** (`isRunning: false`, `isPaused: false`, `hasRecoverableSession: true`) so the user sees their exact queue (Completed, Skipped, Failed, and Queued files) and a **1-click `Resume Upload (N)`** button in the toolbar.
+
+---
+
+## 2. Background Execution & Minimize-to-System-Tray Architecture
+
+### 2.1 Window Close Interception (`electron/main.cjs`)
+Currently, clicking the custom `[X]` button in `CustomTitleBar.tsx` sends `ipcRenderer.send('window-close')`, which calls `mainWindow.close()`, terminating the window even if an upload is running.
+
+We will re-architect the lifecycle in `electron/main.cjs` using two state flags:
+- `isForceQuitting = false`: Set to `true` **only** when the user explicitly selects `Quit StockFlow` from the System Tray menu (or when `app.quit()` is triggered while idle).
+- `activeBackgroundTasks`: A `Map<string, { moduleId: string; isRunning: boolean; isPaused: boolean; label: string; progressPercent: number }>` maintained in the Main Process and updated via IPC.
+
+**Close Decision Matrix when the user clicks `[X]` (`mainWindow.on('close', ...)`):**
+1. **Case A — Task Active or Paused (`hasActiveOrPausedTasks() === true`) and `!isForceQuitting`:**
+   - Call `event.preventDefault()` so the BrowserWindow is **not** destroyed and the React/Electron process keeps running.
+   - Call `mainWindow.hide()` and `mainWindow.setSkipTaskbar(true)` so the window minimizes cleanly into the Windows System Tray.
+   - Ensure the native `Tray` icon is visible and fire a one-time native Windows notification:
+     - **Title:** `StockFlow is running in the background`
+     - **Body:** `Active task minimized to System Tray. Right-click the tray icon to Show, Pause, or Quit.`
+2. **Case B — Completely Idle (`hasActiveOrPausedTasks() === false`) or `isForceQuitting === true`:**
+   - Allow `mainWindow.close()` to proceed normally, trigger `sqliteDb.performHotBackup('app_quit')`, destroy the tray icon, and exit the process cleanly.
+
+---
+
+### 2.2 Windows Native System Tray & Dynamic Context Menu (`electron/trayManager.cjs`)
+We will create a dedicated `electron/trayManager.cjs` module managed by `electron/main.cjs`:
+- **Tray Icon & Tooltip:**
+  - Uses a crisp programmatic 16×16 / 32×32 `nativeImage` StockFlow emblem (with fallback to the app icon) so it renders sharply on both light and dark Windows 10/11 taskbars.
+  - Updates `tray.setToolTip(...)` dynamically as telemetry progresses (e.g., `StockFlow — Uploading 2/5 (45%) · 625 KB/s` or `StockFlow — Idle`).
+  - Double-clicking or left-clicking the Tray icon restores and focuses `mainWindow` (`mainWindow.setSkipTaskbar(false); mainWindow.show(); mainWindow.focus();`).
+- **Dynamic Context Menu (`Menu.buildFromTemplate`):**
+  - **`StockFlow Studio — [Status Label]`** *(disabled header item showing live progress, e.g., `Uploading 2/5 (45%)` or `Paused`)*
+  - **Separator**
+  - **`Show App`** $\rightarrow$ Restores and focuses `mainWindow`.
+  - **`Pause Uploads` / `Resume Uploads`** $\rightarrow$ Dynamically toggles based on whether the active task is running or paused; dispatches `tray:command` (`'pause-all'` | `'resume-all'`) to the renderer and/or pauses the main-process worker.
+  - **Separator**
+  - **`Quit StockFlow`** $\rightarrow$ Sets `isForceQuitting = true`, aborts active FTP socket cleanly, flushes the latest queue state to SQLite so it can be resumed next launch, and calls `app.quit()`.
+
+---
+
+### 2.3 Bi-Directional IPC Synchronization Contract
+To keep the Main Process, System Tray, and React Frontend strictly synchronized:
+
+| IPC Channel | Direction | Purpose |
+| :--- | :--- | :--- |
+| `task:updateLifecycleState` | Renderer $\rightarrow$ Main (`invoke`) | Reports `{ moduleId, isRunning, isPaused, progressPercent, statusLabel }` whenever a task starts, pauses, resumes, updates progress, or finishes. Main process uses this to decide whether `[X]` minimizes to Tray or quits, and rebuilds the Tray menu/tooltip. |
+| `tray:onCommand` | Main $\rightarrow$ Renderer (`on`) | Pushes `'pause-all'`, `'resume-all'`, or `'prepare-force-quit'` when the user clicks items in the Windows System Tray menu. |
+| `db:invoke('queues:saveSnapshot', ...)` | Renderer $\rightarrow$ Main (`invoke`) | Persists the serialized queue and telemetry snapshot into SQLite `persistent_task_queues`. |
+| `db:invoke('queues:getSnapshot', ...)` | Renderer $\rightarrow$ Main (`invoke`) | Hydrates the saved queue snapshot for a given `moduleId` on app startup. |
+| `db:invoke('queues:clearSnapshot', ...)` | Renderer $\rightarrow$ Main (`invoke`) | Clears the persisted snapshot when the user clicks `Clear All`. |
+
+---
+
+## 3. File-by-File Implementation Plan
+
+### Main Process & Preload Bridge
+1. **`/electron/sqliteDb.cjs`** *(Modify)*:
+   - Add `CREATE TABLE IF NOT EXISTS persistent_task_queues (...)` to schema initialization.
+   - Implement `queues_saveSnapshot(payload)`, `queues_getSnapshot(moduleId)`, and `queues_clearSnapshot(moduleId)` using prepared statements in WAL mode, plus memory-fallback equivalents for unit tests.
+2. **`/electron/trayManager.cjs`** *(Create)*:
+   - Encapsulate Electron `Tray` creation, high-DPI `nativeImage` icon generation, dynamic tooltip updates, and context menu rebuilding (`Show App`, `Pause Uploads` / `Resume Uploads`, `Quit StockFlow`).
+3. **`/electron/main.cjs`** *(Modify)*:
+   - Integrate `TrayManager` and `activeBackgroundTasks` registry.
+   - Attach `mainWindow.on('close', ...)` handler that checks `hasActiveOrPausedTasks()`: if active/paused and `!isForceQuitting`, calls `event.preventDefault()`, hides `mainWindow` to System Tray, and shows a native background toast notification; if idle, quits normally.
+   - Register IPC handlers `task:updateLifecycleState` and `app:getBackgroundTaskState`.
+4. **`/electron/preload.cjs` & `/src/vite-env.d.ts`** *(Modify)*:
+   - Expose `window.electronAPI.tasks.updateLifecycleState(state)` and `window.electronAPI.tasks.onTrayCommand(callback)`.
+
+### Frontend Services, Hooks & UI
+5. **`/src/db/index.ts`** *(Modify)*:
+   - Add `db.queues.saveSnapshot(...)`, `db.queues.getSnapshot(moduleId)`, and `db.queues.clearSnapshot(moduleId)` with full support for both Electron SQLite IPC and Vitest in-memory fallback.
+6. **`/src/services/persistence/queuePersistenceService.ts` & `/src/hooks/usePersistentTaskQueue.ts`** *(Create)*:
+   - Global, reusable persistence & lifecycle service that any module (`ftp`, `studio`, `eps`, `cleaner`, `audio`) can plug into.
+   - Handles debounced write-behind persistence (`300ms` for rapid edits, immediate on state transitions), crash-recovery hydration (resetting mid-flight `'uploading'` items to `'queued'` while preserving completed Vector Bundle `jpgPart.uploaded` state), and reporting task status to the Electron Main Process for System Tray protection.
+7. **`/src/services/ftp/ftpClientService.ts` & `/src/features/ftp/FtpUploaderView.tsx`** *(Modify)*:
+   - Wire `DreamstimeFtpOrchestrator` into `queuePersistenceService` so adding files, removing files, completing/skipping/failing files, pausing, and clearing automatically sync with SQLite.
+   - Hydrate unfinished queues on startup in a **Paused / Interrupted Recovery** state with a clear recovery banner and **1-Click `Resume Upload (N)`** button.
+   - Listen to `window.electronAPI.tasks.onTrayCommand` so clicking `Pause Uploads` or `Resume Uploads` from the Windows System Tray immediately pauses or resumes the FTP orchestrator.
+8. **`/tests/unit/ftp-uploader.test.ts`** *(Modify)*:
+   - Add automated unit tests verifying:
+     - Crash recovery hydration: mid-flight `'uploading'` items reset to `'queued'`, completed items remain `'succeeded'`, Vector Bundle partial Phase A state is preserved, and batch hydrates in Paused/Ready-to-Resume state.
+     - Close-to-Tray vs. Quit-when-Idle state reporting and System Tray command handling (`pause-all` / `resume-all`).

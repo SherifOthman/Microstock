@@ -6,6 +6,7 @@ const { Readable } = require('stream');
 const { spawn, spawnSync } = require('child_process');
 const { sqliteDb } = require('./sqliteDb.cjs');
 const { ElectronFtpManager } = require('./ftpManager.cjs');
+const { StockFlowTrayManager } = require('./trayManager.cjs');
 
 // Register Windows App User Model ID for reliable native OS toast notifications
 if (process.platform === 'win32') {
@@ -34,6 +35,8 @@ if (protocol && typeof protocol.registerSchemesAsPrivileged === 'function') {
 }
 
 let mainWindow = null;
+let trayManager = null;
+let isForceQuitting = false;
 
 // Locate Ghostscript binary on Windows
 function findGhostscriptExecutable() {
@@ -185,6 +188,30 @@ function createWindow() {
   });
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
     console.error('[Electron Main] Page failed to load:', errorCode, errorDescription);
+  });
+
+  // Intercept Window Close [X]:
+  // - If a background task (e.g. FTP upload) is active or paused and !isForceQuitting:
+  //   preventDefault(), hide window to Windows System Tray, and keep uploading in background.
+  // - If completely idle (or user clicked "Quit StockFlow" in Tray): close and quit normally.
+  mainWindow.on('close', (event) => {
+    if (!isForceQuitting && trayManager && trayManager.hasActiveOrPausedTasks()) {
+      event.preventDefault();
+      try {
+        trayManager.ensureTray();
+        mainWindow.hide();
+        mainWindow.setSkipTaskbar(true);
+        if (Notification && Notification.isSupported()) {
+          const notif = new Notification({
+            title: 'StockFlow — Running in Background',
+            body: 'Active queue minimized to the Windows System Tray. Right-click the tray icon to Show, Pause, or Quit.',
+          });
+          notif.show();
+        }
+      } catch (err) {
+        console.warn('[Electron Main] Minimize to tray warning:', err.message);
+      }
+    }
   });
 
   mainWindow.on('closed', () => {
@@ -376,7 +403,9 @@ if (!gotTheLock) {
 } else {
   app.on('second-instance', () => {
     if (mainWindow) {
+      mainWindow.setSkipTaskbar(false);
       if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
       mainWindow.focus();
     }
   });
@@ -385,20 +414,31 @@ if (!gotTheLock) {
     registerStockflowProtocol();
     setupIpcHandlers();
     createWindow();
+    if (trayManager) {
+      trayManager.ensureTray();
+    }
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
+      } else if (mainWindow) {
+        mainWindow.setSkipTaskbar(false);
+        mainWindow.show();
+        mainWindow.focus();
       }
     });
   });
 }
 
 app.on('before-quit', () => {
+  isForceQuitting = true;
   try {
     sqliteDb.performHotBackup('app_quit');
   } catch (err) {
     console.warn('[Electron Main] before-quit backup warning:', err.message);
+  }
+  if (trayManager) {
+    trayManager.destroy();
   }
 });
 
@@ -416,6 +456,33 @@ function setupIpcHandlers() {
     safeStorage,
     getMainWindow: () => mainWindow,
     dialog,
+  });
+
+  trayManager = new StockFlowTrayManager({
+    getMainWindow: () => mainWindow,
+    onSendTrayCommand: (command) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('tray:command', {
+          command,
+          timestamp: Date.now(),
+        });
+      }
+    },
+    onRequestForceQuit: () => {
+      isForceQuitting = true;
+      try {
+        ftpManager.abortActiveBatch();
+      } catch {
+        // ignore
+      }
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('tray:command', {
+          command: 'prepare-force-quit',
+          timestamp: Date.now(),
+        });
+      }
+      app.quit();
+    },
   });
 
   // Native SQLite Relational Database RPC Bridge
@@ -588,6 +655,32 @@ function setupIpcHandlers() {
 
   ipcMain.handle('window-is-maximized', () => {
     return mainWindow ? mainWindow.isMaximized() : false;
+  });
+
+  // Global Background Task & System Tray Lifecycle IPC
+  ipcMain.handle('task:updateLifecycleState', (_event, payload) => {
+    if (!trayManager) {
+      return { status: 'idle', hasActiveOrPaused: false, activeCount: 0, primaryLabel: 'Idle' };
+    }
+    return trayManager.updateTaskState(payload);
+  });
+
+  ipcMain.handle('task:getLifecycleSummary', () => {
+    if (!trayManager) {
+      return { status: 'idle', hasActiveOrPaused: false, activeCount: 0, primaryLabel: 'Idle' };
+    }
+    return trayManager.getSummary();
+  });
+
+  ipcMain.handle('app:forceQuit', () => {
+    isForceQuitting = true;
+    try {
+      ftpManager.abortActiveBatch();
+    } catch {
+      // ignore
+    }
+    app.quit();
+    return { quitting: true };
   });
 
   // Native Secure Storage via Electron safeStorage (Windows DPAPI / OS Keychain)

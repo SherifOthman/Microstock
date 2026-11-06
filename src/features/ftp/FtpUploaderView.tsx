@@ -304,6 +304,9 @@ export const FtpUploaderView: React.FC = () => {
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [previewModalItem, setPreviewModalItem] = useState<FtpQueueItem | null>(null);
+  const [hasRecoverableSession, setHasRecoverableSession] = useState<boolean>(() =>
+    dreamstimeFtpService.getHasRecoverableSession()
+  );
 
   const storedProfile = useSqliteQuery(() => db.ftp.getProfile('dreamstime'), [], undefined);
 
@@ -321,8 +324,15 @@ export const FtpUploaderView: React.FC = () => {
     const sync = () => {
       setQueue([...dreamstimeFtpService.getQueue()]);
       setTelemetry({ ...dreamstimeFtpService.getTelemetry() });
+      setHasRecoverableSession(dreamstimeFtpService.getHasRecoverableSession());
     };
     const unsub = dreamstimeFtpService.subscribe(sync);
+
+    // Hydrate persisted queue from SQLite if orchestrator is currently empty on mount
+    if (dreamstimeFtpService.getQueue().length === 0) {
+      dreamstimeFtpService.hydrateFromDisk().catch(() => {});
+    }
+
     return () => unsub();
   }, []);
 
@@ -770,11 +780,17 @@ export const FtpUploaderView: React.FC = () => {
                     data-testid="ftp-start-upload-btn"
                     disabled={pendingUploadItems.length === 0}
                     onClick={() => dreamstimeFtpService.startBatchUpload()}
-                    className="h-8 text-xs gap-1.5 cursor-pointer font-semibold shrink-0"
+                    className={`h-8 text-xs gap-1.5 cursor-pointer font-semibold shrink-0 ${
+                      hasRecoverableSession
+                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                        : ''
+                    }`}
                   >
                     <Play className="w-3.5 h-3.5" />
                     <span>
-                      {isAr ? 'بدء الرفع' : 'Start Upload'} ({pendingUploadItems.length})
+                      {hasRecoverableSession
+                        ? `${isAr ? 'استئناف الرفع' : 'Resume Upload'} (${pendingUploadItems.length})`
+                        : `${isAr ? 'بدء الرفع' : 'Start Upload'} (${pendingUploadItems.length})`}
                     </span>
                   </Button>
                 )}
@@ -802,6 +818,33 @@ export const FtpUploaderView: React.FC = () => {
                 isBatchFinished && telemetry.failedFiles > 0 ? 'bg-destructive/20' : ''
               }`}
             />
+          </div>
+        )}
+
+        {/* Crash Recovery / Interrupted Session Banner */}
+        {hasRecoverableSession && !telemetry.isRunning && pendingUploadItems.length > 0 && (
+          <div
+            data-testid="ftp-crash-recovery-banner"
+            className="shrink-0 px-4 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-xs text-amber-300"
+          >
+            <div className="flex items-center gap-2">
+              <RotateCcw className="w-4 h-4 shrink-0 text-amber-400" />
+              <span className="font-semibold">
+                {isAr
+                  ? `تم استعادة الجلسة المتوقفة في وضع الإيقاف المؤقت — ${pendingUploadItems.length} ملفات جاهزة للاستئناف`
+                  : `Interrupted session restored in Paused state — ${pendingUploadItems.length} file(s) ready to resume`}
+              </span>
+            </div>
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              onClick={() => dreamstimeFtpService.startBatchUpload()}
+              className="h-7 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-3 cursor-pointer gap-1.5"
+            >
+              <Play className="w-3 h-3" />
+              <span>{isAr ? 'استئناف الآن' : 'Resume Now'}</span>
+            </Button>
           </div>
         )}
 

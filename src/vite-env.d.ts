@@ -164,5 +164,33 @@ interface Window {
         }) => void
       ) => () => void;
     };
+    tasks?: {
+      updateLifecycleState: (payload: {
+        moduleId: 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio';
+        isRunning: boolean;
+        isPaused: boolean;
+        progressPercent?: number;
+        statusLabel?: string;
+      }) => Promise<{
+        status: 'idle' | 'running' | 'paused';
+        hasActiveOrPaused: boolean;
+        activeCount: number;
+        primaryLabel: string;
+      }>;
+      getLifecycleSummary?: () => Promise<{
+        status: 'idle' | 'running' | 'paused';
+        hasActiveOrPaused: boolean;
+        activeCount: number;
+        primaryLabel: string;
+      }>;
+      forceQuit?: () => Promise<{ quitting: boolean }>;
+      onTrayCommand: (
+        callback: (payload: {
+          command: 'pause-all' | 'resume-all' | 'prepare-force-quit';
+          timestamp: number;
+        }) => void
+      ) => () => void;
+    };
   };
 }
+

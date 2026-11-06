@@ -1,6 +1,7 @@
 import { db } from '../../db';
 import { notifyBatchComplete } from '../desktop/osNotifications';
 import { encryptSecret } from '../desktop/secureStorage';
+import { queuePersistenceService } from '../persistence/queuePersistenceService';
 import {
   bundleAndSortFtpQueue,
   DreamstimeRemoteFolder,
@@ -98,11 +99,14 @@ export class DreamstimeFtpOrchestrator {
   private isRunning = false;
   private isPaused = false;
   private ipcUnsub: (() => void) | null = null;
+  private trayUnsub: (() => void) | null = null;
   private currentSpeedBps = 0;
   private keepAwakeActive = false;
   private speedTimer: ReturnType<typeof setInterval> | null = null;
   private byteSamples: Array<{ time: number; bytes: number }> = [];
   private batchStartTime = 0;
+  private hasRecoverableSession = false;
+  private lastCheckpointSaveMs = 0;
 
   constructor() {
     if (typeof window !== 'undefined' && window.electronAPI?.ftp?.onTelemetry) {
@@ -112,6 +116,139 @@ export class DreamstimeFtpOrchestrator {
         }
       });
     }
+    if (typeof window !== 'undefined' && window.electronAPI?.tasks?.onTrayCommand) {
+      this.trayUnsub = window.electronAPI.tasks.onTrayCommand((payload) => {
+        this.handleTrayCommand(payload.command);
+      });
+    }
+  }
+
+  /**
+   * Handles commands dispatched from the Windows System Tray context menu
+   * (`Pause Uploads`, `Resume Uploads`, `Quit StockFlow`).
+   */
+  handleTrayCommand(command: 'pause-all' | 'resume-all' | 'prepare-force-quit'): void {
+    if (command === 'pause-all') {
+      if (this.isRunning && !this.isPaused) {
+        this.pauseBatch();
+      }
+    } else if (command === 'resume-all') {
+      if (this.isRunning && this.isPaused) {
+        this.resumeBatch();
+      } else if (!this.isRunning && this.hasRecoverableSession) {
+        this.startBatchUpload().catch(() => {});
+      }
+    } else if (command === 'prepare-force-quit') {
+      this.persistQueueState(true).catch(() => {});
+    }
+  }
+
+  getHasRecoverableSession(): boolean {
+    return this.hasRecoverableSession;
+  }
+
+  /**
+   * Persists the current FTP queue & telemetry into SQLite (`persistent_task_queues`)
+   * and synchronizes the active/paused lifecycle state with the Electron Main Process.
+   */
+  async persistQueueState(immediate = false): Promise<void> {
+    const pendingCount = this.queue.filter(
+      (i) => i.status === 'queued' || i.status === 'uploading' || i.status === 'retry' || i.status === 'retrying'
+    ).length;
+
+    const batchStatus = this.isRunning
+      ? this.isPaused
+        ? 'paused'
+        : 'running'
+      : this.hasRecoverableSession && pendingCount > 0
+      ? 'paused'
+      : this.queue.length > 0 && pendingCount === 0
+      ? 'completed'
+      : 'idle';
+
+    await queuePersistenceService.saveModuleQueueSnapshot(
+      {
+        moduleId: 'ftp',
+        sessionId: this.telemetry.sessionId || undefined,
+        batchStatus,
+        agencyId: 'dreamstime',
+        queue: this.queue,
+        telemetry: this.telemetry,
+      },
+      immediate
+    );
+
+    await this.syncMainProcessLifecycle();
+  }
+
+  private async syncMainProcessLifecycle(): Promise<void> {
+    const isTaskActive = this.isRunning;
+    const isTaskPaused = this.isPaused || (!this.isRunning && this.hasRecoverableSession);
+    const label = isTaskActive
+      ? this.isPaused
+        ? `Paused (${this.telemetry.completedFiles}/${this.telemetry.totalFiles})`
+        : `Uploading ${this.telemetry.currentFileIndex || 1}/${this.telemetry.totalFiles} (${this.telemetry.batchPercent}%)`
+      : isTaskPaused
+      ? `Paused (${this.telemetry.completedFiles}/${this.telemetry.totalFiles})`
+      : 'Idle — Ready';
+
+    await queuePersistenceService.syncTaskLifecycleWithMainProcess({
+      moduleId: 'ftp',
+      isRunning: isTaskActive,
+      isPaused: isTaskPaused,
+      progressPercent: this.telemetry.batchPercent,
+      statusLabel: label,
+    });
+  }
+
+  /**
+   * Hydrates the FTP queue from SQLite (`persistent_task_queues`) after an app restart,
+   * crash, or power loss. Restores unfinished batches in a Paused / Ready-to-Resume state.
+   */
+  async hydrateFromDisk(): Promise<{
+    restored: boolean;
+    wasInterrupted: boolean;
+    recoverablePendingCount: number;
+  }> {
+    if (this.isRunning) {
+      return {
+        restored: false,
+        wasInterrupted: false,
+        recoverablePendingCount: 0,
+      };
+    }
+
+    const hydrated = await queuePersistenceService.hydrateModuleQueueSnapshot<
+      FtpQueueItem,
+      FtpTelemetryFrame
+    >('ftp');
+
+    if (!hydrated || hydrated.queue.length === 0) {
+      this.hasRecoverableSession = false;
+      return {
+        restored: false,
+        wasInterrupted: false,
+        recoverablePendingCount: 0,
+      };
+    }
+
+    this.queue = bundleAndSortFtpQueue(hydrated.queue);
+    this.hasRecoverableSession = hydrated.wasInterrupted && hydrated.recoverablePendingCount > 0;
+    this.recalculateBatchTelemetry(
+      undefined,
+      0,
+      this.hasRecoverableSession
+        ? `Session recovered — ${hydrated.recoverablePendingCount} file(s) ready to resume`
+        : 'Restored from disk'
+    );
+    await this.syncMainProcessLifecycle();
+    this.notify();
+
+    return {
+      restored: true,
+      wasInterrupted: hydrated.wasInterrupted,
+      recoverablePendingCount: hydrated.recoverablePendingCount,
+    };
   }
 
   subscribe(listener: Listener): () => void {
@@ -515,6 +652,7 @@ export class DreamstimeFtpOrchestrator {
     this.queue = bundleAndSortFtpQueue(this.queue);
 
     this.recalculateBatchTelemetry();
+    this.persistQueueState(true).catch(() => {});
     this.notify();
     return added;
   }
@@ -542,7 +680,11 @@ export class DreamstimeFtpOrchestrator {
       revokePreviewUrl(target.previewUrl);
     }
     this.queue = this.queue.filter((i) => i.id !== id);
+    if (this.queue.length === 0) {
+      this.hasRecoverableSession = false;
+    }
     this.recalculateBatchTelemetry();
+    this.persistQueueState(true).catch(() => {});
     this.notify();
   }
 
@@ -555,6 +697,7 @@ export class DreamstimeFtpOrchestrator {
     }
     this.queue = this.queue.filter((i) => i.status !== 'succeeded');
     this.recalculateBatchTelemetry();
+    this.persistQueueState(true).catch(() => {});
     this.notify();
   }
 
@@ -576,6 +719,7 @@ export class DreamstimeFtpOrchestrator {
       }
     }
     this.recalculateBatchTelemetry();
+    await this.persistQueueState(true);
     this.notify();
     if (!this.isRunning) {
       await this.startBatchUpload(options);
@@ -610,10 +754,13 @@ export class DreamstimeFtpOrchestrator {
     this.queue = [];
     this.byteSamples = [];
     this.currentSpeedBps = 0;
+    this.hasRecoverableSession = false;
     this.telemetry = {
       ...INITIAL_TELEMETRY,
       mode: this.mode,
     };
+    queuePersistenceService.clearModuleQueueSnapshot('ftp').catch(() => {});
+    this.syncMainProcessLifecycle().catch(() => {});
     this.notify();
   }
 
@@ -629,6 +776,7 @@ export class DreamstimeFtpOrchestrator {
       etaSeconds: null,
       statusMessage: 'Paused',
     };
+    this.persistQueueState(true).catch(() => {});
     this.notify();
   }
 
@@ -646,6 +794,7 @@ export class DreamstimeFtpOrchestrator {
       isPaused: false,
       statusMessage: 'Resuming...',
     };
+    this.persistQueueState(true).catch(() => {});
     this.notify();
   }
 
@@ -902,7 +1051,9 @@ export class DreamstimeFtpOrchestrator {
     this.isRunning = true;
     this.isPaused = false;
     this.aborted = false;
+    this.hasRecoverableSession = false;
     this.batchStartTime = Date.now();
+    this.lastCheckpointSaveMs = Date.now();
     await this.setKeepAwake(true);
 
     const totalBatchBytes = this.queue.reduce((acc, i) => acc + i.fileSize, 0);
@@ -920,6 +1071,7 @@ export class DreamstimeFtpOrchestrator {
       isRunning: true,
       statusMessage: 'Connecting...',
     };
+    await this.persistQueueState(true);
     this.notify();
 
     this.currentSpeedBps = 0;
@@ -945,6 +1097,10 @@ export class DreamstimeFtpOrchestrator {
       this.recordByteDeltaSample();
       const activeItem = this.queue.find((q) => q.status === 'uploading');
       this.recalculateBatchTelemetry(activeItem, this.currentSpeedBps);
+      if (Date.now() - this.lastCheckpointSaveMs >= 2500) {
+        this.lastCheckpointSaveMs = Date.now();
+        this.persistQueueState(false).catch(() => {});
+      }
       this.notify();
     }, 1000);
 
@@ -1259,6 +1415,7 @@ export class DreamstimeFtpOrchestrator {
           }
 
           this.recalculateBatchTelemetry(item, this.currentSpeedBps);
+          await this.persistQueueState(true);
           this.notify();
         }
       }
@@ -1274,6 +1431,7 @@ export class DreamstimeFtpOrchestrator {
       this.isPaused = false;
       this.currentSpeedBps = 0;
       await this.setKeepAwake(false);
+      await this.persistQueueState(true);
     }
 
     const totalDurationMs = Math.max(0, Date.now() - this.batchStartTime);

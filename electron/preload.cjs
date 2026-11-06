@@ -65,4 +65,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener('ftp:telemetry', handler);
     },
   },
+  tasks: {
+    updateLifecycleState: (payload) => ipcRenderer.invoke('task:updateLifecycleState', payload),
+    getLifecycleSummary: () => ipcRenderer.invoke('task:getLifecycleSummary'),
+    forceQuit: () => ipcRenderer.invoke('app:forceQuit'),
+    onTrayCommand: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('tray:command', handler);
+      return () => ipcRenderer.removeListener('tray:command', handler);
+    },
+  },
 });
+
