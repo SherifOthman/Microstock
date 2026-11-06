@@ -284,78 +284,53 @@ export const KeyRingView: React.FC = () => {
       ) : (
         <>
           {/* Top Summary & Global Controls Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-border">
-        <div className="flex items-center gap-2">
-          <Tooltip
-            content={
-              language === 'ar'
-                ? 'التبديل التلقائي بين المفاتيح والمزودين (Gemini → OpenRouter → Groq → Mistral → Cloudflare) عند ضغط الخدمة أو انتهاء الحد.'
-                : 'Automatic multi-provider rotation (Gemini → OpenRouter → Groq → Mistral → Cloudflare) on 429/503 or timeouts.'
-            }
-          >
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-secondary/60 border border-border text-xs text-muted-foreground hover:text-foreground cursor-help transition">
-              <Info className="w-3.5 h-3.5 text-primary shrink-0" />
-              <span>{language === 'ar' ? 'تدوير تلقائي متعدد المزودين' : 'Multi-Provider Failover Active'}</span>
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-border">
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="text-xs font-mono py-1 px-2.5 bg-secondary/60 text-foreground border-border">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block mr-1.5 rtl:mr-0 rtl:ml-1.5" />
+                <span>
+                  {language === 'ar'
+                    ? `${keys.filter((k) => k.status === 'healthy').length}/${keys.length} مفتاح نشط`
+                    : `${keys.filter((k) => k.status === 'healthy').length}/${keys.length} Active`}
+                </span>
+              </Badge>
             </div>
-          </Tooltip>
-        </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <Tooltip
-            content={
-              language === 'ar'
-                ? 'يتم توزيع الطلبات بالتساوي بين جميع المفاتيح لزيادة السرعة والـ RPM وتفادي قيود الـ Rate Limit، مع التناوب التلقائي.'
-                : 'Requests are balanced evenly across all healthy keys for maximum RPM with automatic failover on rate limits.'
-            }
-          >
-            <div className="px-2.5 py-1 rounded-lg bg-secondary/70 border border-border flex items-center gap-1.5 text-xs font-mono text-muted-foreground select-none cursor-help">
-              <Shuffle className="w-3.5 h-3.5 text-primary" />
-              <span>{language === 'ar' ? 'توزيع ذكي متوازن' : 'Smart Load-Balanced'}</span>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {hasCoolingKeys && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleResetAllCooldowns}
+                  className="h-8 gap-1.5 text-xs cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>{language === 'ar' ? 'إعادة تفعيل الكل' : 'Reset Cooldowns'}</span>
+                </Button>
+              )}
+
+              <div
+                dir="ltr"
+                className="px-2.5 py-1 h-8 rounded-lg bg-secondary border border-border flex items-center gap-1.5 text-xs font-mono tabular-nums"
+              >
+                <Activity className="w-3.5 h-3.5 text-primary" />
+                <span className="text-muted-foreground">RPM:</span>
+                <span className="font-semibold text-foreground">{totalHealthyRpm}</span>
+              </div>
+
+              <Button
+                size="sm"
+                onClick={() => {
+                  setEditingKey(null);
+                  setIsAddOpen(true);
+                }}
+                className="h-8 gap-1.5 text-xs font-semibold cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>{language === 'ar' ? 'إضافة مفتاح' : 'Add API Key'}</span>
+              </Button>
             </div>
-          </Tooltip>
-
-          {hasCoolingKeys && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleResetAllCooldowns}
-              className="h-7 gap-1 text-xs cursor-pointer"
-            >
-              <RotateCcw className="w-3 h-3" />
-              <span>{language === 'ar' ? 'إعادة تفعيل الكل' : 'Reset Cooldowns'}</span>
-            </Button>
-          )}
-
-          <Tooltip
-            content={
-              language === 'ar'
-                ? 'إجمالي الطلبات في الدقيقة (RPM) المتاحة من جميع المفاتيح النشطة السليمة.'
-                : 'Combined requests per minute (RPM) across all healthy active keys.'
-            }
-          >
-            <div
-              dir="ltr"
-              className="px-2.5 py-1 rounded-lg bg-secondary border border-border flex items-center gap-1.5 text-xs font-mono tabular-nums cursor-help"
-            >
-              <Activity className="w-3.5 h-3.5 text-primary" />
-              <span className="text-muted-foreground">RPM:</span>
-              <span className="font-semibold text-foreground">{totalHealthyRpm}</span>
-            </div>
-          </Tooltip>
-
-          <Button
-            size="sm"
-            onClick={() => {
-              setEditingKey(null);
-              setIsAddOpen(true);
-            }}
-            className="gap-1.5 text-xs font-semibold cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>{language === 'ar' ? 'إضافة مفتاح' : 'Add API Key'}</span>
-          </Button>
-        </div>
-      </div>
+          </div>
 
       {/* Provider Tabs Navigation */}
       <div
@@ -482,11 +457,6 @@ export const KeyRingView: React.FC = () => {
                 ? `لا توجد مفاتيح مضافة لـ ${activeProviderMeta.name}`
                 : `No ${activeProviderMeta.name} Keys Configured`}
             </h3>
-            <p className="text-xs text-muted-foreground">
-              {language === 'ar'
-                ? `أضف مفتاح ${activeProviderMeta.name} لاستخدامه تلقائياً في توليد الـ Metadata والتبديل الاحتياطي.`
-                : `Add a ${activeProviderMeta.name} API key to enable automatic failover and metadata generation.`}
-            </p>
           </div>
           <Button
             variant="outline"

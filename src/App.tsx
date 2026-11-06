@@ -90,6 +90,7 @@ export function App() {
   });
   const [isKeyRingOpen, setIsKeyRingOpen] = useState(false);
   const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'storage' | 'keys' | 'csv'>('storage');
   const [requeueContext, setRequeueContext] = useState<FixAndRequeueContext | null>(null);
   const [trackerFocusAgency, setTrackerFocusAgency] = useState<SupportedPlatform | undefined>(undefined);
 
@@ -346,42 +347,9 @@ export function App() {
             </nav>
           </div>
 
-          {/* Bottom System & Environment Controls (Single Source of Truth) */}
+          {/* Bottom System & Environment Controls: Settings, Language, and Theme */}
           <div className="p-2 border-t border-border space-y-1.5 shrink-0 bg-card">
-            {/* CSV Templates Reference */}
-            <Tooltip content={isRailCollapsed ? t.csvSpecsSamples : undefined} side={language === 'ar' ? 'left' : 'right'}>
-              <button
-                type="button"
-                onClick={() => setIsTemplatesOpen(true)}
-                className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer"
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <FileSpreadsheet className="w-4 h-4 text-muted-foreground shrink-0" />
-                  {!isRailCollapsed && <span className="truncate">{t.csvSpecsSamples}</span>}
-                </div>
-              </button>
-            </Tooltip>
-
-            {/* API KeyRing Button */}
-            <Tooltip content={isRailCollapsed ? t.apiKeys : undefined} side={language === 'ar' ? 'left' : 'right'}>
-              <button
-                type="button"
-                onClick={() => setIsKeyRingOpen(true)}
-                className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer"
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <KeyRound className="w-4 h-4 text-primary shrink-0" />
-                  {!isRailCollapsed && <span className="truncate">{t.apiKeys}</span>}
-                </div>
-                {!isRailCollapsed && (
-                  <span dir="ltr" className="text-[10px] font-mono tabular-nums px-1.5 py-0.5 rounded bg-secondary text-foreground">
-                    {healthyKeysCount}/{keys.length}
-                  </span>
-                )}
-              </button>
-            </Tooltip>
-
-            {/* Dedicated Settings Tab in Bottom Sidebar Navigation */}
+            {/* Dedicated Settings Button */}
             <Tooltip
               content={isRailCollapsed ? (language === 'ar' ? 'الإعدادات' : 'Settings') : undefined}
               side={language === 'ar' ? 'left' : 'right'}
@@ -390,7 +358,7 @@ export function App() {
                 type="button"
                 data-testid="sidebar-settings-tab"
                 onClick={() => handleTabChange('settings')}
-                className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                   activeTab === 'settings'
                     ? 'bg-primary text-primary-foreground font-semibold shadow-2xs'
                     : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
@@ -483,8 +451,14 @@ export function App() {
                     }
                     handleTabChange(tool);
                   }}
-                  onOpenKeyRing={() => setIsKeyRingOpen(true)}
-                  onOpenTemplates={() => setIsTemplatesOpen(true)}
+                  onOpenKeyRing={() => {
+                    setSettingsTab('keys');
+                    handleTabChange('settings');
+                  }}
+                  onOpenTemplates={() => {
+                    setSettingsTab('csv');
+                    handleTabChange('settings');
+                  }}
                 />
               </div>
             )}
@@ -546,8 +520,8 @@ export function App() {
               </div>
             )}
             {activeTab === 'settings' && (
-              <div className="flex-1 min-h-0 h-full px-4 sm:px-5 py-3.5 overflow-hidden flex flex-col">
-                <SettingsView />
+              <div className="flex-1 min-h-0 h-full overflow-hidden flex flex-col">
+                <SettingsView initialTab={settingsTab} onTabChange={setSettingsTab} />
               </div>
             )}
           </main>
