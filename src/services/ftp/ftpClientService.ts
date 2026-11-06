@@ -2,6 +2,7 @@ import { db } from '../../db';
 import { notifyBatchComplete } from '../desktop/osNotifications';
 import { encryptSecret } from '../desktop/secureStorage';
 import {
+  bundleAndSortFtpQueue,
   DreamstimeRemoteFolder,
   formatEtaSeconds,
   FTP_MAX_RETRIES_PER_FILE,
@@ -12,7 +13,9 @@ import {
   FtpProtocolType,
   FtpQueueItem,
   FtpTelemetryFrame,
+  generateDynamicCsvRemoteName,
   getFilenameStem,
+  isCsvFile,
   isJpgPreviewExtension,
   isVectorExtension,
   resolveDreamstimeRoute,
@@ -474,20 +477,29 @@ export class DreamstimeFtpOrchestrator {
         }
       }
 
-      // Standalone file
+      // Standalone file or CSV
       consumedIndices.add(i);
+      const isCsv = isCsvFile(current.filename);
+      const remoteName = isCsv
+        ? generateDynamicCsvRemoteName(current.filename)
+        : current.filename;
+      const remoteFolder: DreamstimeRemoteFolder = isCsv ? '/' : current.route.remoteFolder;
+      const remotePath = isCsv ? `/${remoteName}` : current.route.remotePath;
+
       const item: FtpQueueItem = {
         id: `ftp_item_${crypto.randomUUID().slice(0, 8)}`,
-        filename: current.filename,
+        filename: remoteName,
         displayName: current.filename,
+        remoteName,
         stemName: current.stem,
         isVectorBundle: false,
-        previewUrl: buildPreviewUrl(current.fileObject, current.localPath),
+        isCsv,
+        previewUrl: isCsv ? undefined : buildPreviewUrl(current.fileObject, current.localPath),
         localPath: current.localPath,
         fileSize: current.fileSize,
         mediaType: current.route.mediaType,
-        remoteFolder: current.route.remoteFolder,
-        remotePath: current.route.remotePath,
+        remoteFolder,
+        remotePath,
         status: 'queued',
         bytesTransferred: 0,
         progressPercent: 0,
@@ -499,8 +511,8 @@ export class DreamstimeFtpOrchestrator {
       added.push(item);
     }
 
-    // Intelligent File Sorting: Standalone Photos (0) -> Vector Bundles & Vectors (1) -> Videos (2)
-    this.queue = sortFtpQueueByMediaPriority(this.queue);
+    // Intelligent File Sorting: Standalone Photos (0) -> Vector Bundles & Vectors (1) -> Videos (2) -> Metadata CSV (3)
+    this.queue = bundleAndSortFtpQueue(this.queue);
 
     this.recalculateBatchTelemetry();
     this.notify();
@@ -1068,10 +1080,10 @@ export class DreamstimeFtpOrchestrator {
                 }
               }
             } else {
-              // Single standalone file upload (Photo, Standalone Vector, or Video)
+              // Single standalone file upload (Photo, Standalone Vector, Video, or CSV)
               const res = await this.executePhysicalUpload({
                 itemId: item.id,
-                filename: item.filename,
+                filename: item.remoteName || item.filename,
                 localPath: item.localPath,
                 fileObject: item.fileObject,
                 remoteFolder: item.remoteFolder,

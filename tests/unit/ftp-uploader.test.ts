@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  bundleAndSortFtpQueue,
+  generateDynamicCsvRemoteName,
   resolveDreamstimeRoute,
   formatBytes,
   formatBytesPrecise,
@@ -90,6 +92,57 @@ describe('Dreamstime FTP Uploader (Plain FTP Port 21, Vector Pair Bundling, Prec
     expect(sortedQueue[4].mediaType).toBe('video');
     expect(sortedQueue[5].filename).toBe('video_clip_02.mov');
     expect(sortedQueue[5].mediaType).toBe('video');
+  });
+
+  it('dynamically renames CSV remote filename with timestamp (anti-collision) while keeping localPath untouched, routes to root /, and enforces CSV as absolute last priority', () => {
+    // 1. Anti-collision remote naming helper test
+    const dynamicRemoteName = generateDynamicCsvRemoteName('dreamstime_batch.csv', 1701234567);
+    expect(dynamicRemoteName).toBe('dreamstime_batch_1701234567.csv');
+
+    // 2. Queue addition, routing, and strict sorting test
+    const orchestrator = new DreamstimeFtpOrchestrator();
+    orchestrator.addFiles([
+      { name: 'video_clip_01.mp4', path: 'C:/media/video_clip_01.mp4', size: 20_000_000 },
+      { name: 'metadata_export.csv', path: 'C:/exports/metadata_export.csv', size: 15_000 },
+      { name: 'photo_highres.jpg', path: 'C:/media/photo_highres.jpg', size: 5_000_000 },
+      { name: 'icon_pack.eps', path: 'C:/media/icon_pack.eps', size: 3_000_000 },
+      { name: 'icon_pack.jpg', path: 'C:/media/icon_pack.jpg', size: 1_000_000 },
+      { name: 'vector_standalone.ai', path: 'C:/media/vector_standalone.ai', size: 2_000_000 },
+    ]);
+
+    const queue = orchestrator.getQueue();
+    expect(queue.length).toBe(5); // Photo (1) + Vector Bundle (1) + Standalone Vector (1) + Video (1) + CSV (1)
+
+    // Strict Sorting Order:
+    // Priority 0: Standalone Photo
+    expect(queue[0].filename).toBe('photo_highres.jpg');
+    expect(queue[0].mediaType).toBe('image');
+    expect(queue[0].remoteFolder).toBe('/');
+
+    // Priority 1: Vector Bundle & Standalone Vector
+    expect(queue[1].isVectorBundle).toBe(true);
+    expect(queue[1].displayName).toBe('Vector Bundle: icon_pack');
+    expect(queue[2].filename).toBe('vector_standalone.ai');
+    expect(queue[2].mediaType).toBe('vector');
+    expect(queue[2].remoteFolder).toBe('/additional');
+
+    // Priority 2: Video
+    expect(queue[3].filename).toBe('video_clip_01.mp4');
+    expect(queue[3].mediaType).toBe('video');
+    expect(queue[3].remoteFolder).toBe('/video');
+
+    // Priority 3: CSV Metadata (MUST BE ABSOLUTELY LAST)
+    const csvItem = queue[4];
+    expect(csvItem.isCsv).toBe(true);
+    expect(csvItem.displayName).toBe('metadata_export.csv');
+    // Local path on disk is strictly preserved and UNTOUCHED
+    expect(csvItem.localPath).toBe('C:/exports/metadata_export.csv');
+    // Remote filename dynamically includes timestamp
+    expect(csvItem.remoteName).toMatch(/^metadata_export_\d+\.csv$/);
+    expect(csvItem.filename).toBe(csvItem.remoteName);
+    // Remote folder is strictly root '/'
+    expect(csvItem.remoteFolder).toBe('/');
+    expect(csvItem.remotePath).toBe(`/${csvItem.remoteName}`);
   });
 
   it('forces Plain FTP on port 21 and encrypts passwords at rest with enc:<hex> prefix in SQLite', async () => {

@@ -51,8 +51,10 @@ export interface FtpQueueItem {
   id: string;
   filename: string;
   displayName?: string;
+  remoteName?: string;
   stemName?: string;
   isVectorBundle?: boolean;
+  isCsv?: boolean;
   jpgPart?: FtpBundlePart;
   epsPart?: FtpBundlePart;
   previewUrl?: string;
@@ -164,15 +166,41 @@ export function isVectorExtension(filename: string): boolean {
   return VECTOR_EXTENSIONS.has(getFileExtension(filename));
 }
 
+export function isCsvFile(filename: string): boolean {
+  return getFileExtension(filename) === '.csv';
+}
+
+/**
+ * Appends a timestamp to a CSV filename for anti-collision remote upload.
+ * E.g. "metadata.csv" -> "metadata_1701234567.csv"
+ * Does NOT modify the local file path on the user's hard drive.
+ */
+export function generateDynamicCsvRemoteName(filename: string, timestamp?: number): string {
+  const ts = timestamp ?? Math.floor(Date.now() / 1000);
+  const ext = getFileExtension(filename) || '.csv';
+  const stem = getFilenameStem(filename);
+  return `${stem}_${ts}${ext}`;
+}
+
 /**
  * Deterministic file-extension router for Dreamstime FTP uploads:
  * - JPEGs / Raster (.jpg, .jpeg, .png, .webp) -> root `/`
  * - Vectors (.eps, .ai, .svg) -> `/additional`
  * - Videos (.mp4, .mov, .webm) -> `/video`
+ * - Metadata CSV (.csv) -> root `/`
  */
 export function resolveDreamstimeRoute(filename: string): DreamstimeRouteResolution {
   const cleanName = (filename || '').trim();
   const ext = getFileExtension(cleanName);
+
+  if (ext === '.csv') {
+    return {
+      mediaType: 'image',
+      remoteFolder: '/',
+      remotePath: `/${cleanName}`,
+      ruleLabel: 'CSV Metadata → /',
+    };
+  }
 
   if (VECTOR_EXTENSIONS.has(ext)) {
     return {
@@ -189,15 +217,6 @@ export function resolveDreamstimeRoute(filename: string): DreamstimeRouteResolut
       remoteFolder: '/video',
       remotePath: `/video/${cleanName}`,
       ruleLabel: 'Video → /video',
-    };
-  }
-
-  if (ext === '.csv') {
-    return {
-      mediaType: 'image',
-      remoteFolder: '/',
-      remotePath: `/${cleanName}`,
-      ruleLabel: 'CSV Metadata → /',
     };
   }
 
@@ -223,34 +242,74 @@ export function resolveDreamstimeRoute(filename: string): DreamstimeRouteResolut
  * 0 = Standalone Photos (`image` -> `/`)
  * 1 = Vector Bundles (`JPG + EPS`) & Standalone Vectors (`vector` -> `/additional`)
  * 2 = Videos (`video` -> `/video`)
+ * 3 = Metadata CSV (`isCsv` / `.csv` -> `/`) - MUST BE ABSOLUTELY LAST!
  */
 export function getMediaSortPriority(
   mediaType: MediaType,
-  isVectorBundle?: boolean
+  isVectorBundle?: boolean,
+  isCsv?: boolean,
+  filename?: string
 ): number {
+  if (isCsv || (filename && isCsvFile(filename))) {
+    return 3;
+  }
   if (isVectorBundle || mediaType === 'vector') return 1;
   if (mediaType === 'image') return 0;
   return 2;
 }
 
 /**
- * Sorts FTP queue items so all Standalone Photos appear first, followed by Vector Bundles / Vectors, followed by Videos.
+ * Bundles and sorts FTP queue items according to microstock agency requirements:
+ * 1. Standalone Photos (`image`)
+ * 2. Vector Bundles (`JPG + EPS`) & Standalone Vectors (`vector`)
+ * 3. Videos (`video`)
+ * 4. Metadata CSV (`isCsv` / `.csv`) - MUST BE LAST.
  * Preserves relative insertion order within the same category.
  */
-export function sortFtpQueueByMediaPriority<
-  T extends { mediaType: MediaType; isVectorBundle?: boolean }
+export function bundleAndSortFtpQueue<
+  T extends {
+    mediaType: MediaType;
+    isVectorBundle?: boolean;
+    isCsv?: boolean;
+    filename?: string;
+    remoteName?: string;
+  }
 >(items: T[]): T[] {
   return items
     .map((item, idx) => ({ item, idx }))
     .sort((a, b) => {
-      const prioDiff =
-        getMediaSortPriority(a.item.mediaType, a.item.isVectorBundle) -
-        getMediaSortPriority(b.item.mediaType, b.item.isVectorBundle);
-      if (prioDiff !== 0) return prioDiff;
+      const isCsvA =
+        Boolean(a.item.isCsv) ||
+        isCsvFile(a.item.filename || '') ||
+        isCsvFile(a.item.remoteName || '');
+      const isCsvB =
+        Boolean(b.item.isCsv) ||
+        isCsvFile(b.item.filename || '') ||
+        isCsvFile(b.item.remoteName || '');
+
+      const prioA = getMediaSortPriority(
+        a.item.mediaType,
+        a.item.isVectorBundle,
+        isCsvA,
+        a.item.filename
+      );
+      const prioB = getMediaSortPriority(
+        b.item.mediaType,
+        b.item.isVectorBundle,
+        isCsvB,
+        b.item.filename
+      );
+
+      if (prioA !== prioB) return prioA - prioB;
       return a.idx - b.idx;
     })
     .map((entry) => entry.item);
 }
+
+/**
+ * Backwards-compatible alias for bundleAndSortFtpQueue
+ */
+export const sortFtpQueueByMediaPriority = bundleAndSortFtpQueue;
 
 /**
  * Formats byte counts into compact human-readable KB / MB / GB strings (1 decimal place for table cells).
