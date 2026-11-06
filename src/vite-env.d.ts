@@ -15,7 +15,21 @@ interface Window {
     setPowerSaveBlocker?: (enable: boolean) => Promise<{ active: boolean; id?: number | null; error?: string }>;
     isPowerSaveBlocking?: () => Promise<boolean>;
     showNotification?: (options: { title: string; body: string }) => Promise<{ success: boolean }>;
-    notifyUploadComplete?: (stats: { succeededCount: number; failedCount: number; duration?: string }) => void;
+    notifyUploadComplete?: (stats: {
+      succeededCount: number;
+      failedCount: number;
+      skippedCount?: number;
+      duration?: string;
+    }) => void;
+    notifyBatchComplete?: (payload: {
+      module?: 'ftp' | 'studio' | 'cleaner' | 'eps' | 'audio';
+      title?: string;
+      body?: string;
+      succeededCount?: number;
+      skippedCount?: number;
+      failedCount?: number;
+      duration?: string;
+    }) => Promise<{ success: boolean }>;
     rasterizeEpsNative: (
       fileBufferOrOptions:
         | ArrayBuffer
@@ -127,12 +141,15 @@ interface Window {
         remoteFolder: string;
         filename: string;
         itemId: string;
+        byteOffset?: number;
       }) => Promise<{
         success: boolean;
+        isDuplicateSkip?: boolean;
         errorCode?: string;
         errorMessage?: string;
       }>;
       abortBatch: () => Promise<{ aborted: boolean }>;
+      disconnectSession?: () => Promise<{ disconnected: boolean }>;
       selectFolderFiles?: () => Promise<{
         canceled: boolean;
         folderPath?: string;

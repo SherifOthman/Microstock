@@ -2,15 +2,19 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   resolveDreamstimeRoute,
   formatBytes,
+  formatBytesPrecise,
   formatTransferSpeed,
+  formatSpeedPrecise,
   formatEtaSeconds,
+  formatTimeLeftHms,
+  formatUnifiedUploadProgressLine,
   FTP_MAX_RETRIES_PER_FILE,
   FTP_RETRY_BACKOFF_SCHEDULE_MS,
 } from '../../src/services/ftp/dreamstimeFtpRouter';
 import { DreamstimeFtpOrchestrator } from '../../src/services/ftp/ftpClientService';
 import { db } from '../../src/db';
 
-describe('Dreamstime FTP Uploader (Plain FTP Port 21, Intelligent Sorting & 5x Retry)', () => {
+describe('Dreamstime FTP Uploader (Plain FTP Port 21, Vector Pair Bundling, Precision Telemetry & 5x Retry)', () => {
   beforeEach(async () => {
     await db.ftp.clearLogs('dreamstime');
   });
@@ -47,34 +51,45 @@ describe('Dreamstime FTP Uploader (Plain FTP Port 21, Intelligent Sorting & 5x R
     expect(csvRoute.ruleLabel).toContain('CSV');
   });
 
-  it('automatically sorts dropped files so Photos appear first, followed by Vectors, followed by Videos', () => {
+  it('automatically pairs matching JPG + EPS stems into atomic Vector Bundles and sorts Standalone Photos -> Vector Bundles/Vectors -> Videos', () => {
     const orchestrator = new DreamstimeFtpOrchestrator();
     orchestrator.addFiles([
       { name: 'video_clip_01.mp4', size: 25_000_000 },
-      { name: 'vector_illustration_01.eps', size: 4_000_000 },
-      { name: 'photo_shoot_01.jpg', size: 8_000_000 },
+      { name: 'helmet_vector.eps', size: 4_000_000 },
+      { name: 'standalone_photo_01.jpg', size: 8_000_000 },
+      { name: 'helmet_vector.jpg', size: 2_000_000 },
       { name: 'video_clip_02.mov', size: 30_000_000 },
-      { name: 'photo_shoot_02.png', size: 6_500_000 },
-      { name: 'vector_illustration_02.ai', size: 5_200_000 },
+      { name: 'standalone_photo_02.png', size: 6_500_000 },
+      { name: 'standalone_vector_02.ai', size: 5_200_000 },
     ]);
 
     const sortedQueue = orchestrator.getQueue();
-    expect(sortedQueue.map((i) => i.filename)).toEqual([
-      'photo_shoot_01.jpg',
-      'photo_shoot_02.png',
-      'vector_illustration_01.eps',
-      'vector_illustration_02.ai',
-      'video_clip_01.mp4',
-      'video_clip_02.mov',
-    ]);
-    expect(sortedQueue.map((i) => i.mediaType)).toEqual([
-      'image',
-      'image',
-      'vector',
-      'vector',
-      'video',
-      'video',
-    ]);
+    expect(sortedQueue.length).toBe(6);
+
+    // 1. Standalone Photos first
+    expect(sortedQueue[0].filename).toBe('standalone_photo_01.jpg');
+    expect(sortedQueue[0].mediaType).toBe('image');
+    expect(sortedQueue[1].filename).toBe('standalone_photo_02.png');
+    expect(sortedQueue[1].mediaType).toBe('image');
+
+    // 2. Vector Bundle (helmet_vector.jpg + helmet_vector.eps) and Standalone Vector second
+    const bundle = sortedQueue[2];
+    expect(bundle.isVectorBundle).toBe(true);
+    expect(bundle.displayName).toBe('Vector Bundle: helmet_vector');
+    expect(bundle.fileSize).toBe(6_000_000);
+    expect(bundle.jpgPart?.filename).toBe('helmet_vector.jpg');
+    expect(bundle.jpgPart?.remoteFolder).toBe('/');
+    expect(bundle.epsPart?.filename).toBe('helmet_vector.eps');
+    expect(bundle.epsPart?.remoteFolder).toBe('/additional');
+
+    expect(sortedQueue[3].filename).toBe('standalone_vector_02.ai');
+    expect(sortedQueue[3].mediaType).toBe('vector');
+
+    // 3. Videos last
+    expect(sortedQueue[4].filename).toBe('video_clip_01.mp4');
+    expect(sortedQueue[4].mediaType).toBe('video');
+    expect(sortedQueue[5].filename).toBe('video_clip_02.mov');
+    expect(sortedQueue[5].mediaType).toBe('video');
   });
 
   it('forces Plain FTP on port 21 and encrypts passwords at rest with enc:<hex> prefix in SQLite', async () => {
@@ -168,15 +183,46 @@ describe('Dreamstime FTP Uploader (Plain FTP Port 21, Intelligent Sorting & 5x R
     expect(logs.length).toBeGreaterThanOrEqual(4);
   });
 
-  it('formats transfer bytes, speed, and ETA strings accurately', () => {
+  it('formats precision transfer bytes, speed, HH:MM:SS time left, and unified progress line accurately', () => {
     expect(formatBytes(1024 * 1024 * 5.5)).toBe('5.5 MB');
+    expect(formatBytesPrecise(687.73 * 1024)).toBe('687.73 KB');
+    expect(formatBytesPrecise(5.49 * 1024 * 1024)).toBe('5.49 MB');
     expect(formatTransferSpeed(1024 * 1024 * 14.2)).toBe('14.2 MB/s');
     expect(formatTransferSpeed(1024 * 450)).toBe('450 KB/s');
-    expect(formatTransferSpeed(0)).toBe('0 KB/s');
+    expect(formatSpeedPrecise(625.03 * 1024)).toBe('625.03 KB/s');
     expect(formatEtaSeconds(125)).toBe('02m 05s');
+    expect(formatTimeLeftHms(61)).toBe('00:01:01');
+
+    const line = formatUnifiedUploadProgressLine({
+      sessionId: 'sess_1',
+      mode: 'live',
+      isRunning: true,
+      isPaused: false,
+      totalFiles: 5,
+      completedFiles: 0,
+      succeededFiles: 0,
+      failedFiles: 0,
+      skippedFiles: 0,
+      currentFileIndex: 1,
+      currentItemId: 'item_1',
+      currentFilename: 'test.mp4',
+      currentRemoteFolder: '/video',
+      currentFileBytesTransferred: Math.round(687.73 * 1024),
+      currentFileTotalBytes: Math.round(5.49 * 1024 * 1024),
+      currentFilePercent: 12,
+      batchBytesTransferred: Math.round(687.73 * 1024),
+      batchTotalBytes: Math.round(5.49 * 1024 * 1024),
+      batchPercent: 12,
+      speedBytesPerSec: Math.round(625.03 * 1024),
+      etaSeconds: 61,
+      activeRetryAttempt: 0,
+    });
+    expect(line).toBe(
+      'Upload progress: 1/5 files - 687.73 KB / 5.49 MB @ 625.03 KB/s Time left: 00:01:01'
+    );
   });
 
-  it('supports single-item retry and clear completed queue items', async () => {
+  it('supports single-item retry and clear completed / clear all queue items', async () => {
     const orchestrator = new DreamstimeFtpOrchestrator();
     orchestrator.addFiles([
       { name: 'photo_success.jpg', size: 1_000_000 },
@@ -202,14 +248,17 @@ describe('Dreamstime FTP Uploader (Plain FTP Port 21, Intelligent Sorting & 5x R
       simulatedChunkIntervalMs: 1,
     });
 
-    expect(orchestrator.getQueue().find((i) => i.filename === 'photo_failed.jpg')?.status).toBe('succeeded');
+    expect(orchestrator.getQueue().find((i) => i.filename === 'photo_failed.jpg')?.status).toBe(
+      'succeeded'
+    );
 
-    // Clear completed
-    orchestrator.clearCompleted();
+    // Clear all resets queue and telemetry counters
+    orchestrator.clearQueue();
     expect(orchestrator.getQueue().length).toBe(0);
+    expect(orchestrator.getTelemetry().totalFiles).toBe(0);
   });
 
-  it('immediately skips files with permanent 5xx errors (550, 552, 553, Permission denied) without retrying and ensures progress reaches 100%', async () => {
+  it('strictly isolates 550 duplicate errors into Skipped state without retrying', async () => {
     const orchestrator = new DreamstimeFtpOrchestrator();
     orchestrator.addFiles([
       { name: 'photo_good.jpg', size: 1_000_000 },
@@ -248,19 +297,16 @@ describe('Dreamstime FTP Uploader (Plain FTP Port 21, Intelligent Sorting & 5x R
 
     expect(orchestrator.getIsPaused()).toBe(false);
 
-    // Start batch in background
     const uploadPromise = orchestrator.startBatchUpload({
       mode: 'dry_run',
       simulatedChunkIntervalMs: 20,
     });
 
-    // Pause batch after brief tick
     await new Promise((r) => setTimeout(r, 10));
     orchestrator.pauseBatch();
     expect(orchestrator.getIsPaused()).toBe(true);
     expect(orchestrator.getTelemetry().isPaused).toBe(true);
 
-    // Resume batch
     orchestrator.resumeBatch();
     expect(orchestrator.getIsPaused()).toBe(false);
     expect(orchestrator.getTelemetry().isPaused).toBe(false);

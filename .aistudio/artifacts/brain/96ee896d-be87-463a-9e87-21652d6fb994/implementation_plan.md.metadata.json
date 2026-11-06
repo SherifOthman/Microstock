@@ -1,6 +1,6 @@
 {
-  "summary": "Complete UX Redesign Blueprint for the Distribution Tracker (Visual Gallery Grid + Compact List Toggle), Overview Morning Hub (6 Agency Readiness Cards + Clean Analytics Charts), and Minimalist FTP Uploader, plus the 50-Asset Self-Correction Simulation Plan.",
-  "updatedAt": "2026-11-05T20:26:45.297969271Z",
+  "summary": "StockFlow Refactoring Blueprint diagnosing FTP ghost uploads and false 550 skips, defining the single-session basic-ftp state machine with 30s zero-byte stall detection, atomic Vector Bundle (JPG -> / then EPS -> /additional) pairing, 1000ms delta telemetry math, media-aware HoverCard previews, and global Electron OS notifications.",
+  "updatedAt": "2026-11-06T11:28:30.101952332Z",
   "requestFeedback": true,
   "userFacing": true
 }

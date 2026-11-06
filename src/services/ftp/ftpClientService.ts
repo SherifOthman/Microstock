@@ -1,15 +1,20 @@
 import { db } from '../../db';
+import { notifyBatchComplete } from '../desktop/osNotifications';
 import { encryptSecret } from '../desktop/secureStorage';
 import {
   DreamstimeRemoteFolder,
   formatEtaSeconds,
   FTP_MAX_RETRIES_PER_FILE,
   FTP_RETRY_BACKOFF_SCHEDULE_MS,
+  FtpBundlePart,
   FtpCredentialProfile,
   FtpExecutionMode,
   FtpProtocolType,
   FtpQueueItem,
   FtpTelemetryFrame,
+  getFilenameStem,
+  isJpgPreviewExtension,
+  isVectorExtension,
   resolveDreamstimeRoute,
   SimulatedFaultMode,
   sortFtpQueueByMediaPriority,
@@ -51,6 +56,30 @@ const INITIAL_TELEMETRY: FtpTelemetryFrame = {
   statusMessage: 'Ready',
 };
 
+function buildPreviewUrl(fileObject?: File, localPath?: string): string | undefined {
+  if (fileObject && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+    try {
+      return URL.createObjectURL(fileObject);
+    } catch {
+      // fall through
+    }
+  }
+  if (localPath) {
+    return `stockflow://local?path=${encodeURIComponent(localPath)}`;
+  }
+  return undefined;
+}
+
+function revokePreviewUrl(url?: string): void {
+  if (url && url.startsWith('blob:') && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      // ignore
+    }
+  }
+}
+
 /**
  * Decoupled Background FTP Orchestrator for Microstock Agencies.
  * Operates completely independently of MetadataStudioView or DistributionTrackerView UI state,
@@ -66,13 +95,10 @@ export class DreamstimeFtpOrchestrator {
   private isRunning = false;
   private isPaused = false;
   private ipcUnsub: (() => void) | null = null;
-  private lastTickTime = 0;
-  private lastTickBytes = 0;
   private currentSpeedBps = 0;
   private keepAwakeActive = false;
   private speedTimer: ReturnType<typeof setInterval> | null = null;
-  private lastSpeedCheckTime = 0;
-  private lastBatchBytesTransferred = 0;
+  private byteSamples: Array<{ time: number; bytes: number }> = [];
   private batchStartTime = 0;
 
   constructor() {
@@ -244,9 +270,12 @@ export class DreamstimeFtpOrchestrator {
   }
 
   /**
-   * Enqueues File objects or file descriptors, routes each automatically to
-   * `/` (Photos), `/additional` (Vectors), or `/video` (Videos), and
-   * automatically sorts the queue so Photos appear first, Vectors second, and Videos third.
+   * Enqueues File objects or file descriptors:
+   * - Automatically detects Vector Pairs (`basename.jpg` + `basename.eps`/`.ai`) and merges them into a single
+   *   atomic `Vector Bundle: <basename>` item (`isVectorBundle: true`) so the JPG preview is uploaded to `/`
+   *   first and the EPS counterpart is uploaded to `/additional` immediately after.
+   * - Routes standalone files to `/` (Photos), `/additional` (Standalone Vectors), or `/video` (Videos).
+   * - Automatically sorts the queue: Standalone Photos (0) -> Vector Bundles & Vectors (1) -> Videos (2).
    */
   addFiles(
     files: Array<
@@ -258,36 +287,219 @@ export class DreamstimeFtpOrchestrator {
         }
     >
   ): FtpQueueItem[] {
-    const added: FtpQueueItem[] = [];
+    const normalizedInputs: Array<{
+      filename: string;
+      stem: string;
+      stemKey: string;
+      localPath: string;
+      fileSize: number;
+      fileObject?: File;
+      route: ReturnType<typeof resolveDreamstimeRoute>;
+      isJpg: boolean;
+      isVec: boolean;
+    }> = [];
+
     for (const f of files) {
-      const filename = f.name.trim();
+      const filename = (f.name || '').trim();
       if (!filename) continue;
       const route = resolveDreamstimeRoute(filename);
       const localPath =
         typeof window !== 'undefined' && f instanceof File && window.electronAPI?.getPathForFile
           ? window.electronAPI.getPathForFile(f)
           : (f as { path?: string }).path || `/StockFlow/Master_Vault/${filename}`;
+      const fileSize = Math.max(1024, f.size || 2_400_000);
+      const stem = getFilenameStem(filename);
+      normalizedInputs.push({
+        filename,
+        stem,
+        stemKey: stem.toLowerCase(),
+        localPath,
+        fileSize,
+        fileObject: f instanceof File ? f : undefined,
+        route,
+        isJpg: isJpgPreviewExtension(filename),
+        isVec: isVectorExtension(filename),
+      });
+    }
 
+    const added: FtpQueueItem[] = [];
+    const consumedIndices = new Set<number>();
+
+    // First pass: check if incoming files can pair with an already-queued standalone JPG or standalone Vector
+    for (let idx = 0; idx < normalizedInputs.length; idx++) {
+      const entry = normalizedInputs[idx];
+      if (!entry.isJpg && !entry.isVec) continue;
+
+      const existingMatch = this.queue.find((q) => {
+        if (q.isVectorBundle || q.status !== 'queued') return false;
+        const qStemKey = (q.stemName || getFilenameStem(q.filename)).toLowerCase();
+        if (qStemKey !== entry.stemKey) return false;
+        if (entry.isJpg && isVectorExtension(q.filename)) return true;
+        if (entry.isVec && isJpgPreviewExtension(q.filename)) return true;
+        return false;
+      });
+
+      if (existingMatch) {
+        consumedIndices.add(idx);
+        const jpgSource = entry.isJpg
+          ? {
+              filename: entry.filename,
+              localPath: entry.localPath,
+              fileSize: entry.fileSize,
+              fileObject: entry.fileObject,
+            }
+          : {
+              filename: existingMatch.filename,
+              localPath: existingMatch.localPath,
+              fileSize: existingMatch.fileSize,
+              fileObject: existingMatch.fileObject,
+            };
+
+        const epsSource = entry.isVec
+          ? {
+              filename: entry.filename,
+              localPath: entry.localPath,
+              fileSize: entry.fileSize,
+              fileObject: entry.fileObject,
+            }
+          : {
+              filename: existingMatch.filename,
+              localPath: existingMatch.localPath,
+              fileSize: existingMatch.fileSize,
+              fileObject: existingMatch.fileObject,
+            };
+
+        const jpgPart: FtpBundlePart = {
+          filename: jpgSource.filename,
+          localPath: jpgSource.localPath,
+          fileSize: jpgSource.fileSize,
+          remoteFolder: '/',
+          remotePath: `/${jpgSource.filename}`,
+          fileObject: jpgSource.fileObject,
+          uploaded: false,
+        };
+        const epsPart: FtpBundlePart = {
+          filename: epsSource.filename,
+          localPath: epsSource.localPath,
+          fileSize: epsSource.fileSize,
+          remoteFolder: '/additional',
+          remotePath: `/additional/${epsSource.filename}`,
+          fileObject: epsSource.fileObject,
+          uploaded: false,
+        };
+
+        existingMatch.isVectorBundle = true;
+        existingMatch.stemName = entry.stem;
+        existingMatch.displayName = `Vector Bundle: ${entry.stem}`;
+        existingMatch.filename = `${jpgSource.filename} + ${epsSource.filename}`;
+        existingMatch.mediaType = 'vector';
+        existingMatch.remoteFolder = '/additional';
+        existingMatch.remotePath = `/ → /additional`;
+        existingMatch.fileSize = jpgPart.fileSize + epsPart.fileSize;
+        existingMatch.jpgPart = jpgPart;
+        existingMatch.epsPart = epsPart;
+        existingMatch.previewUrl =
+          existingMatch.previewUrl || buildPreviewUrl(jpgPart.fileObject, jpgPart.localPath);
+        added.push(existingMatch);
+      }
+    }
+
+    // Second pass: pair matching JPG + EPS stems within the incoming batch itself
+    for (let i = 0; i < normalizedInputs.length; i++) {
+      if (consumedIndices.has(i)) continue;
+      const current = normalizedInputs[i];
+
+      if (current.isJpg || current.isVec) {
+        let partnerIdx = -1;
+        for (let j = i + 1; j < normalizedInputs.length; j++) {
+          if (consumedIndices.has(j)) continue;
+          const candidate = normalizedInputs[j];
+          if (candidate.stemKey !== current.stemKey) continue;
+          if ((current.isJpg && candidate.isVec) || (current.isVec && candidate.isJpg)) {
+            partnerIdx = j;
+            break;
+          }
+        }
+
+        if (partnerIdx !== -1) {
+          consumedIndices.add(i);
+          consumedIndices.add(partnerIdx);
+          const partner = normalizedInputs[partnerIdx];
+          const jpgEntry = current.isJpg ? current : partner;
+          const epsEntry = current.isVec ? current : partner;
+
+          const jpgPart: FtpBundlePart = {
+            filename: jpgEntry.filename,
+            localPath: jpgEntry.localPath,
+            fileSize: jpgEntry.fileSize,
+            remoteFolder: '/',
+            remotePath: `/${jpgEntry.filename}`,
+            fileObject: jpgEntry.fileObject,
+            uploaded: false,
+          };
+          const epsPart: FtpBundlePart = {
+            filename: epsEntry.filename,
+            localPath: epsEntry.localPath,
+            fileSize: epsEntry.fileSize,
+            remoteFolder: '/additional',
+            remotePath: `/additional/${epsEntry.filename}`,
+            fileObject: epsEntry.fileObject,
+            uploaded: false,
+          };
+
+          const bundleItem: FtpQueueItem = {
+            id: `ftp_bundle_${crypto.randomUUID().slice(0, 8)}`,
+            filename: `${jpgEntry.filename} + ${epsEntry.filename}`,
+            displayName: `Vector Bundle: ${jpgEntry.stem}`,
+            stemName: jpgEntry.stem,
+            isVectorBundle: true,
+            jpgPart,
+            epsPart,
+            previewUrl: buildPreviewUrl(jpgEntry.fileObject, jpgEntry.localPath),
+            localPath: jpgEntry.localPath,
+            fileSize: jpgPart.fileSize + epsPart.fileSize,
+            mediaType: 'vector',
+            remoteFolder: '/additional',
+            remotePath: `/ → /additional`,
+            status: 'queued',
+            bytesTransferred: 0,
+            progressPercent: 0,
+            retryCount: 0,
+            maxRetries: FTP_MAX_RETRIES_PER_FILE,
+            fileObject: jpgEntry.fileObject,
+          };
+          this.queue.push(bundleItem);
+          added.push(bundleItem);
+          continue;
+        }
+      }
+
+      // Standalone file
+      consumedIndices.add(i);
       const item: FtpQueueItem = {
         id: `ftp_item_${crypto.randomUUID().slice(0, 8)}`,
-        filename,
-        localPath,
-        fileSize: Math.max(1024, f.size || 2_400_000),
-        mediaType: route.mediaType,
-        remoteFolder: route.remoteFolder,
-        remotePath: route.remotePath,
+        filename: current.filename,
+        displayName: current.filename,
+        stemName: current.stem,
+        isVectorBundle: false,
+        previewUrl: buildPreviewUrl(current.fileObject, current.localPath),
+        localPath: current.localPath,
+        fileSize: current.fileSize,
+        mediaType: current.route.mediaType,
+        remoteFolder: current.route.remoteFolder,
+        remotePath: current.route.remotePath,
         status: 'queued',
         bytesTransferred: 0,
         progressPercent: 0,
         retryCount: 0,
         maxRetries: FTP_MAX_RETRIES_PER_FILE,
-        fileObject: f instanceof File ? f : undefined,
+        fileObject: current.fileObject,
       };
       this.queue.push(item);
       added.push(item);
     }
 
-    // Intelligent File Sorting: Photos ('image') -> Vectors ('vector') -> Videos ('video')
+    // Intelligent File Sorting: Standalone Photos (0) -> Vector Bundles & Vectors (1) -> Videos (2)
     this.queue = sortFtpQueueByMediaPriority(this.queue);
 
     this.recalculateBatchTelemetry();
@@ -313,6 +525,10 @@ export class DreamstimeFtpOrchestrator {
 
   removeItem(id: string): void {
     if (this.isRunning) return;
+    const target = this.queue.find((i) => i.id === id);
+    if (target?.previewUrl) {
+      revokePreviewUrl(target.previewUrl);
+    }
     this.queue = this.queue.filter((i) => i.id !== id);
     this.recalculateBatchTelemetry();
     this.notify();
@@ -320,6 +536,11 @@ export class DreamstimeFtpOrchestrator {
 
   clearCompleted(): void {
     if (this.isRunning) return;
+    for (const item of this.queue) {
+      if (item.status === 'succeeded' && item.previewUrl) {
+        revokePreviewUrl(item.previewUrl);
+      }
+    }
     this.queue = this.queue.filter((i) => i.status !== 'succeeded');
     this.recalculateBatchTelemetry();
     this.notify();
@@ -334,6 +555,14 @@ export class DreamstimeFtpOrchestrator {
     item.retryCount = 0;
     item.errorCode = undefined;
     item.errorMessage = undefined;
+    if (item.isVectorBundle && item.jpgPart && item.epsPart) {
+      // Keep jpgPart.uploaded if it already succeeded so retry only uploads the missing part,
+      // or reset if neither succeeded
+      if (item.jpgPart.uploaded && !item.epsPart.uploaded) {
+        item.bytesTransferred = item.jpgPart.fileSize;
+        item.progressPercent = Math.round((item.jpgPart.fileSize / Math.max(1, item.fileSize)) * 100);
+      }
+    }
     this.recalculateBatchTelemetry();
     this.notify();
     if (!this.isRunning) {
@@ -361,7 +590,14 @@ export class DreamstimeFtpOrchestrator {
 
   clearQueue(): void {
     if (this.isRunning) return;
+    for (const item of this.queue) {
+      if (item.previewUrl) {
+        revokePreviewUrl(item.previewUrl);
+      }
+    }
     this.queue = [];
+    this.byteSamples = [];
+    this.currentSpeedBps = 0;
     this.telemetry = {
       ...INITIAL_TELEMETRY,
       mode: this.mode,
@@ -373,6 +609,7 @@ export class DreamstimeFtpOrchestrator {
     if (!this.isRunning || this.isPaused) return;
     this.isPaused = true;
     this.currentSpeedBps = 0;
+    this.byteSamples = [];
     this.telemetry = {
       ...this.telemetry,
       isPaused: true,
@@ -386,8 +623,12 @@ export class DreamstimeFtpOrchestrator {
   resumeBatch(): void {
     if (!this.isRunning || !this.isPaused) return;
     this.isPaused = false;
-    this.lastSpeedCheckTime = Date.now();
-    this.lastBatchBytesTransferred = this.calculateBatchTransferredBytes();
+    this.byteSamples = [
+      {
+        time: Date.now(),
+        bytes: this.calculateBatchTransferredBytes(),
+      },
+    ];
     this.telemetry = {
       ...this.telemetry,
       isPaused: false,
@@ -433,13 +674,36 @@ export class DreamstimeFtpOrchestrator {
     return total;
   }
 
+  private recordByteDeltaSample(): void {
+    const now = Date.now();
+    const currentBytes = this.calculateBatchTransferredBytes();
+    this.byteSamples.push({ time: now, bytes: currentBytes });
+    // Keep samples within the last 2500ms for smooth 1000ms instantaneous delta calculation
+    const cutoff = now - 2500;
+    while (this.byteSamples.length > 2 && this.byteSamples[0].time < cutoff) {
+      this.byteSamples.shift();
+    }
+
+    // Find sample closest to ~1000ms ago
+    const baseline = this.byteSamples[0];
+    const elapsedSec = (now - baseline.time) / 1000;
+    if (elapsedSec >= 0.15) {
+      const deltaBytes = Math.max(0, currentBytes - baseline.bytes);
+      this.currentSpeedBps = Math.round(deltaBytes / elapsedSec);
+    }
+  }
+
   private handleLiveProgressTick(itemId: string, bytesTransferred: number): void {
     const item = this.queue.find((q) => q.id === itemId);
     if (!item) return;
+    // Ignore stale ticks for items that are no longer actively uploading
+    if (item.status !== 'uploading') return;
+
     const clamped = Math.min(item.fileSize, Math.max(0, bytesTransferred));
     item.bytesTransferred = clamped;
     item.progressPercent = Math.min(100, Math.round((clamped / Math.max(1, item.fileSize)) * 100));
-    this.recalculateBatchTelemetry(item);
+    this.recordByteDeltaSample();
+    this.recalculateBatchTelemetry(item, this.currentSpeedBps);
     this.notify();
   }
 
@@ -505,7 +769,7 @@ export class DreamstimeFtpOrchestrator {
       skippedFiles,
       currentFileIndex: Math.min(totalFiles, Math.max(0, currentIdx)),
       currentItemId: activeItem ? activeItem.id : null,
-      currentFilename: activeItem ? activeItem.filename : '',
+      currentFilename: activeItem ? activeItem.displayName || activeItem.filename : '',
       currentRemoteFolder: (activeItem ? activeItem.remoteFolder : '/') as DreamstimeRemoteFolder,
       currentFileBytesTransferred: activeItem ? activeItem.bytesTransferred : 0,
       currentFileTotalBytes: activeItem ? activeItem.fileSize : 0,
@@ -537,11 +801,64 @@ export class DreamstimeFtpOrchestrator {
   }
 
   /**
-   * Runs all queued items sequentially (Photos -> Vectors -> Videos) with:
-   * - Deterministic Dreamstime folder routing (`/`, `/additional`, `/video`)
-   * - Plain FTP on Port 21 (`secure: false`)
-   * - Automatic 5x exponential backoff retries (`2s -> 5s -> 10s -> 30s -> 60s`)
-   * - Isolation of persistent failures into the Failed Queue
+   * Uploads a single physical file via Electron IPC (with persistent FTP socket + 30s zero-byte stall watchdog,
+   * NO hardcoded 35-second cutoff!).
+   */
+  private async executePhysicalUpload(params: {
+    itemId: string;
+    filename: string;
+    localPath?: string;
+    fileObject?: File;
+    remoteFolder: DreamstimeRemoteFolder;
+    byteOffset: number;
+  }): Promise<{
+    success: boolean;
+    isDuplicateSkip?: boolean;
+    errorCode?: string;
+    errorMessage?: string;
+  }> {
+    let fileBuffer: ArrayBuffer | undefined;
+    if (params.fileObject) {
+      try {
+        fileBuffer = await params.fileObject.arrayBuffer();
+      } catch {
+        // ignore buffer read error
+      }
+    }
+
+    const ftpApi = window.electronAPI?.ftp;
+    if (!ftpApi) {
+      return {
+        success: false,
+        errorCode: 'NO_IPC',
+        errorMessage: 'Electron FTP bridge is unavailable.',
+      };
+    }
+
+    const res = await ftpApi.uploadFile({
+      agencyId: 'dreamstime',
+      localPath: params.localPath,
+      fileBuffer,
+      remoteFolder: params.remoteFolder,
+      filename: params.filename,
+      itemId: params.itemId,
+      byteOffset: params.byteOffset,
+    });
+
+    return {
+      success: Boolean(res.success),
+      isDuplicateSkip: Boolean(res.isDuplicateSkip),
+      errorCode: res.errorCode,
+      errorMessage: res.errorMessage,
+    };
+  }
+
+  /**
+   * Runs all queued items sequentially (Standalone Photos -> Vector Bundles/Vectors -> Videos) with:
+   * - Persistent single-socket Plain FTP on Port 21 (`secure: false`)
+   * - Atomic two-phase upload for Vector Bundles (`JPG -> /` first, then `EPS -> /additional`)
+   * - Strict isolation of `550` duplicate skips from transient network drops (`4xx` / `ETIMEDOUT_STALL`)
+   * - 5x round-robin retry sweeps
    * - Persistent SQLite session & file logging (`ftp_sessions` & `ftp_transfer_logs`)
    */
   async startBatchUpload(options: FtpBatchRunOptions = {}): Promise<{
@@ -594,10 +911,14 @@ export class DreamstimeFtpOrchestrator {
     this.notify();
 
     this.currentSpeedBps = 0;
-    this.lastBatchBytesTransferred = this.calculateBatchTransferredBytes();
-    this.lastSpeedCheckTime = Date.now();
+    this.byteSamples = [
+      {
+        time: Date.now(),
+        bytes: this.calculateBatchTransferredBytes(),
+      },
+    ];
 
-    // 1-second interval for accurate speed & ETA calculation from network bytes delta
+    // 1000ms ticker for instantaneous delta speed & ETA
     if (this.speedTimer) {
       clearInterval(this.speedTimer);
     }
@@ -609,14 +930,9 @@ export class DreamstimeFtpOrchestrator {
         this.notify();
         return;
       }
-      const now = Date.now();
-      const elapsedSec = Math.max(0.5, (now - this.lastSpeedCheckTime) / 1000);
-      const currentBatchBytes = this.calculateBatchTransferredBytes();
-      const deltaBytes = Math.max(0, currentBatchBytes - this.lastBatchBytesTransferred);
-      this.currentSpeedBps = Math.round(deltaBytes / elapsedSec);
-      this.lastBatchBytesTransferred = currentBatchBytes;
-      this.lastSpeedCheckTime = now;
-      this.recalculateBatchTelemetry(undefined, this.currentSpeedBps);
+      this.recordByteDeltaSample();
+      const activeItem = this.queue.find((q) => q.status === 'uploading');
+      this.recalculateBatchTelemetry(activeItem, this.currentSpeedBps);
       this.notify();
     }, 1000);
 
@@ -624,7 +940,11 @@ export class DreamstimeFtpOrchestrator {
     if (activeFaultMode !== 'none') {
       if (options.faultTargetFilenames && options.faultTargetFilenames.length > 0) {
         for (const item of this.queue) {
-          if (options.faultTargetFilenames.includes(item.filename)) {
+          if (
+            options.faultTargetFilenames.includes(item.filename) ||
+            (item.jpgPart && options.faultTargetFilenames.includes(item.jpgPart.filename)) ||
+            (item.epsPart && options.faultTargetFilenames.includes(item.epsPart.filename))
+          ) {
             faultTargetIds.add(item.id);
           }
         }
@@ -672,7 +992,6 @@ export class DreamstimeFtpOrchestrator {
           }
           if (this.aborted) break;
 
-          // Set retryCount to current sweep attempt if it's a retry
           if (sweep > 1) {
             item.retryCount = sweep;
           }
@@ -681,54 +1000,94 @@ export class DreamstimeFtpOrchestrator {
           this.recalculateBatchTelemetry(
             item,
             this.currentSpeedBps,
-            `Uploading ${item.filename} → ${item.remoteFolder}${sweep > 1 ? ` (Sweep ${sweep}/${FTP_MAX_RETRIES_PER_FILE})` : ''}`
+            `Uploading ${item.displayName || item.filename} → ${item.remoteFolder}`
           );
           this.notify();
 
           const fileStartMs = Date.now();
           let succeeded = false;
+          let isDuplicateSkip = false;
           let lastErrorCode = '';
           let lastErrorMessage = '';
 
           if (useNativeElectronFtp && window.electronAPI?.ftp?.uploadFile) {
-            let fileBuffer: ArrayBuffer | undefined;
-            if (item.fileObject) {
-              try {
-                fileBuffer = await item.fileObject.arrayBuffer();
-              } catch {
-                // ignore buffer read error
+            if (item.isVectorBundle && item.jpgPart && item.epsPart) {
+              // ATOMIC TWO-PHASE VECTOR BUNDLE UPLOAD:
+              // Phase A: Upload JPG preview to root `/` first
+              let phaseAOk = item.jpgPart.uploaded;
+              if (!phaseAOk) {
+                const resA = await this.executePhysicalUpload({
+                  itemId: item.id,
+                  filename: item.jpgPart.filename,
+                  localPath: item.jpgPart.localPath,
+                  fileObject: item.jpgPart.fileObject,
+                  remoteFolder: '/',
+                  byteOffset: 0,
+                });
+                if (resA.success || resA.isDuplicateSkip) {
+                  item.jpgPart.uploaded = true;
+                  phaseAOk = true;
+                  item.bytesTransferred = item.jpgPart.fileSize;
+                  item.progressPercent = Math.round(
+                    (item.jpgPart.fileSize / Math.max(1, item.fileSize)) * 100
+                  );
+                  this.recordByteDeltaSample();
+                  this.recalculateBatchTelemetry(item, this.currentSpeedBps);
+                  this.notify();
+                } else {
+                  lastErrorCode = resA.errorCode || 'ECONNRESET';
+                  lastErrorMessage =
+                    resA.errorMessage || `Failed uploading preview ${item.jpgPart.filename}`;
+                }
               }
-            }
 
-            const nativeUploadPromise = window.electronAPI.ftp.uploadFile({
-              agencyId: 'dreamstime',
-              localPath: item.localPath,
-              fileBuffer,
-              remoteFolder: item.remoteFolder,
-              filename: item.filename,
-              itemId: item.id,
-            });
+              // Phase B: Only after JPG preview is on root `/`, upload EPS vector to `/additional`
+              if (phaseAOk && !this.aborted) {
+                const resB = await this.executePhysicalUpload({
+                  itemId: item.id,
+                  filename: item.epsPart.filename,
+                  localPath: item.epsPart.localPath,
+                  fileObject: item.epsPart.fileObject,
+                  remoteFolder: '/additional',
+                  byteOffset: item.jpgPart.fileSize,
+                });
 
-            const timeoutPromise = new Promise<{ success: boolean; errorCode?: string; errorMessage?: string }>(
-              (resolve) =>
-                setTimeout(
-                  () =>
-                    resolve({
-                      success: false,
-                      errorCode: 'ETIMEDOUT',
-                      errorMessage: 'FTP upload socket timed out (35s limit).',
-                    }),
-                  35000
-                )
-            );
-
-            const res = await Promise.race([nativeUploadPromise, timeoutPromise]);
-
-            if (res.success) {
-              succeeded = true;
+                if (resB.success) {
+                  item.epsPart.uploaded = true;
+                  succeeded = true;
+                } else if (resB.isDuplicateSkip) {
+                  item.epsPart.uploaded = true;
+                  isDuplicateSkip = true;
+                  lastErrorCode = resB.errorCode || '550';
+                  lastErrorMessage =
+                    resB.errorMessage || 'Skipped: Vector pair already exists on Dreamstime.';
+                } else {
+                  lastErrorCode = resB.errorCode || 'ECONNRESET';
+                  lastErrorMessage =
+                    resB.errorMessage || `Failed uploading vector ${item.epsPart.filename}`;
+                }
+              }
             } else {
-              lastErrorCode = res.errorCode || 'ECONNRESET';
-              lastErrorMessage = res.errorMessage || 'FTP connection error during transfer.';
+              // Single standalone file upload (Photo, Standalone Vector, or Video)
+              const res = await this.executePhysicalUpload({
+                itemId: item.id,
+                filename: item.filename,
+                localPath: item.localPath,
+                fileObject: item.fileObject,
+                remoteFolder: item.remoteFolder,
+                byteOffset: 0,
+              });
+
+              if (res.success) {
+                succeeded = true;
+              } else if (res.isDuplicateSkip) {
+                isDuplicateSkip = true;
+                lastErrorCode = res.errorCode || '550';
+                lastErrorMessage = res.errorMessage || '550 File already exists on remote server.';
+              } else {
+                lastErrorCode = res.errorCode || 'ECONNRESET';
+                lastErrorMessage = res.errorMessage || 'FTP connection error during transfer.';
+              }
             }
           } else {
             // Simulated upload (dry-run or testing mode)
@@ -751,11 +1110,21 @@ export class DreamstimeFtpOrchestrator {
               const ratio = step / totalSteps;
               item.bytesTransferred = Math.round(item.fileSize * ratio);
               item.progressPercent = Math.round(ratio * 100);
+              if (item.isVectorBundle && item.jpgPart && item.epsPart) {
+                if (ratio >= 0.5) {
+                  item.jpgPart.uploaded = true;
+                }
+                if (ratio >= 1) {
+                  item.epsPart.uploaded = true;
+                }
+              }
+              this.recordByteDeltaSample();
               this.recalculateBatchTelemetry(item, this.currentSpeedBps);
               this.notify();
 
               if (shouldFailThisAttempt && step === failAtStep) {
                 if (activeFaultMode === 'permanent_550_skip') {
+                  isDuplicateSkip = true;
                   lastErrorCode = '550';
                   lastErrorMessage = '550 Permission denied: File already exists on server.';
                 } else {
@@ -805,23 +1174,46 @@ export class DreamstimeFtpOrchestrator {
               durationMs,
               completedAt,
             });
-          } else {
-            // Check for 5xx permanent errors vs 4xx / network temporary drops
-            const errorCombined = `${lastErrorCode} ${lastErrorMessage}`;
-            const is5xxPermanent =
-              /(?:550|552|553|permission denied|overwrite)/i.test(errorCombined) ||
-              /^5\d\d/.test(String(lastErrorCode || ''));
+          } else if (isDuplicateSkip) {
+            // STRICT 550 DUPLICATE SKIP: Only triggered by remote `client.list()` pre-check or explicit `550` duplicate response
+            item.status = 'skipped';
+            item.bytesTransferred = 0;
+            item.progressPercent = 0;
+            item.durationMs = durationMs;
+            item.completedAt = completedAt;
+            item.errorCode = lastErrorCode || '550';
+            item.errorMessage =
+              lastErrorMessage || 'Skipped: File already exists on Dreamstime server (550)';
 
-            if (is5xxPermanent) {
-              // PERMANENT 5xx ERROR: Immediately set to 'skipped', DO NOT put in retry loop!
-              item.status = 'skipped';
+            await db.ftp.logTransfer({
+              sessionId: session.id,
+              agencyId: 'dreamstime',
+              filename: item.filename,
+              localPath: item.localPath,
+              fileSize: item.fileSize,
+              mediaType: item.mediaType,
+              remoteDirectory: item.remoteFolder,
+              remotePath: item.remotePath,
+              status: 'skipped',
+              retryCount: item.retryCount,
+              errorCode: item.errorCode,
+              errorMessage: item.errorMessage,
+              durationMs,
+              completedAt,
+            });
+          } else {
+            // Temporary network drop / 4xx / 30s zero-byte stall -> Round-Robin retry logic
+            item.retryCount = sweep;
+            item.errorCode = lastErrorCode || 'FTP_ERR';
+            item.errorMessage = lastErrorMessage || 'FTP transfer failed.';
+
+            if (item.retryCount >= item.maxRetries) {
+              // 5th failure: permanently mark as 'failed'
+              item.status = 'failed';
               item.bytesTransferred = 0;
               item.progressPercent = 0;
               item.durationMs = durationMs;
               item.completedAt = completedAt;
-              item.errorCode = lastErrorCode || '550';
-              item.errorMessage =
-                lastErrorMessage || 'Skipped: File already exists or server rejected (5xx)';
 
               await db.ftp.logTransfer({
                 sessionId: session.id,
@@ -832,7 +1224,7 @@ export class DreamstimeFtpOrchestrator {
                 mediaType: item.mediaType,
                 remoteDirectory: item.remoteFolder,
                 remotePath: item.remotePath,
-                status: 'skipped',
+                status: 'failed',
                 retryCount: item.retryCount,
                 errorCode: item.errorCode,
                 errorMessage: item.errorMessage,
@@ -840,38 +1232,16 @@ export class DreamstimeFtpOrchestrator {
                 completedAt,
               });
             } else {
-              // Temporary network drop / 4xx -> standard Round-Robin retry logic
-              item.retryCount = sweep;
-              item.errorCode = lastErrorCode || 'FTP_ERR';
-              item.errorMessage = lastErrorMessage || 'FTP transfer failed.';
-
-              if (item.retryCount >= item.maxRetries) {
-                // 5th failure: permanently mark as 'failed'
-                item.status = 'failed';
+              // Mark as 'retry' for the next sweep; keep partial progress if Phase A of a bundle succeeded
+              item.status = 'retry';
+              if (item.isVectorBundle && item.jpgPart?.uploaded) {
+                item.bytesTransferred = item.jpgPart.fileSize;
+                item.progressPercent = Math.round(
+                  (item.jpgPart.fileSize / Math.max(1, item.fileSize)) * 100
+                );
+              } else {
                 item.bytesTransferred = 0;
                 item.progressPercent = 0;
-                item.durationMs = durationMs;
-                item.completedAt = completedAt;
-
-                await db.ftp.logTransfer({
-                  sessionId: session.id,
-                  agencyId: 'dreamstime',
-                  filename: item.filename,
-                  localPath: item.localPath,
-                  fileSize: item.fileSize,
-                  mediaType: item.mediaType,
-                  remoteDirectory: item.remoteFolder,
-                  remotePath: item.remotePath,
-                  status: 'failed',
-                  retryCount: item.retryCount,
-                  errorCode: item.errorCode,
-                  errorMessage: item.errorMessage,
-                  durationMs,
-                  completedAt,
-                });
-              } else {
-                // In-place mark as 'retry'. DO NOT wait. Move immediately to next file in array!
-                item.status = 'retry';
               }
             }
           }
@@ -884,6 +1254,9 @@ export class DreamstimeFtpOrchestrator {
       if (this.speedTimer) {
         clearInterval(this.speedTimer);
         this.speedTimer = null;
+      }
+      if (typeof window !== 'undefined' && window.electronAPI?.ftp?.disconnectSession) {
+        window.electronAPI.ftp.disconnectSession().catch(() => {});
       }
       this.isRunning = false;
       this.isPaused = false;
@@ -928,22 +1301,15 @@ export class DreamstimeFtpOrchestrator {
     };
     this.notify();
 
-    // Trigger Native OS Notification via Electron Main Process
+    // Trigger Global Native OS Notification via Electron Main Process
     if (!this.aborted && this.telemetry.completedFiles > 0) {
-      const stats = {
+      notifyBatchComplete({
+        module: 'ftp',
         succeededCount,
         failedCount,
         skippedCount,
         duration: durationFormatted,
-      };
-      if (typeof window !== 'undefined' && window.electronAPI?.notifyUploadComplete) {
-        window.electronAPI.notifyUploadComplete(stats);
-      } else if (typeof window !== 'undefined' && window.electronAPI?.showNotification) {
-        window.electronAPI.showNotification({
-          title: 'StockFlow - FTP Upload Complete',
-          body: statusMsg,
-        });
-      }
+      });
     }
 
     return {

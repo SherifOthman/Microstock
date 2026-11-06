@@ -440,6 +440,10 @@ function setupIpcHandlers() {
     return ftpManager.abortActiveBatch();
   });
 
+  ipcMain.handle('ftp:disconnectSession', async () => {
+    return ftpManager.disconnectSession();
+  });
+
   ipcMain.handle('ftp:selectFolderFiles', async () => {
     return await ftpManager.selectFolderFiles();
   });
@@ -484,20 +488,18 @@ function setupIpcHandlers() {
     }
   });
 
-  // Windows Native OS Notification
+  // Global Windows Native OS Notification Service (FTP, Metadata Studio, File Cleaner, EPS, Audio)
   ipcMain.on('notify-upload-complete', (_event, stats) => {
     try {
       const succeeded = stats?.succeededCount ?? stats?.succeeded ?? 0;
       const failed = stats?.failedCount ?? stats?.failed ?? 0;
       const skipped = stats?.skippedCount ?? stats?.skipped ?? 0;
       const duration = stats?.duration || '';
-      let body = `Upload Complete: ${succeeded} succeeded`;
-      if (failed > 0) body += `, ${failed} failed`;
-      if (skipped > 0) body += `, ${skipped} skipped`;
-      if (duration) body += `. Total Time: ${duration}`;
+      let body = `Uploaded: ${succeeded} | Skipped: ${skipped} | Failed: ${failed}`;
+      if (duration) body += ` (${duration})`;
       if (Notification && Notification.isSupported()) {
         const notif = new Notification({
-          title: 'StockFlow - FTP Upload Complete',
+          title: 'StockFlow — FTP Upload Complete',
           body,
         });
         notif.show();
@@ -505,6 +507,47 @@ function setupIpcHandlers() {
     } catch (err) {
       console.error('[Notification] Failed to show notify-upload-complete:', err);
     }
+  });
+
+  ipcMain.handle('app:notifyBatchComplete', (_event, payload) => {
+    try {
+      const {
+        module = 'ftp',
+        title,
+        body = '',
+        succeededCount = 0,
+        skippedCount = 0,
+        failedCount = 0,
+        duration = '',
+      } = payload || {};
+
+      const defaultTitles = {
+        ftp: 'StockFlow — FTP Upload Complete',
+        studio: 'StockFlow — AI Metadata Batch Complete',
+        cleaner: 'StockFlow — File Cleaner Batch Complete',
+        eps: 'StockFlow — EPS Engine Batch Complete',
+        audio: 'StockFlow — Audio Stripper Batch Complete',
+      };
+
+      const resolvedTitle = title || defaultTitles[module] || 'StockFlow — Batch Complete';
+      const resolvedBody =
+        body ||
+        `Succeeded: ${succeededCount} | Skipped: ${skippedCount} | Failed: ${failedCount}${
+          duration ? ` (${duration})` : ''
+        }`;
+
+      if (Notification && Notification.isSupported()) {
+        const notif = new Notification({
+          title: resolvedTitle,
+          body: resolvedBody,
+        });
+        notif.show();
+        return { success: true };
+      }
+    } catch (err) {
+      console.error('[Notification] app:notifyBatchComplete error:', err);
+    }
+    return { success: false };
   });
 
   ipcMain.handle('app:showNotification', (_event, payload) => {

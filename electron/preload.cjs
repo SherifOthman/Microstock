@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   isPowerSaveBlocking: () => ipcRenderer.invoke('power:isBlocking'),
   showNotification: (options) => ipcRenderer.invoke('app:showNotification', options),
   notifyUploadComplete: (stats) => ipcRenderer.send('notify-upload-complete', stats),
+  notifyBatchComplete: (payload) => ipcRenderer.invoke('app:notifyBatchComplete', payload),
   rasterizeEpsNative: (fileBufferOrOptions, fileName) => {
     if (
       fileBufferOrOptions &&
@@ -56,6 +57,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     testConnection: (payload) => ipcRenderer.invoke('ftp:testConnection', payload),
     uploadFile: (payload) => ipcRenderer.invoke('ftp:uploadFile', payload),
     abortBatch: () => ipcRenderer.invoke('ftp:abortBatch'),
+    disconnectSession: () => ipcRenderer.invoke('ftp:disconnectSession'),
     selectFolderFiles: () => ipcRenderer.invoke('ftp:selectFolderFiles'),
     onTelemetry: (callback) => {
       const handler = (_event, frame) => callback(frame);
