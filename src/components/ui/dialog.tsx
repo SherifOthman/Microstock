@@ -53,6 +53,7 @@ function DialogContent({
   showCloseButton?: boolean;
 }) {
   const resolvedDir = dir || getDocumentDir();
+  const isRtl = resolvedDir === 'rtl';
   return (
     <DialogPortal>
       <DialogOverlay />
@@ -60,7 +61,7 @@ function DialogContent({
         data-slot="dialog-content"
         dir={resolvedDir}
         className={cn(
-          'fixed top-1/2 left-1/2 z-50 grid w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-card p-5 text-sm text-card-foreground text-start border border-border shadow-xl duration-150 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95',
+          'fixed inset-0 m-auto z-50 grid w-[calc(100%-2rem)] max-w-lg h-fit max-h-[90vh] overflow-y-auto gap-4 rounded-xl bg-card p-5 text-sm text-card-foreground text-start border border-border shadow-xl duration-150 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95',
           className
         )}
         {...props}
@@ -70,7 +71,10 @@ function DialogContent({
           <DialogPrimitive.Close data-slot="dialog-close" asChild>
             <Button
               variant="ghost"
-              className="absolute top-3.5 end-3.5 h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+              className={cn(
+                'absolute top-4 h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer z-20',
+                isRtl ? 'left-4 right-auto' : 'right-4 left-auto'
+              )}
               size="icon"
             >
               <XIcon className="w-4 h-4" />

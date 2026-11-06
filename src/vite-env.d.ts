@@ -89,6 +89,10 @@ interface Window {
     ) => Promise<{ success: boolean; savedCount: number; masterDir?: string; foldersCreated?: string[]; error?: string }>;
     showItemInFolder: (filePath: string) => Promise<{ success: boolean; error?: string }>;
     openPath: (folderPath: string) => Promise<{ success: boolean; error?: string }>;
+    shell?: {
+      showItemInFolder: (filePath: string) => Promise<{ success: boolean; error?: string }>;
+      openPath: (folderPath: string) => Promise<{ success: boolean; error?: string }>;
+    };
     quarantineFile: (payload: string | { filePath: string; mediaType?: string; masterDir?: string }) => Promise<{
       success: boolean;
       moved?: boolean;

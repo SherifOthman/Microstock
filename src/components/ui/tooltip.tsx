@@ -16,29 +16,43 @@ export const Tooltip: React.FC<TooltipProps> = ({
   side = 'top',
 }) => {
   const [visible, setVisible] = useState(false);
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+  const [coords, setCoords] = useState<{
+    top: number;
+    left: number;
+    effectiveSide: 'top' | 'bottom' | 'left' | 'right';
+  } | null>(null);
   const triggerRef = useRef<HTMLDivElement>(null);
 
   const computeCoords = useCallback(() => {
     if (!triggerRef.current) return null;
     const rect = triggerRef.current.getBoundingClientRect();
-    const gap = 6;
+    const gap = 8;
     const vw = typeof window !== 'undefined' ? window.innerWidth : 1440;
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 900;
+
+    let effectiveSide = side;
+    // Auto-flip horizontal sides if too close to viewport edge (e.g. 400px wide media previews in RTL)
+    if (side === 'right' && rect.right + 380 > vw - 16) {
+      effectiveSide = 'left';
+    } else if (side === 'left' && rect.left - 380 < 16) {
+      effectiveSide = 'right';
+    }
+
     let top = rect.top - gap;
     let left = Math.max(48, Math.min(vw - 48, rect.left + rect.width / 2));
 
-    if (side === 'bottom') {
+    if (effectiveSide === 'bottom') {
       top = rect.bottom + gap;
       left = Math.max(48, Math.min(vw - 48, rect.left + rect.width / 2));
-    } else if (side === 'left') {
-      top = rect.top + rect.height / 2;
-      left = rect.left - gap;
-    } else if (side === 'right') {
-      top = rect.top + rect.height / 2;
-      left = rect.right + gap;
+    } else if (effectiveSide === 'left') {
+      top = Math.max(20, Math.min(vh - 20, rect.top + rect.height / 2));
+      left = Math.max(16, rect.left - gap);
+    } else if (effectiveSide === 'right') {
+      top = Math.max(20, Math.min(vh - 20, rect.top + rect.height / 2));
+      left = Math.min(vw - 16, rect.right + gap);
     }
 
-    return { top, left };
+    return { top, left, effectiveSide };
   }, [side]);
 
   const handleShow = useCallback(() => {
@@ -66,12 +80,13 @@ export const Tooltip: React.FC<TooltipProps> = ({
     return <>{children}</>;
   }
 
+  const effectiveSide = coords?.effectiveSide || side;
   const transformClass =
-    side === 'top'
+    effectiveSide === 'top'
       ? '-translate-x-1/2 -translate-y-full'
-      : side === 'bottom'
+      : effectiveSide === 'bottom'
       ? '-translate-x-1/2'
-      : side === 'left'
+      : effectiveSide === 'left'
       ? '-translate-x-full -translate-y-1/2'
       : '-translate-y-1/2';
 

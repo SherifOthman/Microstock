@@ -33,6 +33,7 @@ import {
   FileImage,
   FileSpreadsheet,
   FileVideo,
+  FolderOpen,
   FolderPlus,
   Layers,
   Lock,
@@ -470,6 +471,20 @@ export const FtpUploaderView: React.FC = () => {
     dreamstimeFtpService.clearQueue();
   };
 
+  const handleOpenFileLocation = (localPath?: string) => {
+    if (!localPath) return;
+    try {
+      const electronAPI = (window as any).electronAPI;
+      if (typeof electronAPI?.shell?.showItemInFolder === 'function') {
+        electronAPI.shell.showItemInFolder(localPath);
+      } else if (typeof electronAPI?.showItemInFolder === 'function') {
+        electronAPI.showItemInFolder(localPath);
+      }
+    } catch (err) {
+      console.warn('Failed to open file location:', err);
+    }
+  };
+
   const succeededItems = queue.filter((i) => i.status === 'succeeded');
   const failedItems = queue.filter((i) => i.status === 'failed');
   const skippedItems = queue.filter((i) => i.status === 'skipped');
@@ -848,46 +863,44 @@ export const FtpUploaderView: React.FC = () => {
           </div>
         )}
 
-        {/* Completion Banner with Explicit Outcome Breakdown */}
-        {isBatchFinished && queue.length > 0 && (
-          <div
-            className={`shrink-0 px-4 py-2.5 rounded-xl border flex items-center justify-between text-xs ${
-              telemetry.failedFiles > 0
-                ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-                : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400'
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              {telemetry.failedFiles > 0 ? (
-                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
-              ) : (
-                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
-              )}
-              <span className="font-semibold">
-                {isAr
-                  ? `اكتمل الرفع: ${telemetry.succeededFiles} نجاح${
-                      telemetry.failedFiles > 0 ? `، ${telemetry.failedFiles} فشل` : ''
-                    }${
-                      (telemetry.skippedFiles || 0) > 0 ? `، ${telemetry.skippedFiles} تخطي` : ''
-                    }. الوقت الإجمالي: ${formatEtaSeconds(telemetry.totalDurationSeconds || 0)}`
-                  : `Upload Complete: ${telemetry.succeededFiles} succeeded${
-                      telemetry.failedFiles > 0 ? `, ${telemetry.failedFiles} failed` : ''
-                    }${
-                      (telemetry.skippedFiles || 0) > 0 ? `, ${telemetry.skippedFiles} skipped` : ''
-                    }. Total Time: ${formatEtaSeconds(telemetry.totalDurationSeconds || 0)}`}
-              </span>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleClearAll}
-              className="h-6 text-xs text-destructive hover:text-destructive hover:bg-destructive/10 px-2 cursor-pointer gap-1"
+        {/* Sleek Minimalist Completion Alert Bar */}
+        {isBatchFinished && queue.length > 0 && (() => {
+          const totalSec = Math.max(0, Math.ceil(telemetry.totalDurationSeconds || 0));
+          const mins = Math.floor(totalSec / 60);
+          const secs = totalSec % 60;
+          const timeFormatted = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+          const isWarning = telemetry.failedFiles > 0;
+          return (
+            <div
+              className={`shrink-0 px-3 py-1.5 rounded-lg border flex items-center justify-between text-sm transition-all ${
+                isWarning
+                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                  : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400'
+              }`}
+              dir={isAr ? 'rtl' : 'ltr'}
             >
-              <Trash2 className="w-3 h-3" />
-              <span>{isAr ? 'مسح الكل' : 'Clear All'}</span>
-            </Button>
-          </div>
-        )}
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="shrink-0 text-sm">
+                  {isWarning ? '⚠️' : '✅'}
+                </span>
+                <span className="font-medium truncate">
+                  {isAr
+                    ? `اكتمل الرفع: ${telemetry.succeededFiles} نجاح، ${telemetry.skippedFiles || 0} تم تخطيه، ${telemetry.failedFiles} فشل (الوقت: ${timeFormatted})`
+                    : `Upload Complete: ${telemetry.succeededFiles} Succeeded, ${telemetry.skippedFiles || 0} Skipped, ${telemetry.failedFiles} Failed (Time: ${timeFormatted})`}
+                </span>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleClearAll}
+                className="h-6 text-xs text-destructive hover:text-destructive hover:bg-destructive/10 px-2 cursor-pointer gap-1 shrink-0"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>{isAr ? 'مسح الكل' : 'Clear All'}</span>
+              </Button>
+            </div>
+          );
+        })()}
 
         {/* Queue Table or Empty State Dropzone */}
         <div
@@ -1032,10 +1045,13 @@ export const FtpUploaderView: React.FC = () => {
                         <div className="flex items-center gap-2 min-w-0">
                           {getMediaIcon(item)}
                           <Tooltip
-                            side="right"
+                            side={isAr ? 'left' : 'right'}
                             className="p-3 bg-popover/95 backdrop-blur-md border border-border shadow-2xl rounded-xl pointer-events-auto max-w-[460px] w-[380px] sm:w-[440px]"
                             content={
-                              <div className="flex flex-col items-center gap-2 w-full text-center">
+                              <div
+                                className="flex flex-col items-center gap-2 w-full text-center"
+                                dir={isAr ? 'rtl' : 'ltr'}
+                              >
                                 {renderMediaPreviewContent(item, 'hover')}
                                 <div className="flex flex-col items-center gap-0.5 w-full">
                                   <span
@@ -1189,12 +1205,26 @@ export const FtpUploaderView: React.FC = () => {
                               </Button>
                             </Tooltip>
                           )}
+                          {/* Open File Location in Windows Explorer */}
+                          {item.localPath && (
+                            <Tooltip content={isAr ? 'فتح موقع الملف' : 'Open file location'}>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenFileLocation(item.localPath)}
+                                className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground cursor-pointer transition"
+                                title={isAr ? 'فتح موقع الملف' : 'Open file location'}
+                              >
+                                <FolderOpen className="w-3.5 h-3.5" />
+                              </button>
+                            </Tooltip>
+                          )}
+
                           {!telemetry.isRunning && (
                             <Tooltip content={isAr ? 'حذف من القائمة' : 'Remove from queue'}>
                               <button
                                 type="button"
                                 onClick={() => dreamstimeFtpService.removeItem(item.id)}
-                                className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-destructive cursor-pointer"
+                                className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-destructive cursor-pointer transition"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -1219,8 +1249,11 @@ export const FtpUploaderView: React.FC = () => {
           if (!open) setPreviewModalItem(null);
         }}
       >
-        <DialogContent className="sm:max-w-2xl w-[95vw] md:w-[650px]" dir={isAr ? 'rtl' : 'ltr'}>
-          <DialogHeader>
+        <DialogContent
+          className="fixed inset-0 m-auto h-fit max-h-[92vh] sm:max-w-2xl w-[95vw] md:w-[650px] overflow-hidden"
+          dir={isAr ? 'rtl' : 'ltr'}
+        >
+          <DialogHeader className={isAr ? 'pe-2 ps-8' : 'pe-8 ps-2'}>
             <DialogTitle className="flex items-center gap-2 text-sm font-bold font-mono" dir="ltr">
               {previewModalItem && getMediaIcon(previewModalItem)}
               <span className="truncate">
@@ -1262,8 +1295,11 @@ export const FtpUploaderView: React.FC = () => {
 
       {/* Site Settings Modal: Plain FTP Port 21 (Host, Username, Password) */}
       <DialogRoot open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
-        <DialogContent className="sm:max-w-md" dir={isAr ? 'rtl' : 'ltr'}>
-          <DialogHeader>
+        <DialogContent
+          className="fixed inset-0 m-auto h-fit max-h-[90vh] sm:max-w-md"
+          dir={isAr ? 'rtl' : 'ltr'}
+        >
+          <DialogHeader className={isAr ? 'pe-2 ps-8' : 'pe-8 ps-2'}>
             <DialogTitle className="flex items-center gap-2 text-sm font-bold">
               <Lock className="w-4 h-4 text-primary" />
               <span>

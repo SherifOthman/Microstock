@@ -32,6 +32,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('shell:showItemInFolder', filePath),
   openPath: (folderPath) =>
     ipcRenderer.invoke('shell:openPath', folderPath),
+  shell: {
+    showItemInFolder: (filePath) =>
+      ipcRenderer.invoke('shell:showItemInFolder', filePath),
+    openPath: (folderPath) =>
+      ipcRenderer.invoke('shell:openPath', folderPath),
+  },
   quarantineFile: (filePathOrPayload) =>
     ipcRenderer.invoke('fs:quarantineFile', filePathOrPayload),
   secureStorage: {
