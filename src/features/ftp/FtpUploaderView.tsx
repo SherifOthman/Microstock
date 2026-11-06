@@ -600,7 +600,7 @@ export const FtpUploaderView: React.FC = () => {
                     dir="ltr"
                   >
                     {/* Files Badge: Neutral */}
-                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-secondary/80 border border-border text-foreground font-mono text-xs shadow-xs">
+                    <div className="inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-md bg-secondary/80 border border-border text-foreground font-mono text-xs tabular-nums shadow-xs whitespace-nowrap min-w-[125px]">
                       <span>📁</span>
                       <span>
                         {activeFileNumber} / {telemetry.totalFiles} {isAr ? 'ملفات' : 'Files'}
@@ -608,7 +608,7 @@ export const FtpUploaderView: React.FC = () => {
                     </div>
 
                     {/* Data Badge: Blue/Indigo subtle */}
-                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-sky-500/10 border border-sky-500/25 text-sky-400 font-mono text-xs shadow-xs">
+                    <div className="inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-md bg-sky-500/10 border border-sky-500/25 text-sky-400 font-mono text-xs tabular-nums shadow-xs whitespace-nowrap min-w-[190px]">
                       <span>☁️</span>
                       <span>
                         {formatBytesPrecise(telemetry.batchBytesTransferred)} /{' '}
@@ -616,8 +616,8 @@ export const FtpUploaderView: React.FC = () => {
                       </span>
                     </div>
 
-                    {/* Speed Badge: Green/Emerald subtle */}
-                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 font-mono text-xs shadow-xs">
+                    {/* Speed Badge: Green/Emerald subtle (Rigid Fixed Width to Prevent Jitter) */}
+                    <div className="inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 font-mono text-xs tabular-nums shadow-xs whitespace-nowrap min-w-[135px]">
                       <span>⚡</span>
                       <span>
                         {telemetry.isPaused
@@ -627,7 +627,7 @@ export const FtpUploaderView: React.FC = () => {
                     </div>
 
                     {/* Time Left Badge: Orange/Amber subtle (Stabilized from Average Speed) */}
-                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-amber-500/10 border border-amber-500/25 text-amber-400 font-mono text-xs shadow-xs">
+                    <div className="inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-md bg-amber-500/10 border border-amber-500/25 text-amber-400 font-mono text-xs tabular-nums shadow-xs whitespace-nowrap min-w-[125px]">
                       <span>⏳</span>
                       <span>
                         {telemetry.isPaused
@@ -637,7 +637,7 @@ export const FtpUploaderView: React.FC = () => {
                     </div>
 
                     {/* Time Elapsed Badge: Purple/Violet subtle */}
-                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-purple-500/10 border border-purple-500/25 text-purple-400 font-mono text-xs shadow-xs">
+                    <div className="inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-md bg-purple-500/10 border border-purple-500/25 text-purple-400 font-mono text-xs tabular-nums shadow-xs whitespace-nowrap min-w-[135px]">
                       <span>⏱️</span>
                       <span>
                         {isAr ? 'المنقضي: ' : 'Elapsed: '}
