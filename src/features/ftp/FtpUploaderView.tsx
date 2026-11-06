@@ -303,6 +303,10 @@ export const FtpUploaderView: React.FC = () => {
   const pendingUploadItems = queue.filter(
     (i) => i.status === 'queued' || i.status === 'retry' || i.status === 'retrying'
   );
+  const isBatchFinished =
+    telemetry.totalFiles > 0 &&
+    telemetry.completedFiles === telemetry.totalFiles &&
+    !telemetry.isRunning;
 
   const visibleQueue =
     activeSubTab === 'succeeded'
@@ -395,14 +399,36 @@ export const FtpUploaderView: React.FC = () => {
           >
             {/* Left: Fixed Metrics Strip - shrink-0 so it NEVER shifts */}
             <div className="flex items-center gap-4 text-xs font-mono tabular-nums shrink-0 select-none">
-              <div className="flex items-center gap-1.5">
-                <span className="text-muted-foreground">
-                  {isAr ? 'إجمالي الملفات:' : 'Total Files:'}
-                </span>
-                <span className="font-bold text-foreground font-mono" dir="ltr">
-                  {telemetry.completedFiles} / {telemetry.totalFiles} ({telemetry.batchPercent}%)
-                </span>
-              </div>
+              {isBatchFinished ? (
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="font-bold text-foreground font-sans">
+                    {isAr ? 'اكتملت الدفعة —' : 'Batch Finished —'}
+                  </span>
+                  <div className="flex items-center gap-2 font-mono text-[11px]" dir="ltr">
+                    <span className="text-emerald-400 font-bold">
+                      {isAr ? 'تم الرفع' : 'Uploaded'}: {telemetry.succeededFiles}
+                    </span>
+                    <span className="text-muted-foreground">|</span>
+                    <span className="text-slate-400 font-bold">
+                      {isAr ? 'تم التخطي (مكرر)' : 'Skipped (Duplicate)'}: {telemetry.skippedFiles}
+                    </span>
+                    <span className="text-muted-foreground">|</span>
+                    <span className="text-destructive font-bold">
+                      {isAr ? 'فشل' : 'Failed'}: {telemetry.failedFiles}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-muted-foreground">
+                    {isAr ? 'إجمالي الملفات:' : 'Total Files:'}
+                  </span>
+                  <span className="font-bold text-foreground font-mono" dir="ltr">
+                    {telemetry.completedFiles} / {telemetry.totalFiles} ({telemetry.batchPercent}%)
+                  </span>
+                </div>
+              )}
+
               {(telemetry.isRunning || telemetry.isPaused) && (
                 <>
                   <div className="flex items-center gap-1.5">
@@ -423,6 +449,7 @@ export const FtpUploaderView: React.FC = () => {
                   </div>
                 </>
               )}
+
               <div className="text-muted-foreground font-sans text-xs">
                 {telemetry.isRunning ? (
                   telemetry.isPaused ? (
@@ -434,6 +461,10 @@ export const FtpUploaderView: React.FC = () => {
                       {isAr ? 'جارٍ الرفع...' : 'Uploading...'}
                     </span>
                   )
+                ) : isBatchFinished ? (
+                  <span className="text-muted-foreground font-mono text-[11px]" dir="ltr">
+                    ({formatEtaSeconds(telemetry.totalDurationSeconds || 0)})
+                  </span>
                 ) : storedProfile?.hasSavedPassword ? (
                   <span className="text-emerald-400 font-medium">
                     {isAr ? 'متصل · جاهز للرفع' : 'Connected · Ready'}
@@ -447,8 +478,8 @@ export const FtpUploaderView: React.FC = () => {
             </div>
 
             {/* Right: Actions Container with fixed min-width to prevent any layout shifts */}
-            <div className="flex items-center justify-end gap-1.5 shrink-0 min-w-[340px]">
-              {/* Hidden Pickers */}
+            <div className="flex items-center justify-end gap-1.5 shrink-0 min-w-[300px]">
+              {/* Hidden Pickers - Always mounted for keyboard shortcuts & dropzone */}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -472,46 +503,35 @@ export const FtpUploaderView: React.FC = () => {
                 }}
               />
 
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                data-testid="ftp-add-files-btn"
-                disabled={telemetry.isRunning}
-                onClick={() => fileInputRef.current?.click()}
-                className="h-8 text-xs gap-1.5 cursor-pointer shrink-0"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>{isAr ? 'إضافة ملفات' : 'Add Files'}</span>
-              </Button>
+              {/* Contextual Header Buttons: ONLY visible if queue.length > 0 */}
+              {queue.length > 0 && (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="ftp-add-files-btn"
+                    disabled={telemetry.isRunning}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="h-8 text-xs gap-1.5 cursor-pointer shrink-0"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{isAr ? 'إضافة ملفات' : 'Add Files'}</span>
+                  </Button>
 
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                data-testid="ftp-add-folder-btn"
-                disabled={telemetry.isRunning}
-                onClick={handleAddFolderClick}
-                className="h-8 text-xs gap-1.5 cursor-pointer shrink-0"
-              >
-                <FolderPlus className="w-3.5 h-3.5 text-primary" />
-                <span>{isAr ? 'إضافة مجلد' : 'Add Folder'}</span>
-              </Button>
-
-              {/* Clear Completed */}
-              {succeededItems.length > 0 && !telemetry.isRunning && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => dreamstimeFtpService.clearCompleted()}
-                  className="h-8 text-xs gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground shrink-0"
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>
-                    {isAr ? 'مسح المكتملة' : 'Clear Completed'} ({succeededItems.length})
-                  </span>
-                </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="ftp-add-folder-btn"
+                    disabled={telemetry.isRunning}
+                    onClick={handleAddFolderClick}
+                    className="h-8 text-xs gap-1.5 cursor-pointer shrink-0"
+                  >
+                    <FolderPlus className="w-3.5 h-3.5 text-primary" />
+                    <span>{isAr ? 'إضافة مجلد' : 'Add Folder'}</span>
+                  </Button>
+                </>
               )}
 
               {/* Retry All Failed */}
@@ -530,6 +550,7 @@ export const FtpUploaderView: React.FC = () => {
                 </Button>
               )}
 
+              {/* Pause / Resume / Start Upload */}
               {telemetry.isRunning ? (
                 telemetry.isPaused ? (
                   <Button
@@ -570,22 +591,18 @@ export const FtpUploaderView: React.FC = () => {
                 </Button>
               )}
 
-              {/* Clear All Queue - Isolated at the far end with Shadcn Tooltip */}
+              {/* Clear All: True Queue Reset (resets queue to [] and all global counters) */}
               {queue.length > 0 && !telemetry.isRunning && (
-                <Tooltip content={isAr ? 'مسح كافة الملفات من القائمة' : 'Clear entire queue'}>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => dreamstimeFtpService.clearQueue()}
-                    className="h-8 px-2 text-muted-foreground hover:text-destructive cursor-pointer gap-1 shrink-0"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline text-xs">
-                      {isAr ? 'مسح الكل' : 'Clear All'}
-                    </span>
-                  </Button>
-                </Tooltip>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => dreamstimeFtpService.clearQueue()}
+                  className="h-8 text-xs gap-1.5 text-destructive/80 hover:text-destructive hover:bg-destructive/10 cursor-pointer shrink-0"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>{isAr ? 'مسح الكل' : 'Clear All'}</span>
+                </Button>
               )}
             </div>
           </div>
@@ -594,36 +611,35 @@ export const FtpUploaderView: React.FC = () => {
         </div>
 
         {/* Completion Banner with Session Summary Duration */}
-        {telemetry.completedFiles > 0 &&
-          telemetry.completedFiles === telemetry.totalFiles &&
-          !telemetry.isRunning && (
-            <div className="shrink-0 px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between text-xs text-emerald-400">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 shrink-0" />
-                <span className="font-semibold">
-                  {isAr
-                    ? `اكتمل الرفع: ${telemetry.succeededFiles} نجاح${
-                        telemetry.failedFiles > 0 ? `، ${telemetry.failedFiles} فشل` : ''
-                      }${
-                        (telemetry.skippedFiles || 0) > 0 ? `، ${telemetry.skippedFiles} تخطي` : ''
-                      }. الوقت الإجمالي: ${formatEtaSeconds(telemetry.totalDurationSeconds || 0)}`
-                    : `Upload Complete: ${telemetry.succeededFiles} succeeded${
-                        telemetry.failedFiles > 0 ? `, ${telemetry.failedFiles} failed` : ''
-                      }${
-                        (telemetry.skippedFiles || 0) > 0 ? `, ${telemetry.skippedFiles} skipped` : ''
-                      }. Total Time: ${formatEtaSeconds(telemetry.totalDurationSeconds || 0)}`}
-                </span>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => dreamstimeFtpService.clearCompleted()}
-                className="h-6 text-xs text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/20 px-2 cursor-pointer"
-              >
-                {isAr ? 'مسح المكتملة' : 'Clear Completed'}
-              </Button>
+        {isBatchFinished && (
+          <div className="shrink-0 px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between text-xs text-emerald-400">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span className="font-semibold">
+                {isAr
+                  ? `اكتمل الرفع: ${telemetry.succeededFiles} نجاح${
+                      telemetry.failedFiles > 0 ? `، ${telemetry.failedFiles} فشل` : ''
+                    }${
+                      (telemetry.skippedFiles || 0) > 0 ? `، ${telemetry.skippedFiles} تخطي` : ''
+                    }. الوقت الإجمالي: ${formatEtaSeconds(telemetry.totalDurationSeconds || 0)}`
+                  : `Upload Complete: ${telemetry.succeededFiles} succeeded${
+                      telemetry.failedFiles > 0 ? `, ${telemetry.failedFiles} failed` : ''
+                    }${
+                      (telemetry.skippedFiles || 0) > 0 ? `, ${telemetry.skippedFiles} skipped` : ''
+                    }. Total Time: ${formatEtaSeconds(telemetry.totalDurationSeconds || 0)}`}
+              </span>
             </div>
-          )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => dreamstimeFtpService.clearQueue()}
+              className="h-6 text-xs text-destructive hover:text-destructive hover:bg-destructive/10 px-2 cursor-pointer gap-1"
+            >
+              <Trash2 className="w-3 h-3" />
+              <span>{isAr ? 'مسح الكل' : 'Clear All'}</span>
+            </Button>
+          </div>
+        )}
 
         {/* Queue Table (Strictly Static Visual Array) */}
         <div
@@ -692,11 +708,56 @@ export const FtpUploaderView: React.FC = () => {
 
           <div className="flex-1 min-h-0 overflow-y-auto">
             {visibleQueue.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center p-8 text-center">
-                <UploadCloud className="w-9 h-9 text-primary mb-2.5 opacity-80" />
-                <h3 className="text-xs sm:text-sm font-semibold text-foreground">
-                  {isAr ? 'اسحب الملفات أو المجلدات هنا' : 'Drop Files or Shoot Folders Here'}
-                </h3>
+              <div className="h-full flex flex-col items-center justify-center p-8 text-center gap-3">
+                <div className="w-14 h-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+                  <UploadCloud className="w-7 h-7 text-primary opacity-90" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-xs sm:text-sm font-semibold text-foreground">
+                    {queue.length === 0
+                      ? isAr
+                        ? 'اسحب الملفات أو المجلدات هنا'
+                        : 'Drop Files or Shoot Folders Here'
+                      : isAr
+                      ? 'لا توجد ملفات في هذا التبويب'
+                      : 'No files in this tab'}
+                  </h3>
+                  {queue.length === 0 && (
+                    <p className="text-[11px] text-muted-foreground max-w-sm">
+                      {isAr
+                        ? 'يدعم ملفات الصور والفيكتور والفيديو وجداول ميتاداتا CSV'
+                        : 'Supports Photos, Vectors, Videos, and CSV Metadata'}
+                    </p>
+                  )}
+                </div>
+
+                {queue.length === 0 && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <Button
+                      type="button"
+                      variant="default"
+                      size="sm"
+                      data-testid="ftp-add-files-btn"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="h-8 text-xs gap-1.5 cursor-pointer font-medium"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>{isAr ? 'إضافة ملفات' : 'Add Files'}</span>
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      data-testid="ftp-add-folder-btn"
+                      onClick={handleAddFolderClick}
+                      className="h-8 text-xs gap-1.5 cursor-pointer font-medium"
+                    >
+                      <FolderPlus className="w-3.5 h-3.5 text-primary" />
+                      <span>{isAr ? 'إضافة مجلد' : 'Add Folder'}</span>
+                    </Button>
+                  </div>
+                )}
               </div>
             ) : (
               <table
