@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { CSV_TEMPLATES, CsvTemplateSpec } from '../../constants/csvTemplates';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
-import { Check, Copy, Download, FileSpreadsheet, CheckCircle2 } from 'lucide-react';
+import { Check, Copy, Download, FileSpreadsheet } from 'lucide-react';
 import { getPlatformLogo } from '../../components/icons/StockLogos';
 import { useLanguage } from '../../context/LanguageContext';
 
@@ -46,7 +46,7 @@ export const CsvTemplatesView: React.FC = () => {
         return;
       }
     } catch {
-      // Fallback to generated CSV
+      // Fallback
     }
 
     const csvContent = generateCsvString(tpl);
@@ -73,7 +73,7 @@ export const CsvTemplatesView: React.FC = () => {
   return (
     <div className="space-y-4">
       {/* Platform Selector Grid */}
-      <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 p-1 bg-secondary/60 rounded-xl border border-border">
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 p-1 bg-slate-100 dark:bg-secondary/60 rounded-xl border border-slate-200 dark:border-border">
         {CSV_TEMPLATES.map((tpl) => {
           const isSelected = tpl.id === selectedId;
           return (
@@ -83,8 +83,8 @@ export const CsvTemplatesView: React.FC = () => {
               onClick={() => setSelectedId(tpl.id)}
               className={`px-2.5 py-2 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 cursor-pointer ${
                 isSelected
-                  ? 'bg-card text-foreground shadow-xs border border-border'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-secondary/40'
+                  ? 'bg-white dark:bg-card text-slate-900 dark:text-foreground shadow-xs border border-slate-200 dark:border-border'
+                  : 'text-slate-600 dark:text-muted-foreground hover:text-slate-900 dark:hover:text-foreground hover:bg-slate-200/50 dark:hover:bg-secondary/40'
               }`}
             >
               <span className="shrink-0">{getPlatformLogo(tpl.id as any, 16)}</span>
@@ -95,24 +95,24 @@ export const CsvTemplatesView: React.FC = () => {
       </div>
 
       {/* Active Platform Specification Card */}
-      <div className="rounded-xl border border-border bg-card overflow-hidden">
+      <div className="rounded-xl border border-slate-200 dark:border-border bg-white dark:bg-card shadow-xs overflow-hidden">
         {/* Top Header Row */}
-        <div className="p-3.5 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-secondary/30">
+        <div className="p-3.5 border-b border-slate-200 dark:border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 dark:bg-secondary/30">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-card border border-border flex items-center justify-center shrink-0">
+            <div className="w-10 h-10 rounded-xl bg-white dark:bg-card border border-slate-200 dark:border-border flex items-center justify-center shrink-0 shadow-2xs">
               {getPlatformLogo(activeTemplate.id as any, 22)}
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 dir="ltr" className="text-sm font-bold text-foreground">{activeTemplate.name}</h3>
-                <Badge variant="outline" className="font-mono text-[10px] px-1.5 py-0 h-4.5 bg-card">
+                <h3 dir="ltr" className="text-sm font-bold text-slate-900 dark:text-foreground">{activeTemplate.name}</h3>
+                <Badge variant="outline" className="font-mono text-[10px] px-1.5 py-0 h-4.5 bg-white dark:bg-card border-slate-200 dark:border-border text-slate-800 dark:text-foreground">
                   {activeTemplate.headers.length} {isAr ? 'أعمدة' : 'Columns'}
                 </Badge>
-                <Badge variant="outline" className="font-mono text-[10px] px-1.5 py-0 h-4.5 bg-card">
+                <Badge variant="outline" className="font-mono text-[10px] px-1.5 py-0 h-4.5 bg-white dark:bg-card border-slate-200 dark:border-border text-slate-800 dark:text-foreground">
                   {activeTemplate.delimiter === ';' ? (isAr ? 'فاصل ;' : 'Delimiter (;)') : (isAr ? 'فاصل ,' : 'Delimiter (,)')}
                 </Badge>
               </div>
-              <p dir="ltr" className="text-xs text-muted-foreground font-mono mt-0.5 text-start">{activeTemplate.fileName}</p>
+              <p dir="ltr" className="text-xs text-slate-500 dark:text-muted-foreground font-mono mt-0.5 text-start">{activeTemplate.fileName}</p>
             </div>
           </div>
 
@@ -121,7 +121,7 @@ export const CsvTemplatesView: React.FC = () => {
               variant="outline"
               size="sm"
               onClick={() => handleCopyHeaders(activeTemplate)}
-              className="h-8 text-xs gap-1.5 cursor-pointer"
+              className="h-8 text-xs gap-1.5 cursor-pointer bg-white dark:bg-card border-slate-200 dark:border-border hover:bg-slate-50"
             >
               {copiedId === activeTemplate.id ? (
                 <Check className="w-3.5 h-3.5 text-emerald-500" />
@@ -148,28 +148,28 @@ export const CsvTemplatesView: React.FC = () => {
         <div className="p-4 space-y-4">
           {/* Limits Row */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-            <div className="p-2.5 rounded-lg bg-secondary/50 border border-border">
-              <span className="text-[11px] text-muted-foreground block">
+            <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-secondary/50 border border-slate-200 dark:border-border">
+              <span className="text-[11px] text-slate-500 dark:text-muted-foreground block">
                 {isAr ? 'حد العنوان' : 'Title Limit'}
               </span>
-              <span className="text-xs font-mono font-semibold text-foreground tabular-nums">
+              <span className="text-xs font-mono font-semibold text-slate-900 dark:text-foreground tabular-nums">
                 {activeTemplate.maxTitleChars > 0
                   ? isAr ? `${activeTemplate.maxTitleChars} حرف` : `${activeTemplate.maxTitleChars} chars`
                   : isAr ? 'مدمج مع الوصف' : 'Uses Description'}
               </span>
             </div>
-            <div className="p-2.5 rounded-lg bg-secondary/50 border border-border">
-              <span className="text-[11px] text-muted-foreground block">
+            <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-secondary/50 border border-slate-200 dark:border-border">
+              <span className="text-[11px] text-slate-500 dark:text-muted-foreground block">
                 {isAr ? 'حد الوصف' : 'Description Limit'}
               </span>
-              <span className="text-xs font-mono font-semibold text-foreground tabular-nums">
+              <span className="text-xs font-mono font-semibold text-slate-900 dark:text-foreground tabular-nums">
                 {activeTemplate.maxDescChars > 0
                   ? isAr ? `${activeTemplate.maxDescChars} حرف` : `${activeTemplate.maxDescChars} chars`
                   : isAr ? 'غير مطلوب' : 'Not Required'}
               </span>
             </div>
-            <div className="p-2.5 rounded-lg bg-secondary/50 border border-border">
-              <span className="text-[11px] text-muted-foreground block">
+            <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-secondary/50 border border-slate-200 dark:border-border">
+              <span className="text-[11px] text-slate-500 dark:text-muted-foreground block">
                 {isAr ? 'الكلمات المفتاحية' : 'Max Keywords'}
               </span>
               <span className="text-xs font-mono font-semibold text-primary tabular-nums">
@@ -178,11 +178,11 @@ export const CsvTemplatesView: React.FC = () => {
                   : isAr ? `${activeTemplate.maxKeywords} كلمة` : `${activeTemplate.maxKeywords} tags`}
               </span>
             </div>
-            <div className="p-2.5 rounded-lg bg-secondary/50 border border-border">
-              <span className="text-[11px] text-muted-foreground block">
+            <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-secondary/50 border border-slate-200 dark:border-border">
+              <span className="text-[11px] text-slate-500 dark:text-muted-foreground block">
                 {isAr ? 'الفاصل المعتمد' : 'Delimiter'}
               </span>
-              <span className="text-xs font-mono font-semibold text-foreground">
+              <span className="text-xs font-mono font-semibold text-slate-900 dark:text-foreground">
                 {activeTemplate.delimiter === ';' ? 'Semicolon (;)' : 'Comma (,)'}
               </span>
             </div>
@@ -190,7 +190,7 @@ export const CsvTemplatesView: React.FC = () => {
 
           {/* Column Schema Badges */}
           <div className="space-y-1.5">
-            <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+            <span className="text-xs font-semibold text-slate-900 dark:text-foreground flex items-center gap-1.5">
               <FileSpreadsheet className="w-3.5 h-3.5 text-primary" />
               <span>
                 {activeTemplate.secondaryHeaders
@@ -202,10 +202,10 @@ export const CsvTemplatesView: React.FC = () => {
                   : 'Official Column Schema'}
               </span>
             </span>
-            <div className="flex flex-wrap gap-1.5 p-2.5 rounded-lg bg-secondary/40 border border-border" dir="ltr">
+            <div className="flex flex-wrap gap-1.5 p-2.5 rounded-lg bg-slate-50 dark:bg-secondary/40 border border-slate-200 dark:border-border" dir="ltr">
               {activeTemplate.headers.map((h, i) => (
-                <Badge key={h} variant="outline" className="font-mono text-[11px] bg-card border-border text-foreground">
-                  <span className="text-muted-foreground mr-1 tabular-nums">{i + 1}.</span>
+                <Badge key={h} variant="outline" className="font-mono text-[11px] bg-white dark:bg-card border-slate-200 dark:border-border text-slate-900 dark:text-foreground">
+                  <span className="text-slate-400 dark:text-muted-foreground mr-1 tabular-nums">{i + 1}.</span>
                   {h}
                 </Badge>
               ))}
@@ -213,7 +213,7 @@ export const CsvTemplatesView: React.FC = () => {
 
             {activeTemplate.secondaryHeaders && (
               <div className="pt-2 space-y-1.5">
-                <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                <span className="text-xs font-semibold text-slate-900 dark:text-foreground flex items-center gap-1.5">
                   <FileSpreadsheet className="w-3.5 h-3.5 text-primary" />
                   <span>
                     {isAr
@@ -221,10 +221,10 @@ export const CsvTemplatesView: React.FC = () => {
                       : activeTemplate.secondaryHeadersLabel}
                   </span>
                 </span>
-                <div className="flex flex-wrap gap-1.5 p-2.5 rounded-lg bg-secondary/40 border border-border" dir="ltr">
+                <div className="flex flex-wrap gap-1.5 p-2.5 rounded-lg bg-slate-50 dark:bg-secondary/40 border border-slate-200 dark:border-border" dir="ltr">
                   {activeTemplate.secondaryHeaders.map((h, i) => (
-                    <Badge key={h} variant="outline" className="font-mono text-[11px] bg-card border-border text-foreground">
-                      <span className="text-muted-foreground mr-1 tabular-nums">{i + 1}.</span>
+                    <Badge key={h} variant="outline" className="font-mono text-[11px] bg-white dark:bg-card border-slate-200 dark:border-border text-slate-900 dark:text-foreground">
+                      <span className="text-slate-400 dark:text-muted-foreground mr-1 tabular-nums">{i + 1}.</span>
                       {h}
                     </Badge>
                   ))}
@@ -236,10 +236,10 @@ export const CsvTemplatesView: React.FC = () => {
           {/* Clean Rules / Specifications (Concise Bullet Points) */}
           {rulesList.length > 0 && (
             <div className="space-y-1.5 pt-1">
-              <span className="text-xs font-semibold text-foreground">
+              <span className="text-xs font-semibold text-slate-900 dark:text-foreground">
                 {isAr ? 'شروط وقواعد التصدير' : 'Export Specifications'}
               </span>
-              <ul className="space-y-1 text-xs text-muted-foreground list-disc list-inside">
+              <ul className="space-y-1 text-xs text-slate-600 dark:text-muted-foreground list-disc list-inside">
                 {rulesList.map((r, idx) => (
                   <li key={idx} className="leading-relaxed">{r}</li>
                 ))}

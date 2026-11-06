@@ -248,7 +248,7 @@ export const KeyRingView: React.FC = () => {
   return (
     <div className="space-y-4">
       {/* Top Master Mode Switcher: Cloud vs Local */}
-      <div className="flex items-center p-1 bg-secondary/50 rounded-xl border border-border">
+      <div className="flex items-center p-1 bg-slate-100 dark:bg-secondary/50 rounded-xl border border-slate-200 dark:border-border">
         <Button
           type="button"
           variant={aiMode === 'cloud' ? 'default' : 'ghost'}
@@ -256,8 +256,8 @@ export const KeyRingView: React.FC = () => {
           onClick={() => handleModeChange('cloud')}
           className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 h-9 rounded-lg text-xs font-bold transition cursor-pointer ${
             aiMode === 'cloud'
-              ? 'shadow-sm'
-              : 'text-muted-foreground hover:text-foreground'
+              ? 'bg-white text-slate-900 shadow-xs border border-slate-200 dark:bg-primary dark:text-primary-foreground dark:border-transparent'
+              : 'text-slate-600 dark:text-muted-foreground hover:text-slate-900 dark:hover:text-foreground'
           }`}
         >
           <Cloud className="w-4 h-4" />
@@ -270,8 +270,8 @@ export const KeyRingView: React.FC = () => {
           onClick={() => handleModeChange('local')}
           className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 h-9 rounded-lg text-xs font-bold transition cursor-pointer ${
             aiMode === 'local'
-              ? 'shadow-sm'
-              : 'text-muted-foreground hover:text-foreground'
+              ? 'bg-white text-slate-900 shadow-xs border border-slate-200 dark:bg-primary dark:text-primary-foreground dark:border-transparent'
+              : 'text-slate-600 dark:text-muted-foreground hover:text-slate-900 dark:hover:text-foreground'
           }`}
         >
           <Server className="w-4 h-4" />
@@ -382,12 +382,12 @@ export const KeyRingView: React.FC = () => {
       </div>
 
       {/* Active Provider Toolbar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-2.5 rounded-xl bg-secondary/30 border border-border">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-2.5 rounded-xl bg-white dark:bg-card border border-slate-200 dark:border-border shadow-xs">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-foreground">
+          <span className="text-xs font-bold text-slate-900 dark:text-foreground">
             {activeProviderMeta.name}
           </span>
-          <Badge variant="outline" className="text-[10px] font-mono">
+          <Badge variant="outline" className="text-[10px] font-mono border-slate-200 dark:border-border bg-slate-50 dark:bg-secondary">
             {providerKeys.length}{' '}
             {language === 'ar'
               ? 'مفتاح'
@@ -400,14 +400,14 @@ export const KeyRingView: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2">
           {providerKeys.length > 0 && (
             <div className="flex items-center gap-1.5">
-              <span className="text-[11px] text-muted-foreground">
-                {language === 'ar' ? 'نموذج المزود:' : 'Model:'}
+              <span className="text-[11px] text-slate-500 dark:text-muted-foreground">
+                {language === 'ar' ? 'النموذج:' : 'Model:'}
               </span>
               <Select
                 value={activeProviderModel}
                 onValueChange={handleProviderModelChange}
               >
-                <SelectTrigger className="h-7 text-[11px] font-mono w-48 bg-background">
+                <SelectTrigger className="h-7 text-[11px] font-mono w-48 bg-slate-50 dark:bg-background border-slate-200 dark:border-input">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent position="popper" className="max-h-60">
@@ -491,16 +491,16 @@ export const KeyRingView: React.FC = () => {
                   draggedIdx === idx ? 'opacity-40 border-primary border-dashed' : ''
                 } ${
                   key.status === 'disabled'
-                    ? 'border-border/60 bg-secondary/20 opacity-60'
-                    : 'border-border bg-secondary/40 hover:border-primary/40'
+                    ? 'border-slate-200 dark:border-border/60 bg-slate-50 dark:bg-secondary/20 opacity-60'
+                    : 'border-slate-200 dark:border-border bg-white dark:bg-card hover:border-slate-300 dark:hover:border-primary/40 shadow-xs'
                 }`}
               >
                 <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
                   <Tooltip content={language === 'ar' ? 'اسحب لإعادة الترتيب' : 'Drag to reorder priority'}>
                     <div
-                      className="flex items-center gap-1 bg-background border border-border rounded-md px-1.5 py-1 shrink-0 cursor-grab active:cursor-grabbing hover:border-primary/60 transition"
+                      className="flex items-center gap-1 bg-slate-50 dark:bg-background border border-slate-200 dark:border-border rounded-md px-1.5 py-1 shrink-0 cursor-grab active:cursor-grabbing hover:border-primary/60 transition"
                     >
-                      <GripVertical className="w-3.5 h-3.5 text-muted-foreground" />
+                      <GripVertical className="w-3.5 h-3.5 text-slate-400 dark:text-muted-foreground" />
                       <span
                         dir="ltr"
                         className="text-[10px] font-mono font-bold text-primary tabular-nums"
@@ -512,18 +512,18 @@ export const KeyRingView: React.FC = () => {
 
                   <div className="space-y-1.5 min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-semibold text-xs text-foreground truncate">
+                      <span className="font-bold text-xs text-slate-900 dark:text-foreground truncate">
                         {key.label}
                       </span>
                       <Badge
                         variant="outline"
-                        className="text-[10px] font-mono bg-secondary border-border text-foreground"
+                        className="text-[10px] font-mono bg-slate-100 dark:bg-secondary border-slate-200 dark:border-border text-slate-800 dark:text-foreground"
                       >
                         {getProviderShortName(key.providerId)}
                       </Badge>
                       <span
                         dir="ltr"
-                        className="text-[11px] font-mono text-muted-foreground"
+                        className="text-[11px] font-mono text-slate-500 dark:text-muted-foreground"
                       >
                         {key.modelId}
                       </span>
@@ -534,7 +534,7 @@ export const KeyRingView: React.FC = () => {
                     <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground font-mono tabular-nums">
                       <div
                         dir="ltr"
-                        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-background/80 border border-border/80 text-foreground max-w-full"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-background border border-slate-200 dark:border-border text-slate-900 dark:text-foreground max-w-full"
                       >
                         <span className="select-all break-all font-mono text-[11px]">
                           {formatNormalKey(key)}

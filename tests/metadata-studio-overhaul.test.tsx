@@ -340,7 +340,7 @@ describe('Metadata Studio 5-Point Overhaul (Local AI Optimization)', () => {
     expect(parsed.rankedKeywords[0]).toBe('subject1');
   });
 
-  it('7. Resolves hardware profile specs and renders LFM3-VL-2B tuning checklist in LocalAiSettingsPanel', async () => {
+  it('7. Resolves hardware profile specs and renders streamlined controls in LocalAiSettingsPanel', async () => {
     const integratedSpec = resolveHardwareProfileSpec('integrated');
     const dedicatedSpec = resolveHardwareProfileSpec('dedicated');
 
@@ -351,11 +351,9 @@ describe('Metadata Studio 5-Point Overhaul (Local AI Optimization)', () => {
 
     renderWithProviders(<LocalAiSettingsPanel />);
 
-    const checklist = await screen.findByTestId('lfm3-tuning-checklist');
-    expect(checklist).toBeDefined();
-    expect(screen.getByText(/LM Studio Optimal Setup Checklist/i)).toBeDefined();
-    expect(screen.getByText(/Context Length: 4096/i)).toBeDefined();
-    expect(screen.getByText(/GPU Offload: Max \(24\)/i)).toBeDefined();
+    expect(screen.getByText(/LM Studio Local Server/i)).toBeDefined();
+    expect(screen.getByText(/Hardware Profile/i)).toBeDefined();
+    expect(screen.getByTestId('detected-gpu-subtitle')).toBeDefined();
   });
 });
 
