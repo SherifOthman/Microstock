@@ -191,8 +191,8 @@ function createWindow() {
   });
 
   // Intercept Window Close [X]:
-  // - If a background task (e.g. FTP upload) is active or paused and !isForceQuitting:
-  //   preventDefault(), hide window to Windows System Tray, and keep uploading in background.
+  // - If a background task (FTP, Studio, Cleaner, EPS, Audio, Tracker) is active or paused and !isForceQuitting:
+  //   preventDefault() and silently hide window to the Windows System Tray (no noisy popup toast).
   // - If completely idle (or user clicked "Quit StockFlow" in Tray): close and quit normally.
   mainWindow.on('close', (event) => {
     if (!isForceQuitting && trayManager && trayManager.hasActiveOrPausedTasks()) {
@@ -201,13 +201,6 @@ function createWindow() {
         trayManager.ensureTray();
         mainWindow.hide();
         mainWindow.setSkipTaskbar(true);
-        if (Notification && Notification.isSupported()) {
-          const notif = new Notification({
-            title: 'StockFlow — Running in Background',
-            body: 'Active queue minimized to the Windows System Tray. Right-click the tray icon to Show, Pause, or Quit.',
-          });
-          notif.show();
-        }
       } catch (err) {
         console.warn('[Electron Main] Minimize to tray warning:', err.message);
       }
@@ -555,9 +548,22 @@ function setupIpcHandlers() {
     }
   });
 
-  // Global Windows Native OS Notification Service (FTP, Metadata Studio, File Cleaner, EPS, Audio)
+  // Helper: Check if mainWindow is actively visible, unminimized, and focused on screen
+  const isMainWindowActivelyFocused = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    return (
+      mainWindow.isVisible() &&
+      !mainWindow.isMinimized() &&
+      mainWindow.isFocused()
+    );
+  };
+
+  // Global Windows Native OS Notification Service (Only fires when app is minimized, hidden to tray, or unfocused)
   ipcMain.on('notify-upload-complete', (_event, stats) => {
     try {
+      if (isMainWindowActivelyFocused()) {
+        return;
+      }
       const succeeded = stats?.succeededCount ?? stats?.succeeded ?? 0;
       const failed = stats?.failedCount ?? stats?.failed ?? 0;
       const skipped = stats?.skippedCount ?? stats?.skipped ?? 0;
@@ -569,6 +575,11 @@ function setupIpcHandlers() {
           title: 'StockFlow — FTP Upload Complete',
           body,
         });
+        notif.on('click', () => {
+          if (trayManager) {
+            trayManager.showMainWindow();
+          }
+        });
         notif.show();
       }
     } catch (err) {
@@ -578,6 +589,11 @@ function setupIpcHandlers() {
 
   ipcMain.handle('app:notifyBatchComplete', (_event, payload) => {
     try {
+      // Only fire the OS toast if StockFlow is minimized, hidden to Tray, or out of focus
+      if (isMainWindowActivelyFocused()) {
+        return { success: true, skippedBecauseFocused: true };
+      }
+
       const {
         module = 'ftp',
         title,
@@ -607,6 +623,11 @@ function setupIpcHandlers() {
         const notif = new Notification({
           title: resolvedTitle,
           body: resolvedBody,
+        });
+        notif.on('click', () => {
+          if (trayManager) {
+            trayManager.showMainWindow();
+          }
         });
         notif.show();
         return { success: true };

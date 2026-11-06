@@ -231,6 +231,14 @@ class PlainFtpAdapter {
 
       const runTransfer = async () => {
         try {
+          // Clear any corrupted/interrupted partial file on the remote FTP server before STOR
+          // so Dreamstime never rejects the upload with "550 Permission denied / Overwrite not allowed".
+          try {
+            await this.client.send(`DELE ${targetName}`);
+          } catch {
+            // Ignore 550 File not found when no partial file exists on the server
+          }
+
           if (hasDiskFile) {
             await this.client.uploadFrom(localPath, targetName);
           } else {

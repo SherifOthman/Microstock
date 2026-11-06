@@ -237,30 +237,29 @@ export function formatElapsedMmSs(totalSeconds: number): string {
  * - Computes stabilized Global ETA (Total Remaining Bytes / Average Speed)
  */
 export function useFtpTelemetryMath(telemetry: FtpTelemetryFrame) {
-  const [batchStartTime, setBatchStartTime] = useState<number | null>(null);
+  const batchStartTimeRef = useRef<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   useEffect(() => {
     if (telemetry.isRunning) {
-      if (!batchStartTime) {
-        setBatchStartTime(Date.now());
-        setElapsedSeconds(0);
+      if (!batchStartTimeRef.current) {
+        batchStartTimeRef.current = Date.now();
+        setElapsedSeconds(1);
       }
+      if (telemetry.isPaused) {
+        return;
+      }
+      const timer = setInterval(() => {
+        if (batchStartTimeRef.current) {
+          setElapsedSeconds(Math.max(1, Math.floor((Date.now() - batchStartTimeRef.current) / 1000)));
+        }
+      }, 1000);
+      return () => clearInterval(timer);
     } else if (!telemetry.isPaused) {
-      setBatchStartTime(null);
+      batchStartTimeRef.current = null;
       setElapsedSeconds(0);
     }
-  }, [telemetry.isRunning, telemetry.isPaused, batchStartTime]);
-
-  useEffect(() => {
-    if (!batchStartTime || (!telemetry.isRunning && !telemetry.isPaused)) {
-      return;
-    }
-    const timer = setInterval(() => {
-      setElapsedSeconds(Math.max(1, Math.floor((Date.now() - batchStartTime) / 1000)));
-    }, 500);
-    return () => clearInterval(timer);
-  }, [batchStartTime, telemetry.isRunning, telemetry.isPaused]);
+  }, [telemetry.isRunning, telemetry.isPaused]);
 
   const totalRemainingBytes = Math.max(0, telemetry.batchTotalBytes - telemetry.batchBytesTransferred);
   const averageSpeedBps =
@@ -281,7 +280,7 @@ export function useFtpTelemetryMath(telemetry: FtpTelemetryFrame) {
   );
 
   return {
-    batchStartTime,
+    batchStartTime: batchStartTimeRef.current,
     elapsedSeconds,
     averageSpeedBps,
     stableEtaSeconds,
@@ -309,7 +308,7 @@ export const FtpUploaderView: React.FC = () => {
     dreamstimeFtpService.getHasRecoverableSession()
   );
 
-  const storedProfile = useSqliteQuery(() => db.ftp.getProfile('dreamstime'), [], undefined);
+  const storedProfile = useSqliteQuery(() => db.ftp.getProfile('dreamstime'), [], undefined, ['ftp']);
 
   // Site Settings Credential State (Plain FTP Port 21: Host, Username, Password)
   const [host, setHost] = useState('ftp.dreamstime.com');
@@ -633,7 +632,7 @@ export const FtpUploaderView: React.FC = () => {
                     </div>
 
                     {/* Data Badge: Blue/Indigo subtle */}
-                    <div className="inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-md bg-sky-500/10 border border-sky-500/25 text-sky-400 font-mono text-xs tabular-nums shadow-xs whitespace-nowrap min-w-[190px]">
+                    <div className="inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-md bg-sky-500/10 border border-sky-500/25 text-sky-800 dark:text-sky-400 font-mono text-xs tabular-nums shadow-xs whitespace-nowrap min-w-[190px]">
                       <span>☁️</span>
                       <span>
                         {formatBytesPrecise(telemetry.batchBytesTransferred)} /{' '}
@@ -642,7 +641,7 @@ export const FtpUploaderView: React.FC = () => {
                     </div>
 
                     {/* Speed Badge: Green/Emerald subtle (Rigid Fixed Width to Prevent Jitter) */}
-                    <div className="inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 font-mono text-xs tabular-nums shadow-xs whitespace-nowrap min-w-[135px]">
+                    <div className="inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/25 text-emerald-800 dark:text-emerald-400 font-mono text-xs tabular-nums shadow-xs whitespace-nowrap min-w-[135px]">
                       <span>⚡</span>
                       <span>
                         {telemetry.isPaused
@@ -652,7 +651,7 @@ export const FtpUploaderView: React.FC = () => {
                     </div>
 
                     {/* Time Left Badge: Orange/Amber subtle (Stabilized from Average Speed) */}
-                    <div className="inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-md bg-amber-500/10 border border-amber-500/25 text-amber-400 font-mono text-xs tabular-nums shadow-xs whitespace-nowrap min-w-[125px]">
+                    <div className="inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-md bg-amber-500/10 border border-amber-500/25 text-amber-800 dark:text-amber-400 font-mono text-xs tabular-nums shadow-xs whitespace-nowrap min-w-[125px]">
                       <span>⏳</span>
                       <span>
                         {telemetry.isPaused
@@ -662,7 +661,7 @@ export const FtpUploaderView: React.FC = () => {
                     </div>
 
                     {/* Time Elapsed Badge: Purple/Violet subtle */}
-                    <div className="inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-md bg-purple-500/10 border border-purple-500/25 text-purple-400 font-mono text-xs tabular-nums shadow-xs whitespace-nowrap min-w-[135px]">
+                    <div className="inline-flex items-center justify-center gap-1.5 px-3 py-1 rounded-md bg-purple-500/10 border border-purple-500/25 text-purple-800 dark:text-purple-400 font-mono text-xs tabular-nums shadow-xs whitespace-nowrap min-w-[135px]">
                       <span>⏱️</span>
                       <span>
                         {isAr ? 'المنقضي: ' : 'Elapsed: '}
@@ -676,11 +675,11 @@ export const FtpUploaderView: React.FC = () => {
                       {isAr ? 'اكتملت الدفعة —' : 'Batch Finished —'}
                     </span>
                     <div className="flex items-center gap-2 font-mono text-[11px]" dir="ltr">
-                      <span className="text-emerald-400 font-bold">
+                      <span className="text-emerald-700 dark:text-emerald-400 font-bold">
                         {isAr ? 'تم الرفع' : 'Uploaded'}: {telemetry.succeededFiles}
                       </span>
                       <span className="text-muted-foreground">|</span>
-                      <span className="text-slate-400 font-bold">
+                      <span className="text-slate-600 dark:text-slate-400 font-bold">
                         {isAr ? 'تم التخطي (مكرر)' : 'Skipped'}: {telemetry.skippedFiles}
                       </span>
                       <span className="text-muted-foreground">|</span>
@@ -705,7 +704,7 @@ export const FtpUploaderView: React.FC = () => {
                       {telemetry.completedFiles} / {telemetry.totalFiles} (
                       {formatBytes(telemetry.batchTotalBytes)})
                     </span>
-                    <span className="text-emerald-400 font-sans font-medium">
+                    <span className="text-emerald-700 dark:text-emerald-400 font-sans font-medium">
                       {storedProfile?.hasSavedPassword
                         ? isAr
                           ? '· متصل وجاهز للرفع'
@@ -840,10 +839,10 @@ export const FtpUploaderView: React.FC = () => {
         {hasRecoverableSession && !telemetry.isRunning && pendingUploadItems.length > 0 && (
           <div
             data-testid="ftp-crash-recovery-banner"
-            className="shrink-0 px-4 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-xs text-amber-300"
+            className="shrink-0 px-4 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-xs text-amber-900 dark:text-amber-200"
           >
             <div className="flex items-center gap-2">
-              <RotateCcw className="w-4 h-4 shrink-0 text-amber-400" />
+              <RotateCcw className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
               <span className="font-semibold">
                 {isAr
                   ? `تم استعادة الجلسة المتوقفة في وضع الإيقاف المؤقت — ${pendingUploadItems.length} ملفات جاهزة للاستئناف`
@@ -874,8 +873,8 @@ export const FtpUploaderView: React.FC = () => {
             <div
               className={`shrink-0 px-3 py-1.5 rounded-lg border flex items-center justify-between text-sm transition-all ${
                 isWarning
-                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-                  : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400'
+                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200'
+                  : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-200'
               }`}
               dir={isAr ? 'rtl' : 'ltr'}
             >

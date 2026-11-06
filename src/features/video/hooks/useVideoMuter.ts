@@ -1,9 +1,13 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   inspectVideoAudioTrack,
   stripAudioTrackLossless,
 } from '../../../services/video/videoMuterEngine';
 import { saveFilesToLocalDirectory, FileToSave } from '../../../services/desktop/desktopFs';
+import {
+  queuePersistenceService,
+  rehydrateFileFromDisk,
+} from '../../../services/persistence/queuePersistenceService';
 
 export interface VideoMuteItem {
   id: string;
@@ -18,13 +22,88 @@ export interface VideoMuteItem {
   mutedSize?: number;
 }
 
+// Module-level session cache so unmounting on tab switch preserves active in-memory items
+let cachedVideoMuteItems: VideoMuteItem[] = [];
+let hasHydratedAudioFromDisk = false;
+
 export function useVideoMuter(language: string, onSendToStudio?: (files: File[]) => void) {
-  const [items, setItems] = useState<VideoMuteItem[]>([]);
-  const itemsRef = useRef<VideoMuteItem[]>([]);
+  const [items, setItems] = useState<VideoMuteItem[]>(() => cachedVideoMuteItems);
+  const itemsRef = useRef<VideoMuteItem[]>(cachedVideoMuteItems);
   itemsRef.current = items;
   const [isMutingBatch, setIsMutingBatch] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportSuccessMessage, setExportSuccessMessage] = useState<string | null>(null);
+
+  // Hydrate persisted Audio Stripper queue from SQLite on initial app startup
+  useEffect(() => {
+    if (hasHydratedAudioFromDisk || cachedVideoMuteItems.length > 0) return;
+    hasHydratedAudioFromDisk = true;
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await queuePersistenceService.hydrateModuleQueueSnapshot<VideoMuteItem>('audio');
+        if (cancelled || !snap || snap.queue.length === 0) return;
+        const rehydrated: VideoMuteItem[] = await Promise.all(
+          snap.queue.map(async (raw) => {
+            const file = await rehydrateFileFromDisk({
+              nativePath: raw.nativePath,
+              filename: raw.originalName,
+              mimeType: 'video/mp4',
+              size: raw.size,
+            });
+            return {
+              ...raw,
+              file,
+              status: raw.status === 'completed' ? 'completed' : 'idle',
+            };
+          })
+        );
+        if (!cancelled && cachedVideoMuteItems.length === 0) {
+          cachedVideoMuteItems = rehydrated;
+          itemsRef.current = rehydrated;
+          setItems(rehydrated);
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Sync module cache, SQLite persistence, and Main Process lifecycle
+  useEffect(() => {
+    cachedVideoMuteItems = items;
+    const isRunning = isMutingBatch || isExporting;
+    const completed = items.filter((i) => i.status === 'completed').length;
+    const pct = items.length > 0 ? Math.round((completed / items.length) * 100) : 0;
+
+    queuePersistenceService
+      .syncTaskLifecycleWithMainProcess({
+        moduleId: 'audio',
+        isRunning,
+        isPaused: false,
+        progressPercent: pct,
+        statusLabel: isRunning
+          ? `Audio Stripper (${completed}/${items.length})`
+          : 'Idle',
+      })
+      .catch(() => {});
+
+    if (items.length > 0) {
+      queuePersistenceService
+        .saveModuleQueueSnapshot(
+          {
+            moduleId: 'audio',
+            batchStatus: isRunning ? 'running' : completed === items.length ? 'completed' : 'idle',
+            queue: items,
+          },
+          !isRunning
+        )
+        .catch(() => {});
+    }
+  }, [items, isMutingBatch, isExporting]);
 
   const handleAddFiles = useCallback(async (newFiles: File[]) => {
     const videoFiles = newFiles.filter((f) => {
@@ -96,9 +175,11 @@ export function useVideoMuter(language: string, onSendToStudio?: (files: File[])
   }, []);
 
   const handleClearAll = useCallback(() => {
+    cachedVideoMuteItems = [];
     itemsRef.current = [];
     setItems([]);
     setExportSuccessMessage(null);
+    queuePersistenceService.clearModuleQueueSnapshot('audio').catch(() => {});
   }, []);
 
   const handleMuteSingle = useCallback(async (id: string) => {

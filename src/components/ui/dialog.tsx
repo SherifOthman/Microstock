@@ -53,7 +53,6 @@ function DialogContent({
   showCloseButton?: boolean;
 }) {
   const resolvedDir = dir || getDocumentDir();
-  const isRtl = resolvedDir === 'rtl';
   return (
     <DialogPortal>
       <DialogOverlay />
@@ -71,10 +70,7 @@ function DialogContent({
           <DialogPrimitive.Close data-slot="dialog-close" asChild>
             <Button
               variant="ghost"
-              className={cn(
-                'absolute top-4 h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer z-20',
-                isRtl ? 'left-4 right-auto' : 'right-4 left-auto'
-              )}
+              className="absolute top-4 right-4 left-auto h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer z-20"
               size="icon"
             >
               <XIcon className="w-4 h-4" />
@@ -91,7 +87,7 @@ function DialogHeader({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot="dialog-header"
-      className={cn('flex flex-col gap-1 pe-6 text-start', className)}
+      className={cn('flex flex-col gap-1 pr-10 text-start', className)}
       {...props}
     />
   );

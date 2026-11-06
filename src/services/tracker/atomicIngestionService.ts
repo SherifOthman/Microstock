@@ -16,6 +16,7 @@ import {
 } from '../ai/masterPrompt';
 import { parseAndNormalizeAiMetadata } from '../ai/metadataParser';
 import { BatchQueueService } from '../queue/BatchQueueService';
+import { queuePersistenceService } from '../persistence/queuePersistenceService';
 
 export interface IngestionQueueItem {
   id: string;
@@ -158,6 +159,23 @@ class AtomicIngestionService {
   private listeners: Set<IngestionListener> = new Set();
   private isRunning = false;
 
+  constructor() {
+    this.hydrateFromPersistence().catch(() => {});
+  }
+
+  private async hydrateFromPersistence(): Promise<void> {
+    try {
+      const hydrated = await queuePersistenceService.hydrateModuleQueueSnapshot<IngestionQueueItem>('tracker');
+      if (!hydrated || hydrated.queue.length === 0 || this.items.size > 0) return;
+      for (const item of hydrated.queue) {
+        this.items.set(item.id, item);
+      }
+      this.notify();
+    } catch {
+      // ignore hydration errors in test environments
+    }
+  }
+
   public subscribe(listener: IngestionListener): () => void {
     this.listeners.add(listener);
     listener(this.getItems(), this.isRunning);
@@ -179,6 +197,36 @@ class AtomicIngestionService {
         console.error('[AtomicIngestion] Listener error:', e);
       }
     });
+
+    const completed = list.filter(
+      (i) => i.stage === 'committed' || i.stage === 'duplicate_skipped'
+    ).length;
+    const pct = list.length > 0 ? Math.round((completed / list.length) * 100) : 0;
+
+    queuePersistenceService
+      .syncTaskLifecycleWithMainProcess({
+        moduleId: 'tracker',
+        isRunning: this.isRunning,
+        isPaused: false,
+        progressPercent: pct,
+        statusLabel: this.isRunning
+          ? `Vault Ingestion (${completed}/${list.length})`
+          : 'Idle',
+      })
+      .catch(() => {});
+
+    if (list.length > 0) {
+      queuePersistenceService
+        .saveModuleQueueSnapshot(
+          {
+            moduleId: 'tracker',
+            batchStatus: this.isRunning ? 'running' : 'idle',
+            queue: list,
+          },
+          !this.isRunning
+        )
+        .catch(() => {});
+    }
   }
 
   private updateItem(id: string, patch: Partial<IngestionQueueItem>): IngestionQueueItem | undefined {
@@ -201,6 +249,9 @@ class AtomicIngestionService {
       if (item.stage === 'committed' || item.stage === 'duplicate_skipped') {
         this.items.delete(id);
       }
+    }
+    if (this.items.size === 0) {
+      queuePersistenceService.clearModuleQueueSnapshot('tracker').catch(() => {});
     }
     this.notify();
   }

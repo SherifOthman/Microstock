@@ -1,6 +1,6 @@
 {
-  "summary": "StockFlow Enterprise Infrastructure Blueprint covering Global State Persistence & Crash Recovery (SQLite WAL + Write-Behind Debounced Queue Store) and Background Execution with Windows System Tray Integration.",
-  "updatedAt": "2026-11-06T14:04:26.091777133Z",
+  "summary": "Comprehensive Execution Blueprint diagnosing and resolving the unexpected UI freezes/deadlocks across navigation and background states, smart OS notification gating, FTP 550 partial-file pre-deletion (DELE before STOR), global task persistence & lifecycle protection across all 6 tools, Light Mode banner contrast fixes, and fixed right-aligned modal close buttons in RTL.",
+  "updatedAt": "2026-11-06T20:59:39.690684576Z",
   "requestFeedback": true,
   "userFacing": true
 }

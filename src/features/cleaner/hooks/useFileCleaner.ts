@@ -15,6 +15,10 @@ import {
   saveBatchFilesToMasterDirectory,
   validateMediaDimensions,
 } from '../../../services/cleaner/fileCleanerEngine';
+import {
+  queuePersistenceService,
+  rehydrateFileFromDisk,
+} from '../../../services/persistence/queuePersistenceService';
 
 const EMPTY_MEDIA_BATCHES: MediaBatchesMap = {
   Photos: [],
@@ -24,6 +28,13 @@ const EMPTY_MEDIA_BATCHES: MediaBatchesMap = {
   AI_Videos: [],
   AI_Vectors: [],
 };
+
+// Module-level session cache so unmounting on tab switch preserves active File Cleaner queue
+let cachedCleanerRawFiles: File[] = [];
+let cachedCleanerNativePaths: Record<string, string> = {};
+let cachedCleanerOverrides: Record<string, string> = {};
+let cachedCleanerLastProcessed: File[] = [];
+let hasHydratedCleanerFromDisk = false;
 
 export function buildRenamedFilesFromCleanedItems(items: CleanedFileItem[], masterDir?: string): File[] {
   return items
@@ -161,11 +172,11 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
   const [isScanningDisk, setIsScanningDisk] = useState(false);
 
   // Imported Files & Configuration
-  const [rawFiles, setRawFiles] = useState<File[]>([]);
-  const [lastProcessedFiles, setLastProcessedFiles] = useState<File[]>([]);
-  const lastProcessedFilesRef = useRef<File[]>([]);
+  const [rawFiles, setRawFiles] = useState<File[]>(() => cachedCleanerRawFiles);
+  const [lastProcessedFiles, setLastProcessedFiles] = useState<File[]>(() => cachedCleanerLastProcessed);
+  const lastProcessedFilesRef = useRef<File[]>(cachedCleanerLastProcessed);
   const [isBatchSaved, setIsBatchSaved] = useState(false);
-  const [nativePaths, setNativePaths] = useState<Record<string, string>>({});
+  const [nativePaths, setNativePaths] = useState<Record<string, string>>(() => cachedCleanerNativePaths);
   const [options, setOptionsState] = useState<CleanerOptions>(() => {
     const savedOrigin = localStorage.getItem('stock_cleaner_asset_origin');
     const assetOrigin: AssetOrigin = savedOrigin === 'ai' ? 'ai' : 'real';
@@ -193,7 +204,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
   }, []);
   const [shuffleSeed, setShuffleSeed] = useState(1);
   const [searchFilter, setSearchFilter] = useState('');
-  const [manualOverrides, setManualOverrides] = useState<Record<string, string>>({});
+  const [manualOverrides, setManualOverrides] = useState<Record<string, string>>(() => cachedCleanerOverrides);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isBulkMoving, setIsBulkMoving] = useState(false);
   const [progressMsg, setProgressMsg] = useState<string | null>(null);
@@ -202,6 +213,102 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
     type: 'success' | 'error';
     message: string;
   } | null>(null);
+
+  // Hydrate persisted File Cleaner queue from SQLite on initial app startup
+  useEffect(() => {
+    if (hasHydratedCleanerFromDisk || cachedCleanerRawFiles.length > 0) return;
+    hasHydratedCleanerFromDisk = true;
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await queuePersistenceService.hydrateModuleQueueSnapshot<{
+          name: string;
+          size: number;
+          type: string;
+          lastModified: number;
+          nativePath?: string;
+        }>('cleaner');
+        if (cancelled || !snap || snap.queue.length === 0) return;
+        const restoredPaths: Record<string, string> = {};
+        const restoredFiles: File[] = await Promise.all(
+          snap.queue.map(async (item) => {
+            if (item.nativePath) {
+              restoredPaths[item.name] = item.nativePath;
+            }
+            return await rehydrateFileFromDisk({
+              nativePath: item.nativePath,
+              filename: item.name,
+              mimeType: item.type || 'application/octet-stream',
+              size: item.size,
+              lastModified: item.lastModified,
+            });
+          })
+        );
+        if (!cancelled && cachedCleanerRawFiles.length === 0) {
+          cachedCleanerNativePaths = restoredPaths;
+          cachedCleanerRawFiles = restoredFiles;
+          setNativePaths(restoredPaths);
+          setRawFiles(restoredFiles);
+          if (snap.telemetry?.manualOverrides) {
+            cachedCleanerOverrides = snap.telemetry.manualOverrides;
+            setManualOverrides(snap.telemetry.manualOverrides);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Sync module cache, SQLite persistence, and Main Process lifecycle
+  useEffect(() => {
+    cachedCleanerRawFiles = rawFiles;
+    cachedCleanerNativePaths = nativePaths;
+    cachedCleanerOverrides = manualOverrides;
+    cachedCleanerLastProcessed = lastProcessedFiles;
+
+    const isRunning = isProcessing || isBulkMoving;
+    const pct =
+      processProgress && processProgress.total > 0
+        ? Math.round((processProgress.processed / processProgress.total) * 100)
+        : 0;
+
+    queuePersistenceService
+      .syncTaskLifecycleWithMainProcess({
+        moduleId: 'cleaner',
+        isRunning,
+        isPaused: false,
+        progressPercent: pct,
+        statusLabel: isRunning ? `File Cleaner (${pct}%)` : 'Idle',
+      })
+      .catch(() => {});
+
+    if (rawFiles.length > 0) {
+      const serializableQueue = rawFiles.map((f) => ({
+        name: f.name,
+        size: f.size,
+        type: f.type,
+        lastModified: f.lastModified,
+        nativePath: nativePaths[f.name] || (f as any).__nativePath || (f as any).path || undefined,
+      }));
+      queuePersistenceService
+        .saveModuleQueueSnapshot(
+          {
+            moduleId: 'cleaner',
+            batchStatus: isRunning ? 'running' : 'idle',
+            queue: serializableQueue,
+            telemetry: {
+              manualOverrides,
+            },
+          },
+          !isRunning
+        )
+        .catch(() => {});
+    }
+  }, [rawFiles, nativePaths, manualOverrides, lastProcessedFiles, isProcessing, isBulkMoving, processProgress]);
 
   // Dialog States for Duplicates & Success
   const [showDuplicateInterceptDialog, setShowDuplicateInterceptDialog] = useState(false);
@@ -273,13 +380,13 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
     }
   }, [masterDirectory, scanMasterDirectory]);
 
-  // Re-reconcile high-water marks when SQLite database records change
+  // Re-reconcile high-water marks ONLY when master_records change (not on FTP or settings writes)
   useEffect(() => {
     const unsub = subscribeToDbChanges(() => {
       if (masterDirectory) {
         scanMasterDirectory(masterDirectory);
       }
-    });
+    }, ['master']);
     return () => unsub();
   }, [masterDirectory, scanMasterDirectory]);
 
@@ -617,6 +724,10 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
 
   const handleClearAll = useCallback(() => {
     validationRunIdRef.current++;
+    cachedCleanerRawFiles = [];
+    cachedCleanerNativePaths = {};
+    cachedCleanerOverrides = {};
+    cachedCleanerLastProcessed = [];
     setRawFiles([]);
     lastProcessedFilesRef.current = [];
     setLastProcessedFiles([]);
@@ -625,6 +736,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
     validatedKeysRef.current.clear();
     setIsBatchSaved(false);
     setStatusNotification(null);
+    queuePersistenceService.clearModuleQueueSnapshot('cleaner').catch(() => {});
   }, []);
 
   const handleReShuffle = useCallback(() => {
@@ -708,8 +820,11 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
         setShowSuccessDialog(true);
 
         await scanMasterDirectory(targetMasterDir);
+        cachedCleanerRawFiles = [];
+        cachedCleanerOverrides = {};
         setRawFiles([]);
         setManualOverrides({});
+        queuePersistenceService.clearModuleQueueSnapshot('cleaner').catch(() => {});
       } else {
         setStatusNotification({
           type: 'error',

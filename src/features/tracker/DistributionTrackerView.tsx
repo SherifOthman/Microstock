@@ -172,11 +172,11 @@ export const DistributionTrackerView: React.FC<DistributionTrackerViewProps> = (
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const parentScrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Reactive SQLite queries
-  const masterRecords = useSqliteQuery(() => db.masterRecords.toArray(), [], []) || [];
-  const trackerStats = useSqliteQuery(() => db.tracker.getStats(), [masterRecords.length], undefined);
-  const workspacePaths = useSqliteQuery(() => db.tracker.getWorkspacePaths(), [], undefined);
-  const exportBaskets = useSqliteQuery(() => db.tracker.getExportBaskets(), [masterRecords.length], []) || [];
+  // Reactive SQLite queries (scoped strictly to 'master' and 'settings' changes)
+  const masterRecords = useSqliteQuery(() => db.masterRecords.toArray(), [], [], ['master']) || [];
+  const trackerStats = useSqliteQuery(() => db.tracker.getStats(), [masterRecords.length], undefined, ['master']);
+  const workspacePaths = useSqliteQuery(() => db.tracker.getWorkspacePaths(), [], undefined, ['settings']);
+  const exportBaskets = useSqliteQuery(() => db.tracker.getExportBaskets(), [masterRecords.length], [], ['master']) || [];
 
   // View Mode: Visual Gallery Grid (default) vs Clean Compact List
   const [viewMode, setViewMode] = useState<'gallery' | 'list'>('gallery');

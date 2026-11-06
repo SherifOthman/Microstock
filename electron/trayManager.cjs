@@ -59,6 +59,20 @@ function createStockFlowTrayIcon(state = 'idle') {
   }
 }
 
+const CACHED_TRAY_ICONS = {
+  idle: null,
+  running: null,
+  paused: null,
+};
+
+function getCachedTrayIcon(state = 'idle') {
+  const key = state === 'running' || state === 'paused' ? state : 'idle';
+  if (!CACHED_TRAY_ICONS[key]) {
+    CACHED_TRAY_ICONS[key] = createStockFlowTrayIcon(key);
+  }
+  return CACHED_TRAY_ICONS[key];
+}
+
 class StockFlowTrayManager {
   constructor({ getMainWindow, onSendTrayCommand, onRequestForceQuit }) {
     this.getMainWindow = getMainWindow;
@@ -66,12 +80,16 @@ class StockFlowTrayManager {
     this.onRequestForceQuit = onRequestForceQuit;
     this.tray = null;
     this.tasks = new Map();
+    this.lastMenuStatus = null;
+    this.lastTooltipText = '';
+    this.lastTooltipUpdateMs = 0;
   }
 
   ensureTray() {
     if (this.tray) return this.tray;
     try {
-      const icon = createStockFlowTrayIcon(this.getAggregateStatus());
+      const status = this.getAggregateStatus();
+      const icon = getCachedTrayIcon(status);
       this.tray = new Tray(icon);
       this.tray.setToolTip('StockFlow Studio — Ready');
 
@@ -83,7 +101,7 @@ class StockFlowTrayManager {
         this.showMainWindow();
       });
 
-      this.refreshMenu();
+      this.refreshMenu(true);
     } catch (err) {
       console.warn('[TrayManager] Could not initialize system tray:', err.message);
     }
@@ -92,7 +110,7 @@ class StockFlowTrayManager {
 
   showMainWindow() {
     const win = this.getMainWindow ? this.getMainWindow() : null;
-    if (!win) return;
+    if (!win || win.isDestroyed()) return;
     try {
       win.setSkipTaskbar(false);
       if (win.isMinimized()) {
@@ -112,6 +130,8 @@ class StockFlowTrayManager {
     const progressPercent = Number(payload.progressPercent || 0);
     const statusLabel = String(payload.statusLabel || '');
 
+    const prevStatus = this.getAggregateStatus();
+
     if (!isRunning && !isPaused) {
       this.tasks.delete(moduleId);
     } else {
@@ -126,7 +146,9 @@ class StockFlowTrayManager {
     }
 
     this.ensureTray();
-    this.refreshMenu();
+    const nextStatus = this.getAggregateStatus();
+    const statusChanged = prevStatus !== nextStatus || this.lastMenuStatus !== nextStatus;
+    this.refreshMenu(statusChanged);
     return this.getSummary();
   }
 
@@ -154,7 +176,8 @@ class StockFlowTrayManager {
   getSummary() {
     const status = this.getAggregateStatus();
     const activeList = Array.from(this.tasks.values());
-    const primary = activeList[0] || null;
+    const primary =
+      activeList.find((t) => t.isRunning && !t.isPaused) || activeList[0] || null;
     return {
       status,
       hasActiveOrPaused: this.hasActiveOrPausedTasks(),
@@ -168,20 +191,44 @@ class StockFlowTrayManager {
     };
   }
 
-  refreshMenu() {
+  refreshMenu(forceRebuild = false) {
     if (!this.tray) return;
     try {
       const summary = this.getSummary();
-      const icon = createStockFlowTrayIcon(summary.status);
+      const now = Date.now();
+      const nextTooltip = `StockFlow — ${summary.primaryLabel}`;
+
+      // Throttle tooltip updates to once every 3s unless status changed
+      if (
+        forceRebuild ||
+        (nextTooltip !== this.lastTooltipText && now - this.lastTooltipUpdateMs >= 3000)
+      ) {
+        this.tray.setToolTip(nextTooltip);
+        this.lastTooltipText = nextTooltip;
+        this.lastTooltipUpdateMs = now;
+      }
+
+      // Only rebuild native Win32 Tray image & context menu when status ('idle' | 'running' | 'paused') changes
+      if (!forceRebuild && this.lastMenuStatus === summary.status) {
+        return;
+      }
+
+      this.lastMenuStatus = summary.status;
+      const icon = getCachedTrayIcon(summary.status);
       this.tray.setImage(icon);
-      this.tray.setToolTip(`StockFlow — ${summary.primaryLabel}`);
 
       const isRunning = summary.status === 'running';
       const isPaused = summary.status === 'paused';
+      const statusHeader =
+        summary.status === 'running'
+          ? 'StockFlow — Active Task Running'
+          : summary.status === 'paused'
+          ? 'StockFlow — Task Paused'
+          : 'StockFlow — Idle & Ready';
 
       const menuTemplate = [
         {
-          label: `StockFlow — ${summary.primaryLabel}`,
+          label: statusHeader,
           enabled: false,
         },
         { type: 'separator' },
@@ -192,7 +239,7 @@ class StockFlowTrayManager {
           },
         },
         {
-          label: isPaused ? 'Resume Uploads' : 'Pause Uploads',
+          label: isPaused ? 'Resume Tasks' : 'Pause Tasks',
           enabled: isRunning || isPaused,
           click: () => {
             if (typeof this.onSendTrayCommand === 'function') {

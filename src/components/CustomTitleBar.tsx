@@ -11,7 +11,10 @@ export const CustomTitleBar: React.FC = () => {
     if (!isElectron || !window.electronAPI?.isMaximized) return;
 
     let mounted = true;
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+
     const checkState = async () => {
+      if (!mounted || (typeof document !== 'undefined' && document.hidden)) return;
       try {
         const max = await window.electronAPI!.isMaximized();
         if (mounted) setIsMax(max);
@@ -20,11 +23,17 @@ export const CustomTitleBar: React.FC = () => {
       }
     };
 
+    const handleResize = () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(checkState, 150);
+    };
+
     checkState();
-    const interval = setInterval(checkState, 1000);
+    window.addEventListener('resize', handleResize);
     return () => {
       mounted = false;
-      clearInterval(interval);
+      if (resizeTimer) clearTimeout(resizeTimer);
+      window.removeEventListener('resize', handleResize);
     };
   }, [isElectron]);
 

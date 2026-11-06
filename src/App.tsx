@@ -89,7 +89,7 @@ export function App() {
   const [requeueContext, setRequeueContext] = useState<FixAndRequeueContext | null>(null);
   const [trackerFocusAgency, setTrackerFocusAgency] = useState<SupportedPlatform | undefined>(undefined);
 
-  const masterCount = useSqliteQuery(() => db.masterRecords.count(), [], 0) || 0;
+  const masterCount = useSqliteQuery(() => db.masterRecords.count(), [], 0, ['master']) || 0;
 
   useEffect(() => {
     if (theme === 'dark') {
@@ -439,66 +439,80 @@ export function App() {
           </div>
         </aside>
 
-        {/* Right Main Workspace Column (Keep-Alive Workspaces Preserve Batch State Across Tab Switches) */}
+        {/* Right Main Workspace Column (True Unmount on Navigation — State Preserved via Singleton Services & SQLite) */}
         <div className="flex-1 min-w-0 min-h-0 flex flex-col bg-background overflow-hidden">
           <main className="flex-1 min-w-0 min-h-0 overflow-hidden flex flex-col">
-            <div className={activeTab === 'home' ? 'flex-1 overflow-y-auto px-4 sm:px-6 py-4' : 'hidden'}>
-              <HomeHubView
-                onNavigate={(tool, focusAgency) => {
-                  if (focusAgency) {
-                    setTrackerFocusAgency(focusAgency);
-                  }
-                  handleTabChange(tool);
-                }}
-                onOpenKeyRing={() => setIsKeyRingOpen(true)}
-                onOpenTemplates={() => setIsTemplatesOpen(true)}
-              />
-            </div>
-            <div className={activeTab === 'tracker' ? 'flex-1 min-h-0 h-full px-4 sm:px-5 py-3.5 overflow-hidden flex flex-col' : 'hidden'}>
-              <DistributionTrackerView
-                initialFocusAgency={trackerFocusAgency}
-                onFixAndRequeue={(ctx) => {
-                  setRequeueContext(ctx);
-                  handleTabChange('studio');
-                }}
-              />
-            </div>
-            <div className={activeTab === 'studio' ? 'flex-1 min-h-0 h-full px-3 sm:px-4 py-3 overflow-hidden flex flex-col' : 'hidden'}>
-              <StudioView
-                onOpenVideoMuter={() => handleTabChange('muter')}
-                requeueContext={requeueContext}
-                onCompleteRequeue={(agencyId) => {
-                  setRequeueContext(null);
-                  setTrackerFocusAgency(agencyId);
-                  handleTabChange('tracker');
-                }}
-                onDismissRequeue={() => setRequeueContext(null)}
-              />
-            </div>
-            <div className={activeTab === 'cleaner' ? 'flex-1 min-h-0 h-full px-4 sm:px-6 py-4 overflow-hidden flex flex-col' : 'hidden'}>
-              <FileCleanerView
-                onSendToStudio={async (files) => {
-                  handleTabChange('studio');
-                  window.dispatchEvent(new CustomEvent('stockflow:reset-media-filter'));
-                  await batchQueueService.addFiles(files);
-                }}
-              />
-            </div>
-            <div className={activeTab === 'muter' ? 'flex-1 min-h-0 h-full px-4 sm:px-6 py-4 overflow-hidden flex flex-col' : 'hidden'}>
-              <VideoMuterView />
-            </div>
-            <div className={activeTab === 'eps' ? 'flex-1 min-h-0 h-full px-4 sm:px-6 py-4 overflow-hidden flex flex-col' : 'hidden'}>
-              <EpsConverterView
-                onSendToStudio={async (files) => {
-                  handleTabChange('studio');
-                  window.dispatchEvent(new CustomEvent('stockflow:reset-media-filter'));
-                  await batchQueueService.addFiles(files);
-                }}
-              />
-            </div>
-            <div className={activeTab === 'ftp' ? 'flex-1 min-h-0 h-full px-4 sm:px-5 py-3.5 overflow-hidden flex flex-col' : 'hidden'}>
-              <FtpUploaderView />
-            </div>
+            {activeTab === 'home' && (
+              <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
+                <HomeHubView
+                  onNavigate={(tool, focusAgency) => {
+                    if (focusAgency) {
+                      setTrackerFocusAgency(focusAgency);
+                    }
+                    handleTabChange(tool);
+                  }}
+                  onOpenKeyRing={() => setIsKeyRingOpen(true)}
+                  onOpenTemplates={() => setIsTemplatesOpen(true)}
+                />
+              </div>
+            )}
+            {activeTab === 'tracker' && (
+              <div className="flex-1 min-h-0 h-full px-4 sm:px-5 py-3.5 overflow-hidden flex flex-col">
+                <DistributionTrackerView
+                  initialFocusAgency={trackerFocusAgency}
+                  onFixAndRequeue={(ctx) => {
+                    setRequeueContext(ctx);
+                    handleTabChange('studio');
+                  }}
+                />
+              </div>
+            )}
+            {activeTab === 'studio' && (
+              <div className="flex-1 min-h-0 h-full px-3 sm:px-4 py-3 overflow-hidden flex flex-col">
+                <StudioView
+                  onOpenVideoMuter={() => handleTabChange('muter')}
+                  requeueContext={requeueContext}
+                  onCompleteRequeue={(agencyId) => {
+                    setRequeueContext(null);
+                    setTrackerFocusAgency(agencyId);
+                    handleTabChange('tracker');
+                  }}
+                  onDismissRequeue={() => setRequeueContext(null)}
+                />
+              </div>
+            )}
+            {activeTab === 'cleaner' && (
+              <div className="flex-1 min-h-0 h-full px-4 sm:px-6 py-4 overflow-hidden flex flex-col">
+                <FileCleanerView
+                  onSendToStudio={async (files) => {
+                    handleTabChange('studio');
+                    window.dispatchEvent(new CustomEvent('stockflow:reset-media-filter'));
+                    await batchQueueService.addFiles(files);
+                  }}
+                />
+              </div>
+            )}
+            {activeTab === 'muter' && (
+              <div className="flex-1 min-h-0 h-full px-4 sm:px-6 py-4 overflow-hidden flex flex-col">
+                <VideoMuterView />
+              </div>
+            )}
+            {activeTab === 'eps' && (
+              <div className="flex-1 min-h-0 h-full px-4 sm:px-6 py-4 overflow-hidden flex flex-col">
+                <EpsConverterView
+                  onSendToStudio={async (files) => {
+                    handleTabChange('studio');
+                    window.dispatchEvent(new CustomEvent('stockflow:reset-media-filter'));
+                    await batchQueueService.addFiles(files);
+                  }}
+                />
+              </div>
+            )}
+            {activeTab === 'ftp' && (
+              <div className="flex-1 min-h-0 h-full px-4 sm:px-5 py-3.5 overflow-hidden flex flex-col">
+                <FtpUploaderView />
+              </div>
+            )}
           </main>
         </div>
       </div>

@@ -31,28 +31,65 @@ export interface SettingItem {
 }
 
 // ============================================================================
-// Reactive Change Notification Bus (Throttled to prevent render storms)
+// Reactive Change Notification Bus (Scoped & Throttled to prevent IPC storms)
 // ============================================================================
-type DbChangeListener = () => void;
+export type DbChangeScope = 'all' | 'master' | 'ftp' | 'keys' | 'settings';
+type DbChangeListener = (scopes: Set<DbChangeScope>) => void;
+
 const dbListeners = new Set<DbChangeListener>();
 let notifyTimer: ReturnType<typeof setTimeout> | null = null;
 let lastNotifyTime = 0;
-const THROTTLE_MS = 120;
+let pendingScopes = new Set<DbChangeScope>();
+const THROTTLE_MS = 150;
 
-export function subscribeToDbChanges(listener: DbChangeListener): () => void {
-  dbListeners.add(listener);
+// In-flight deduplication for heavy full-table getMasterRecords IPC calls
+let inFlightMasterRecordsPromise: Promise<MasterMetadataRecord[]> | null = null;
+let cachedMasterRecords: MasterMetadataRecord[] | null = null;
+let cachedMasterRecordsAt = 0;
+const MASTER_CACHE_TTL_MS = 120;
+
+export function invalidateMasterRecordsCache(): void {
+  cachedMasterRecords = null;
+  cachedMasterRecordsAt = 0;
+  inFlightMasterRecordsPromise = null;
+}
+
+export function subscribeToDbChanges(
+  listener: () => void,
+  watchScopes: DbChangeScope[] = ['all', 'master']
+): () => void {
+  const wrapped: DbChangeListener = (firedScopes) => {
+    if (firedScopes.has('all') || watchScopes.includes('all')) {
+      listener();
+      return;
+    }
+    for (const s of watchScopes) {
+      if (firedScopes.has(s)) {
+        listener();
+        return;
+      }
+    }
+  };
+  dbListeners.add(wrapped);
   return () => {
-    dbListeners.delete(listener);
+    dbListeners.delete(wrapped);
   };
 }
 
-export function notifyDbChanged(immediate = false): void {
+export function notifyDbChanged(immediate = false, scope: DbChangeScope = 'master'): void {
+  if (scope === 'master' || scope === 'all') {
+    invalidateMasterRecordsCache();
+  }
+  pendingScopes.add(scope);
+
   const fire = () => {
     lastNotifyTime = Date.now();
     notifyTimer = null;
+    const scopesToEmit = new Set(pendingScopes);
+    pendingScopes.clear();
     dbListeners.forEach((fn) => {
       try {
-        fn();
+        fn(scopesToEmit);
       } catch (e) {
         console.error('[SQLite Bridge] Listener error:', e);
       }
@@ -72,7 +109,7 @@ export function notifyDbChanged(immediate = false): void {
   if (elapsed >= THROTTLE_MS && !notifyTimer) {
     fire();
   } else if (!notifyTimer) {
-    notifyTimer = setTimeout(fire, Math.max(16, THROTTLE_MS - elapsed));
+    notifyTimer = setTimeout(fire, Math.max(24, THROTTLE_MS - elapsed));
   }
 }
 
@@ -82,18 +119,27 @@ export function notifyDbChanged(immediate = false): void {
 export function useSqliteQuery<T>(
   querier: () => Promise<T> | T,
   deps: any[] = [],
-  defaultValue?: T
+  defaultValue?: T,
+  watchScopes: DbChangeScope[] = ['all', 'master', 'ftp', 'keys', 'settings']
 ): T | undefined {
   const [data, setData] = useState<T | undefined>(defaultValue);
   const mountedRef = useRef(true);
   const querierRef = useRef(querier);
   querierRef.current = querier;
+  const inFlightRef = useRef(false);
+  const queuedRerunRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
     let cancelled = false;
 
     const runQuery = async () => {
+      if (cancelled || !mountedRef.current) return;
+      if (inFlightRef.current) {
+        queuedRerunRef.current = true;
+        return;
+      }
+      inFlightRef.current = true;
       try {
         const res = await querierRef.current();
         if (!cancelled && mountedRef.current) {
@@ -101,15 +147,22 @@ export function useSqliteQuery<T>(
         }
       } catch (err) {
         console.warn('[useSqliteQuery] Query failed:', err);
+      } finally {
+        inFlightRef.current = false;
+        if (queuedRerunRef.current && !cancelled && mountedRef.current) {
+          queuedRerunRef.current = false;
+          runQuery();
+        }
       }
     };
 
     runQuery();
-    const unsub = subscribeToDbChanges(runQuery);
+    const unsub = subscribeToDbChanges(runQuery, watchScopes);
 
     return () => {
       cancelled = true;
       mountedRef.current = false;
+      queuedRerunRef.current = false;
       unsub();
     };
   }, deps);
@@ -864,22 +917,43 @@ async function invokeDbRpc(method: string, ...args: any[]): Promise<any> {
   return await invokeFallbackDbRpc(method, ...args);
 }
 
+async function fetchMasterRecordsDeduplicated(): Promise<MasterMetadataRecord[]> {
+  const now = Date.now();
+  if (cachedMasterRecords && now - cachedMasterRecordsAt < MASTER_CACHE_TTL_MS) {
+    return cachedMasterRecords;
+  }
+  if (inFlightMasterRecordsPromise) {
+    return inFlightMasterRecordsPromise;
+  }
+  inFlightMasterRecordsPromise = (async () => {
+    try {
+      const res: MasterMetadataRecord[] = (await invokeDbRpc('getMasterRecords')) || [];
+      cachedMasterRecords = res;
+      cachedMasterRecordsAt = Date.now();
+      return res;
+    } finally {
+      inFlightMasterRecordsPromise = null;
+    }
+  })();
+  return inFlightMasterRecordsPromise;
+}
+
 // ============================================================================
 // SQLite Relational Client Bridge (Drop-in Async Table Interface)
 // ============================================================================
 export class StockFlowSqliteDB {
   masterRecords = {
     toArray: async (): Promise<MasterMetadataRecord[]> => {
-      return (await invokeDbRpc('getMasterRecords')) || [];
+      return await fetchMasterRecordsDeduplicated();
     },
     orderBy: (_field: keyof MasterMetadataRecord) => ({
       toArray: async (): Promise<MasterMetadataRecord[]> => {
-        return (await invokeDbRpc('getMasterRecords')) || [];
+        return await fetchMasterRecordsDeduplicated();
       },
     }),
     filter: (predicate: (rec: MasterMetadataRecord) => boolean) => ({
       toArray: async (): Promise<MasterMetadataRecord[]> => {
-        const all: MasterMetadataRecord[] = (await invokeDbRpc('getMasterRecords')) || [];
+        const all: MasterMetadataRecord[] = await fetchMasterRecordsDeduplicated();
         return all.filter(predicate);
       },
     }),
@@ -1040,7 +1114,7 @@ export class StockFlowSqliteDB {
       lastVerifiedAt?: number;
     }): Promise<FtpCredentialProfile> => {
       const res = await invokeDbRpc('saveFtpProfile', payload);
-      notifyDbChanged(true);
+      notifyDbChanged(true, 'ftp');
       return res;
     },
     createSession: async (payload: {
@@ -1051,7 +1125,7 @@ export class StockFlowSqliteDB {
       totalBytes: number;
     }): Promise<FtpSessionRecord> => {
       const res = await invokeDbRpc('createFtpSession', payload);
-      notifyDbChanged(true);
+      notifyDbChanged(true, 'ftp');
       return res;
     },
     updateSession: async (
@@ -1059,7 +1133,7 @@ export class StockFlowSqliteDB {
       changes: Partial<FtpSessionRecord>
     ): Promise<FtpSessionRecord | null> => {
       const res = await invokeDbRpc('updateFtpSession', id, changes);
-      notifyDbChanged(true);
+      notifyDbChanged(false, 'ftp');
       return res;
     },
     getSessions: async (agencyId?: SupportedPlatform, limit = 20): Promise<FtpSessionRecord[]> => {
@@ -1067,7 +1141,7 @@ export class StockFlowSqliteDB {
     },
     logTransfer: async (payload: Omit<FtpTransferLogRecord, 'id' | 'completedAt'> & { id?: string; completedAt?: number }): Promise<FtpTransferLogRecord> => {
       const res = await invokeDbRpc('logFtpTransfer', payload);
-      notifyDbChanged();
+      notifyDbChanged(false, 'ftp');
       return res;
     },
     getTransferLogs: async (options?: {
@@ -1079,14 +1153,14 @@ export class StockFlowSqliteDB {
     },
     clearLogs: async (agencyId?: SupportedPlatform): Promise<{ cleared: boolean }> => {
       const res = await invokeDbRpc('clearFtpLogs', agencyId);
-      notifyDbChanged(true);
+      notifyDbChanged(true, 'ftp');
       return res;
     },
   };
 
   queues = {
     saveSnapshot: async <TItem = any, TTelemetry = Record<string, any>>(payload: {
-      moduleId: 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio';
+      moduleId: 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio' | 'tracker';
       sessionId?: string;
       batchStatus: 'idle' | 'running' | 'paused' | 'completed';
       agencyId?: SupportedPlatform;
@@ -1103,7 +1177,7 @@ export class StockFlowSqliteDB {
       return await invokeDbRpc('saveQueueSnapshot', payload);
     },
     getSnapshot: async <TItem = any, TTelemetry = Record<string, any>>(
-      moduleId: 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio' = 'ftp'
+      moduleId: 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio' | 'tracker' = 'ftp'
     ): Promise<{
       moduleId: string;
       sessionId?: string;
@@ -1116,7 +1190,7 @@ export class StockFlowSqliteDB {
       return (await invokeDbRpc('getQueueSnapshot', moduleId)) || null;
     },
     clearSnapshot: async (
-      moduleId: 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio' = 'ftp'
+      moduleId: 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio' | 'tracker' = 'ftp'
     ): Promise<{ cleared: boolean; moduleId: string }> => {
       return await invokeDbRpc('clearQueueSnapshot', moduleId);
     },
@@ -1144,31 +1218,31 @@ export class StockFlowSqliteDB {
               if (k[field] === val) await invokeDbRpc('deleteApiKey', k.id);
             }
           }
-          notifyDbChanged(true);
+      notifyDbChanged(true, 'keys');
         },
       }),
     }),
     put: async (record: ApiKeyRecord): Promise<string> => {
       const id = await invokeDbRpc('putApiKey', record);
-      notifyDbChanged();
+      notifyDbChanged(false, 'keys');
       return id;
     },
     bulkPut: async (records: ApiKeyRecord[]): Promise<void> => {
       await invokeDbRpc('bulkPutApiKeys', records);
-      notifyDbChanged(true);
+      notifyDbChanged(true, 'keys');
     },
     update: async (id: string, changes: Partial<ApiKeyRecord>): Promise<number> => {
       const res = await invokeDbRpc('updateApiKey', id, changes);
-      notifyDbChanged();
+      notifyDbChanged(false, 'keys');
       return res;
     },
     delete: async (id: string): Promise<void> => {
       await invokeDbRpc('deleteApiKey', id);
-      notifyDbChanged(true);
+      notifyDbChanged(true, 'keys');
     },
     clear: async (): Promise<void> => {
       await invokeDbRpc('clearApiKeys');
-      notifyDbChanged(true);
+      notifyDbChanged(true, 'keys');
     },
   };
 
@@ -1181,16 +1255,16 @@ export class StockFlowSqliteDB {
     },
     put: async (record: BatchRecord): Promise<string> => {
       const id = await invokeDbRpc('putBatch', record);
-      notifyDbChanged();
+      notifyDbChanged(false, 'master');
       return id;
     },
     delete: async (id: string): Promise<void> => {
       await invokeDbRpc('deleteBatch', id);
-      notifyDbChanged();
+      notifyDbChanged(false, 'master');
     },
     clear: async (): Promise<void> => {
       await invokeDbRpc('clearBatches');
-      notifyDbChanged();
+      notifyDbChanged(false, 'master');
     },
   };
 
@@ -1200,12 +1274,12 @@ export class StockFlowSqliteDB {
     },
     put: async (item: SettingItem): Promise<string> => {
       const k = await invokeDbRpc('putSetting', item);
-      notifyDbChanged();
+      notifyDbChanged(false, 'settings');
       return k;
     },
     clear: async (): Promise<void> => {
       await invokeDbRpc('clearSettings');
-      notifyDbChanged();
+      notifyDbChanged(false, 'settings');
     },
   };
 

@@ -369,8 +369,11 @@ export const MediaLightboxModal: React.FC<MediaLightboxModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col justify-between select-none animate-in fade-in-0 duration-150">
-      {/* Top Controls Bar */}
-      <div className="flex items-center justify-between px-4 py-3 bg-zinc-950/80 border-b border-zinc-800/80 z-10">
+      {/* Top Controls Bar (dir="ltr" keeps [X] close button fixed on the right in both LTR & RTL) */}
+      <div
+        dir="ltr"
+        className="flex items-center justify-between px-4 py-3 bg-zinc-950/80 border-b border-zinc-800/80 z-10"
+      >
         <div className="flex items-center gap-2.5 min-w-0">
           <Badge
             variant="outline"

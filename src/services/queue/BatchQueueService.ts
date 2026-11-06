@@ -19,6 +19,7 @@ import {
   MIN_REQUIRED_KEYWORDS,
   MAX_LOCAL_KEYWORDS,
 } from '../ai/metadataParser';
+import { queuePersistenceService } from '../persistence/queuePersistenceService';
 
 export interface QueueItem {
   id: string;
@@ -150,8 +151,40 @@ export class BatchQueueService {
   private activeAbortControllers: Set<AbortController> = new Set();
   private itemAbortControllers: Map<string, AbortController> = new Map();
   private queueSessionId = 0;
+  private hasHydrated = false;
 
-  private constructor() {}
+  private constructor() {
+    this.hydrateFromPersistence().catch(() => {});
+    if (typeof window !== 'undefined' && window.electronAPI?.tasks?.onTrayCommand) {
+      window.electronAPI.tasks.onTrayCommand((payload) => {
+        if (payload.command === 'pause-all' && this.status === 'running') {
+          this.pause();
+        } else if (payload.command === 'resume-all' && this.status === 'paused') {
+          this.resume();
+        } else if (payload.command === 'prepare-force-quit') {
+          queuePersistenceService.flushModuleSnapshot('studio').catch(() => {});
+        }
+      });
+    }
+  }
+
+  public async hydrateFromPersistence(): Promise<void> {
+    if (this.hasHydrated) return;
+    this.hasHydrated = true;
+    try {
+      const hydrated = await queuePersistenceService.hydrateModuleQueueSnapshot<QueueItem>('studio');
+      if (!hydrated || hydrated.queue.length === 0 || this.items.size > 0) return;
+      for (const item of hydrated.queue) {
+        this.items.set(item.id, item);
+      }
+      if (hydrated.wasInterrupted && hydrated.recoverablePendingCount > 0) {
+        this.status = 'paused';
+      }
+      this.notify();
+    } catch {
+      // ignore hydration errors in test environments
+    }
+  }
 
   public static getInstance(): BatchQueueService {
     if (!BatchQueueService.instance) {
@@ -180,6 +213,52 @@ export class BatchQueueService {
         console.error('Queue state listener error', e);
       }
     });
+
+    const isRunning = state.status === 'running' || state.status === 'resizing';
+    const isPaused = state.status === 'paused';
+    const pct =
+      state.totalCount > 0 ? Math.round((state.processedCount / state.totalCount) * 100) : 0;
+
+    queuePersistenceService
+      .syncTaskLifecycleWithMainProcess({
+        moduleId: 'studio',
+        isRunning,
+        isPaused,
+        progressPercent: pct,
+        statusLabel: isRunning
+          ? `AI Studio (${state.processedCount}/${state.totalCount})`
+          : isPaused
+          ? `AI Studio Paused (${state.processedCount}/${state.totalCount})`
+          : 'Idle',
+      })
+      .catch(() => {});
+
+    if (state.items.length > 0) {
+      queuePersistenceService
+        .saveModuleQueueSnapshot(
+          {
+            moduleId: 'studio',
+            sessionId: state.batchId,
+            batchStatus:
+              state.status === 'running' || state.status === 'resizing'
+                ? 'running'
+                : state.status === 'paused'
+                ? 'paused'
+                : state.status === 'completed'
+                ? 'completed'
+                : 'idle',
+            queue: state.items,
+            telemetry: {
+              totalCount: state.totalCount,
+              processedCount: state.processedCount,
+              failedCount: state.failedCount,
+              elapsedSeconds: state.elapsedSeconds,
+            },
+          },
+          state.status === 'paused' || state.status === 'completed'
+        )
+        .catch(() => {});
+    }
   }
 
   private notifyTimer(): void {
@@ -1291,6 +1370,7 @@ export class BatchQueueService {
     terminateEpsWorker();
     this.items.clear();
     this.elapsedSeconds = 0;
+    queuePersistenceService.clearModuleQueueSnapshot('studio').catch(() => {});
     this.notify();
   }
 

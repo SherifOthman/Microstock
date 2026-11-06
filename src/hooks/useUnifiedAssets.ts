@@ -58,8 +58,8 @@ export function useUnifiedAssets(
   searchQuery = '',
   statusFilter = 'all'
 ): UnifiedAssetsResult {
-  // Query SQLite masterRecords ordered deterministically by createdAt index
-  const liveRecords = useSqliteQuery(() => db.masterRecords.orderBy('createdAt').toArray(), [], []) || [];
+  // Query SQLite masterRecords ordered deterministically by createdAt index (scoped strictly to 'master' changes)
+  const liveRecords = useSqliteQuery(() => db.masterRecords.orderBy('createdAt').toArray(), [], [], ['master']) || [];
 
   return useMemo(() => {
     const rowMap = new Map<string, UnifiedAssetRow>();

@@ -1,6 +1,10 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { rasterizeEpsFile, EpsRenderResult } from '../../../services/eps/epsEngine';
 import { saveFilesToLocalDirectory, FileToSave } from '../../../services/desktop/desktopFs';
+import {
+  queuePersistenceService,
+  rehydrateFileFromDisk,
+} from '../../../services/persistence/queuePersistenceService';
 
 export interface EpsConvertItem {
   id: string;
@@ -15,6 +19,10 @@ export interface EpsConvertItem {
   result?: EpsRenderResult;
   previewThumbnailUrl?: string;
 }
+
+// Module-level session cache so unmounting the view on tab switch preserves active in-memory items & blobs
+let cachedEpsItems: EpsConvertItem[] = [];
+let hasHydratedEpsFromDisk = false;
 
 async function createLightweightThumbnail(blob?: Blob, maxDim = 384): Promise<string> {
   if (!blob || typeof createImageBitmap !== 'function' || typeof document === 'undefined') {
@@ -58,7 +66,7 @@ export function useEpsConverter(
   onSendToStudio?: (files: File[]) => void
 ) {
   const objectUrlsRef = useRef<Set<string>>(new Set());
-  const [items, setItems] = useState<EpsConvertItem[]>([]);
+  const [items, setItems] = useState<EpsConvertItem[]>(() => cachedEpsItems);
   const [isConvertingBatch, setIsConvertingBatch] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [isBatchSaved, setIsBatchSaved] = useState(false);
@@ -73,6 +81,75 @@ export function useEpsConverter(
     });
     objectUrlsRef.current.clear();
   }, []);
+
+  // Hydrate persisted EPS queue from SQLite on initial app startup
+  useEffect(() => {
+    if (hasHydratedEpsFromDisk || cachedEpsItems.length > 0) return;
+    hasHydratedEpsFromDisk = true;
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await queuePersistenceService.hydrateModuleQueueSnapshot<EpsConvertItem>('eps');
+        if (cancelled || !snap || snap.queue.length === 0) return;
+        const rehydrated: EpsConvertItem[] = await Promise.all(
+          snap.queue.map(async (raw) => {
+            const file = await rehydrateFileFromDisk({
+              nativePath: raw.nativePath,
+              filename: raw.originalName,
+              mimeType: 'application/postscript',
+              size: raw.size,
+            });
+            return {
+              ...raw,
+              file,
+              status: raw.status === 'completed' && raw.previewThumbnailUrl ? 'completed' : 'idle',
+            };
+          })
+        );
+        if (!cancelled && cachedEpsItems.length === 0) {
+          cachedEpsItems = rehydrated;
+          setItems(rehydrated);
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Keep module cache and SQLite persistence in sync with items & batch status
+  useEffect(() => {
+    cachedEpsItems = items;
+    const completed = items.filter((i) => i.status === 'completed').length;
+    const pct = items.length > 0 ? Math.round((completed / items.length) * 100) : 0;
+
+    queuePersistenceService
+      .syncTaskLifecycleWithMainProcess({
+        moduleId: 'eps',
+        isRunning: isConvertingBatch,
+        isPaused: false,
+        progressPercent: pct,
+        statusLabel: isConvertingBatch
+          ? `EPS Engine (${completed}/${items.length})`
+          : 'Idle',
+      })
+      .catch(() => {});
+
+    if (items.length > 0) {
+      queuePersistenceService
+        .saveModuleQueueSnapshot(
+          {
+            moduleId: 'eps',
+            batchStatus: isConvertingBatch ? 'running' : completed === items.length ? 'completed' : 'idle',
+            queue: items,
+          },
+          !isConvertingBatch
+        )
+        .catch(() => {});
+    }
+  }, [items, isConvertingBatch]);
 
   useEffect(() => {
     const trackedUrls = objectUrlsRef.current;
@@ -326,10 +403,11 @@ export function useEpsConverter(
 
   const handleClearAll = useCallback(() => {
     revokeAllObjectUrls();
+    cachedEpsItems = [];
     setItems([]);
     setStatusMessage(null);
     setIsBatchSaved(false);
-    setIsBatchSaved(false);
+    queuePersistenceService.clearModuleQueueSnapshot('eps').catch(() => {});
   }, [revokeAllObjectUrls]);
 
   const completedCount = useMemo(() => items.filter((i) => i.status === 'completed').length, [items]);

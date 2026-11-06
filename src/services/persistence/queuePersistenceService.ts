@@ -1,7 +1,7 @@
 import { db } from '../../db';
 import { SupportedPlatform } from '../../types';
 
-export type PersistentTaskModuleId = 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio';
+export type PersistentTaskModuleId = 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio' | 'tracker';
 export type PersistentBatchStatus = 'idle' | 'running' | 'paused' | 'completed';
 
 export interface PersistentQueueSnapshot<TItem = any, TTelemetry = Record<string, any>> {
@@ -26,28 +26,122 @@ export interface HydratedQueueResult<TItem = any, TTelemetry = Record<string, an
 }
 
 /**
+ * Reconstructs a browser `File` object from a local disk path (`nativePath`) via Electron's `readLocalFile` IPC,
+ * or creates a lightweight path-backed `File` handle when running in memory/test environments.
+ */
+export async function rehydrateFileFromDisk(params: {
+  nativePath?: string;
+  filename: string;
+  mimeType?: string;
+  size?: number;
+  lastModified?: number;
+}): Promise<File> {
+  const { nativePath, filename, mimeType = 'application/octet-stream', lastModified = Date.now() } = params;
+  if (nativePath && typeof window !== 'undefined' && window.electronAPI?.readLocalFile) {
+    try {
+      const res = await window.electronAPI.readLocalFile(nativePath);
+      if (res?.success && res.buffer) {
+        const f = new File([res.buffer], res.name || filename, {
+          type: mimeType,
+          lastModified,
+        });
+        Object.defineProperty(f, 'path', {
+          value: nativePath,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        Object.defineProperty(f, '__nativePath', {
+          value: nativePath,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        return f;
+      }
+    } catch {
+      // fall through to path-backed stub
+    }
+  }
+
+  const stub = new File([''], filename, { type: mimeType, lastModified });
+  if (nativePath) {
+    Object.defineProperty(stub, 'path', {
+      value: nativePath,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(stub, '__nativePath', {
+      value: nativePath,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return stub;
+}
+
+/**
  * Global Write-Behind Persistence & Background Task Lifecycle Service.
- * - Uses SQLite WAL (`persistent_task_queues`) via `db.queues` for atomic crash recovery.
- * - Coalesces rapid non-critical updates (e.g. byte ticks or bulk file drops) with a 250ms write-behind debounce
- *   while flushing state transitions (`queued` -> `uploading`, `succeeded`, `paused`, `clear`) immediately.
+ * - Uses SQLite WAL (`persistent_task_queues`) via `db.queues` for atomic crash recovery across all 6 tools:
+ *   `ftp`, `studio`, `tracker`, `cleaner`, `eps`, and `audio`.
+ * - Coalesces rapid non-critical updates with a 250ms write-behind debounce
+ *   while flushing structural state transitions immediately.
  * - Synchronizes active/paused task status with Electron Main Process (`window.electronAPI.tasks.updateLifecycleState`)
- *   so clicking `[X]` minimizes to the Windows System Tray when a task is active or paused, and quits cleanly when idle.
+ *   and coordinates OS `powerSaveBlocker` so clicking `[X]` minimizes to the Windows System Tray whenever ANY tool
+ *   has an active or paused task, and quits cleanly when all tools are idle.
  */
 class GlobalQueuePersistenceManager {
   private debounceTimers = new Map<PersistentTaskModuleId, ReturnType<typeof setTimeout>>();
   private pendingSnapshots = new Map<PersistentTaskModuleId, PersistentQueueSnapshot<any, any>>();
+  private moduleStates = new Map<
+    PersistentTaskModuleId,
+    { isRunning: boolean; isPaused: boolean; progressPercent: number; statusLabel: string }
+  >();
+  private lastPowerBlockerActive = false;
 
   /**
-   * Strips non-serializable browser `File` objects and `blob:` URLs before saving to SQLite
-   * so JSON serialization is fast and deterministic.
+   * Strips non-serializable browser `File` objects, `Blob` buffers, and `blob:` URLs before saving to SQLite
+   * so JSON serialization is fast and deterministic across all tools.
    */
   sanitizeQueueForStorage<T extends Record<string, any>>(queue: T[]): T[] {
     return queue.map((item) => {
       const clone: Record<string, any> = { ...item };
+
+      // Preserve nativePath from attached File if not already set on the item
+      const attachedFile = clone.file || clone.fileObject;
+      if (!clone.nativePath && !clone.localPath && attachedFile) {
+        const resolvedPath = (attachedFile as any).__nativePath || (attachedFile as any).path;
+        if (resolvedPath) {
+          clone.nativePath = resolvedPath;
+        }
+      }
+
+      delete clone.file;
       delete clone.fileObject;
+      delete clone.mutedFile;
+      delete clone.mutedBlob;
+
+      if (clone.result && typeof clone.result === 'object') {
+        const resClone = { ...clone.result };
+        delete resClone.blob;
+        if (typeof resClone.objectUrl === 'string' && resClone.objectUrl.startsWith('blob:')) {
+          delete resClone.objectUrl;
+        }
+        clone.result = resClone;
+      }
+
       if (typeof clone.previewUrl === 'string' && clone.previewUrl.startsWith('blob:')) {
         delete clone.previewUrl;
       }
+      if (typeof clone.previewThumbnailUrl === 'string' && clone.previewThumbnailUrl.startsWith('blob:')) {
+        delete clone.previewThumbnailUrl;
+      }
+      if (typeof clone.thumbnailUrl === 'string' && clone.thumbnailUrl.startsWith('blob:')) {
+        delete clone.thumbnailUrl;
+      }
+
       if (clone.jpgPart && typeof clone.jpgPart === 'object') {
         const jpgClone = { ...clone.jpgPart };
         delete jpgClone.fileObject;
@@ -160,14 +254,8 @@ class GlobalQueuePersistenceManager {
   }
 
   /**
-   * Hydrates a module's queue on app startup and sanitizes any mid-flight `'uploading'` items:
-   * - Items that were `'uploading'` when the crash/power loss occurred are reset to `'queued'`
-   *   so they can be cleanly resumed.
-   * - For `Vector Bundle (JPG + EPS)` items where Phase A (`jpgPart.uploaded === true`) had already
-   *   completed before the crash, `jpgPart.uploaded` is preserved and `bytesTransferred` is set to
-   *   `jpgPart.fileSize` so hitting Resume starts directly at Phase B (`EPS -> /additional`).
-   * - Reconstructs `previewUrl` using `stockflow://local?path=...` from `localPath`.
-   * - Restores unfinished batches in a **Paused / Ready-to-Resume** state (`batchStatus: 'paused'`).
+   * Hydrates a module's queue on app startup and sanitizes any mid-flight items
+   * (`'uploading'`, `'processing'`, `'rendering'`, `'resizing'`, `'retrying'`) interrupted by a crash or restart.
    */
   async hydrateModuleQueueSnapshot<
     TItem extends Record<string, any>,
@@ -184,14 +272,18 @@ class GlobalQueuePersistenceManager {
     const hydratedQueue: TItem[] = stored.queue.map((rawItem) => {
       const item: Record<string, any> = { ...rawItem };
 
-      // Reconstruct native previewUrl from localPath if not a CSV
-      const previewSourcePath = item.jpgPart?.localPath || item.localPath;
-      if (!item.isCsv && previewSourcePath && !item.previewUrl) {
+      // Reconstruct native previewUrl from localPath / nativePath if not a CSV
+      const previewSourcePath = item.jpgPart?.localPath || item.localPath || item.nativePath;
+      if (!item.isCsv && previewSourcePath && !item.previewUrl && moduleId === 'ftp') {
         item.previewUrl = `stockflow://local?path=${encodeURIComponent(previewSourcePath)}`;
       }
 
-      // Sanitize mid-flight 'uploading' or 'retrying' items interrupted by crash/power loss
-      if (item.status === 'uploading' || item.status === 'retrying' || item.status === 'retry') {
+      // Sanitize mid-flight items across FTP, Studio, EPS, Audio, Cleaner, Tracker
+      if (
+        item.status === 'uploading' ||
+        item.status === 'retrying' ||
+        item.status === 'retry'
+      ) {
         wasInterrupted = true;
         item.status = 'queued';
         item.retryCount = 0;
@@ -199,7 +291,6 @@ class GlobalQueuePersistenceManager {
         item.errorMessage = undefined;
 
         if (item.isVectorBundle && item.jpgPart?.uploaded && !item.epsPart?.uploaded) {
-          // Preserve completed Phase A (JPG preview already on root /)
           item.bytesTransferred = Number(item.jpgPart.fileSize || 0);
           item.progressPercent = Math.round(
             (item.bytesTransferred / Math.max(1, Number(item.fileSize || 1))) * 100
@@ -208,9 +299,32 @@ class GlobalQueuePersistenceManager {
           item.bytesTransferred = 0;
           item.progressPercent = 0;
         }
+      } else if (item.status === 'processing' || item.status === 'resizing') {
+        wasInterrupted = true;
+        item.status = moduleId === 'studio' ? 'ready' : 'idle';
+      } else if (item.status === 'rendering') {
+        wasInterrupted = true;
+        item.status = 'idle';
       }
 
-      if (item.status === 'queued') {
+      if (
+        item.stage &&
+        item.stage !== 'committed' &&
+        item.stage !== 'duplicate_skipped' &&
+        item.stage !== 'failed'
+      ) {
+        wasInterrupted = true;
+        item.stage = 'queued';
+        item.stageLabel = 'Queued';
+      }
+
+      if (
+        item.status === 'queued' ||
+        item.status === 'pending' ||
+        item.status === 'ready' ||
+        item.status === 'idle' ||
+        item.stage === 'queued'
+      ) {
         recoverablePendingCount++;
       }
 
@@ -238,7 +352,8 @@ class GlobalQueuePersistenceManager {
 
   /**
    * Reports a module's running/paused state to the Electron Main Process so `mainWindow.on('close')`
-   * knows whether clicking `[X]` should minimize to the Windows System Tray or quit the application.
+   * knows whether clicking `[X]` should minimize to the Windows System Tray or quit the application,
+   * and coordinates the OS `powerSaveBlocker` so Windows never sleeps while ANY tool is running.
    */
   async syncTaskLifecycleWithMainProcess(payload: {
     moduleId: PersistentTaskModuleId;
@@ -252,6 +367,35 @@ class GlobalQueuePersistenceManager {
     activeCount: number;
     primaryLabel: string;
   }> {
+    if (!payload.isRunning && !payload.isPaused) {
+      this.moduleStates.delete(payload.moduleId);
+    } else {
+      this.moduleStates.set(payload.moduleId, {
+        isRunning: payload.isRunning,
+        isPaused: payload.isPaused,
+        progressPercent: payload.progressPercent ?? 0,
+        statusLabel: payload.statusLabel || '',
+      });
+    }
+
+    let anyRunning = false;
+    for (const st of this.moduleStates.values()) {
+      if (st.isRunning && !st.isPaused) {
+        anyRunning = true;
+        break;
+      }
+    }
+
+    // Automatically coordinate OS powerSaveBlocker across all tools
+    if (
+      anyRunning !== this.lastPowerBlockerActive &&
+      typeof window !== 'undefined' &&
+      window.electronAPI?.power?.setBlocker
+    ) {
+      this.lastPowerBlockerActive = anyRunning;
+      window.electronAPI.power.setBlocker(anyRunning).catch(() => {});
+    }
+
     if (typeof window !== 'undefined' && window.electronAPI?.tasks?.updateLifecycleState) {
       try {
         return await window.electronAPI.tasks.updateLifecycleState(payload);
@@ -259,14 +403,20 @@ class GlobalQueuePersistenceManager {
         console.warn('[QueuePersistence] syncTaskLifecycleWithMainProcess warning:', err);
       }
     }
-    const status = payload.isRunning && !payload.isPaused ? 'running' : payload.isPaused ? 'paused' : 'idle';
+    const status =
+      payload.isRunning && !payload.isPaused
+        ? 'running'
+        : payload.isPaused
+        ? 'paused'
+        : 'idle';
     return {
       status,
       hasActiveOrPaused: payload.isRunning || payload.isPaused,
-      activeCount: payload.isRunning || payload.isPaused ? 1 : 0,
+      activeCount: this.moduleStates.size,
       primaryLabel: payload.statusLabel || status,
     };
   }
 }
 
 export const queuePersistenceService = new GlobalQueuePersistenceManager();
+

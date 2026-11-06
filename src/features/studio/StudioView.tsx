@@ -62,8 +62,8 @@ export const StudioView: React.FC<StudioViewProps> = ({
   const settings = useStudioMarketplaceSettings();
   const dialogs = useStudioDialogs();
 
-  const keys = useSqliteQuery(() => db.apiKeys.toArray(), [], []) || [];
-  const appSettings = useSqliteQuery(() => getAppSettings(), [], null);
+  const keys = useSqliteQuery(() => db.apiKeys.toArray(), [], [], ['keys']) || [];
+  const appSettings = useSqliteQuery(() => getAppSettings(), [], null, ['settings']);
   const isLocalMode = appSettings?.aiExecutionMode === 'local';
   const healthyKeys = useMemo(() => keys.filter((k) => k.status !== 'invalid' && k.status !== 'disabled'), [keys]);
   const canRunAi = isLocalMode || healthyKeys.length > 0;

@@ -14,6 +14,18 @@ interface Window {
     isMaximized: () => Promise<boolean>;
     setPowerSaveBlocker?: (enable: boolean) => Promise<{ active: boolean; id?: number | null; error?: string }>;
     isPowerSaveBlocking?: () => Promise<boolean>;
+    power?: {
+      setBlocker: (enable: boolean) => Promise<{ active: boolean; id?: number | null; error?: string }>;
+      isBlocking: () => Promise<boolean>;
+    };
+    readLocalFile?: (filePath: string) => Promise<{
+      success: boolean;
+      name?: string;
+      buffer?: ArrayBuffer;
+      size?: number;
+      mtime?: number;
+      error?: string;
+    }>;
     showNotification?: (options: { title: string; body: string }) => Promise<{ success: boolean }>;
     notifyUploadComplete?: (stats: {
       succeededCount: number;
@@ -22,7 +34,7 @@ interface Window {
       duration?: string;
     }) => void;
     notifyBatchComplete?: (payload: {
-      module?: 'ftp' | 'studio' | 'cleaner' | 'eps' | 'audio';
+      module?: 'ftp' | 'studio' | 'cleaner' | 'eps' | 'audio' | 'tracker';
       title?: string;
       body?: string;
       succeededCount?: number;
@@ -170,7 +182,7 @@ interface Window {
     };
     tasks?: {
       updateLifecycleState: (payload: {
-        moduleId: 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio';
+        moduleId: 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio' | 'tracker';
         isRunning: boolean;
         isPaused: boolean;
         progressPercent?: number;
