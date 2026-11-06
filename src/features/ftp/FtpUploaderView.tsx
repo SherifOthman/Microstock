@@ -217,6 +217,78 @@ async function extractFilesFromDataTransfer(dataTransfer: DataTransfer): Promise
   return dataTransfer.files ? Array.from(dataTransfer.files) : [];
 }
 
+export function formatElapsedMmSs(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  const mins = Math.floor(s / 60);
+  const secs = s % 60;
+  if (mins >= 60) {
+    const hours = Math.floor(mins / 60);
+    const remMins = mins % 60;
+    return `${String(hours).padStart(2, '0')}:${String(remMins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+/**
+ * Stabilizes upload telemetry math:
+ * - Tracks total elapsed seconds while uploading or paused
+ * - Computes overall average speed (Total Bytes Uploaded / Total Seconds Elapsed)
+ * - Computes stabilized Global ETA (Total Remaining Bytes / Average Speed)
+ */
+export function useFtpTelemetryMath(telemetry: FtpTelemetryFrame) {
+  const [batchStartTime, setBatchStartTime] = useState<number | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    if (telemetry.isRunning) {
+      if (!batchStartTime) {
+        setBatchStartTime(Date.now());
+        setElapsedSeconds(0);
+      }
+    } else if (!telemetry.isPaused) {
+      setBatchStartTime(null);
+      setElapsedSeconds(0);
+    }
+  }, [telemetry.isRunning, telemetry.isPaused, batchStartTime]);
+
+  useEffect(() => {
+    if (!batchStartTime || (!telemetry.isRunning && !telemetry.isPaused)) {
+      return;
+    }
+    const timer = setInterval(() => {
+      setElapsedSeconds(Math.max(1, Math.floor((Date.now() - batchStartTime) / 1000)));
+    }, 500);
+    return () => clearInterval(timer);
+  }, [batchStartTime, telemetry.isRunning, telemetry.isPaused]);
+
+  const totalRemainingBytes = Math.max(0, telemetry.batchTotalBytes - telemetry.batchBytesTransferred);
+  const averageSpeedBps =
+    elapsedSeconds > 0 && telemetry.batchBytesTransferred > 0
+      ? telemetry.batchBytesTransferred / elapsedSeconds
+      : 0;
+
+  const stableEtaSeconds =
+    telemetry.isRunning && !telemetry.isPaused && averageSpeedBps > 0 && totalRemainingBytes > 0
+      ? Math.round(totalRemainingBytes / averageSpeedBps)
+      : totalRemainingBytes === 0
+      ? 0
+      : null;
+
+  const activeFileNumber = Math.min(
+    telemetry.totalFiles,
+    Math.max(1, telemetry.currentFileIndex || telemetry.completedFiles + 1)
+  );
+
+  return {
+    batchStartTime,
+    elapsedSeconds,
+    averageSpeedBps,
+    stableEtaSeconds,
+    totalRemainingBytes,
+    activeFileNumber,
+  };
+}
+
 export const FtpUploaderView: React.FC = () => {
   const { language } = useLanguage();
   const isAr = language === 'ar';
@@ -399,15 +471,11 @@ export const FtpUploaderView: React.FC = () => {
     telemetry.completedFiles === telemetry.totalFiles &&
     !telemetry.isRunning;
 
-  const totalRemainingBytes = Math.max(0, telemetry.batchTotalBytes - telemetry.batchBytesTransferred);
-  const globalEtaSeconds =
-    telemetry.isRunning && !telemetry.isPaused && telemetry.speedBytesPerSec > 0
-      ? Math.round(totalRemainingBytes / telemetry.speedBytesPerSec)
-      : null;
-  const activeFileNumber = Math.min(
-    telemetry.totalFiles,
-    Math.max(1, telemetry.currentFileIndex || telemetry.completedFiles + 1)
-  );
+  const {
+    elapsedSeconds,
+    stableEtaSeconds,
+    activeFileNumber,
+  } = useFtpTelemetryMath(telemetry);
 
   const visibleQueue =
     activeSubTab === 'succeeded'
@@ -558,13 +626,22 @@ export const FtpUploaderView: React.FC = () => {
                       </span>
                     </div>
 
-                    {/* Time Left Badge: Orange/Amber subtle */}
+                    {/* Time Left Badge: Orange/Amber subtle (Stabilized from Average Speed) */}
                     <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-amber-500/10 border border-amber-500/25 text-amber-400 font-mono text-xs shadow-xs">
                       <span>⏳</span>
                       <span>
                         {telemetry.isPaused
                           ? '--:--:--'
-                          : formatTimeLeftHms(globalEtaSeconds)}
+                          : formatTimeLeftHms(stableEtaSeconds)}
+                      </span>
+                    </div>
+
+                    {/* Time Elapsed Badge: Purple/Violet subtle */}
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-purple-500/10 border border-purple-500/25 text-purple-400 font-mono text-xs shadow-xs">
+                      <span>⏱️</span>
+                      <span>
+                        {isAr ? 'المنقضي: ' : 'Elapsed: '}
+                        {formatElapsedMmSs(elapsedSeconds)}
                       </span>
                     </div>
                   </div>
@@ -917,12 +994,17 @@ export const FtpUploaderView: React.FC = () => {
                             content={
                               <div className="flex flex-col items-center gap-2 w-full text-center">
                                 {renderMediaPreviewContent(item, 'hover')}
-                                <span
-                                  className="text-xs font-mono text-muted-foreground font-medium break-all w-full text-center px-1"
-                                  dir="ltr"
-                                >
-                                  {item.displayName || item.filename}
-                                </span>
+                                <div className="flex flex-col items-center gap-0.5 w-full">
+                                  <span
+                                    className="text-xs font-mono text-foreground font-semibold break-all w-full text-center px-1"
+                                    dir="ltr"
+                                  >
+                                    {item.displayName || item.filename}
+                                  </span>
+                                  <span className="text-[11px] font-mono text-muted-foreground">
+                                    {getMediaTypeLabel(item, language)} · {formatBytes(item.fileSize)}
+                                  </span>
+                                </div>
                                 {item.isVectorBundle && item.jpgPart && item.epsPart && (
                                   <div
                                     className="text-[10px] font-mono text-amber-400/90 text-center space-y-0.5 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1 w-full"
@@ -1108,21 +1190,16 @@ export const FtpUploaderView: React.FC = () => {
               <div className="w-full flex items-center justify-center overflow-hidden rounded-lg bg-black/40">
                 {renderMediaPreviewContent(previewModalItem, 'modal')}
               </div>
-              <div className="flex flex-col gap-1.5 text-xs text-muted-foreground font-mono">
-                <div className="flex items-center justify-between">
-                  <span>
-                    {getMediaTypeLabel(previewModalItem, language)} ·{' '}
-                    {formatBytes(previewModalItem.fileSize)}
-                  </span>
-                  <span dir="ltr">
-                    {previewModalItem.isVectorBundle
-                      ? '/ → /additional'
-                      : previewModalItem.remotePath}
-                  </span>
-                </div>
-                <div className="text-[11px] text-muted-foreground/80 break-all" dir="ltr">
-                  {previewModalItem.localPath}
-                </div>
+              <div className="flex items-center justify-between text-xs text-muted-foreground font-mono px-1">
+                <span>
+                  {getMediaTypeLabel(previewModalItem, language)} ·{' '}
+                  {formatBytes(previewModalItem.fileSize)}
+                </span>
+                <span dir="ltr">
+                  {previewModalItem.isVectorBundle
+                    ? '/ → /additional'
+                    : previewModalItem.remotePath}
+                </span>
               </div>
             </div>
           )}
