@@ -160,6 +160,7 @@ class SqliteDatabaseManager {
     this.baseDir = baseDir;
     this.dbPath = path.join(baseDir, 'userdata.sqlite');
     this.queuesDbPath = path.join(baseDir, 'local_queues.sqlite');
+    this.ftpProfilesVaultPath = path.join(baseDir, 'ftp_profiles_vault.json');
     this.masterVaultDir = path.join(baseDir, 'Master_Vault');
     this.previewsDir = path.join(this.masterVaultDir, '.stockflow_previews');
     this.tempStagingDir = path.join(baseDir, '.stockflow_temp');
@@ -220,6 +221,112 @@ class SqliteDatabaseManager {
       console.warn('[SQLite] Native better-sqlite3 unavailable, using in-memory relational fallback:', err.message);
       this.isNativeSqlite = false;
     }
+
+    // Hydrate and synchronize FTP profiles between disk JSON vault and SQLite
+    this._hydrateFtpProfilesVault();
+  }
+
+  _hydrateFtpProfilesVault() {
+    try {
+      if (this.ftpProfilesVaultPath && fs.existsSync(this.ftpProfilesVaultPath)) {
+        const raw = fs.readFileSync(this.ftpProfilesVaultPath, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          for (const [agencyId, prof] of Object.entries(parsed)) {
+            if (prof && typeof prof === 'object') {
+              this.memoryFallback.ftpProfiles.set(agencyId, {
+                ...prof,
+                agencyId,
+                hasSavedPassword: Boolean(prof.encryptedPassword && prof.encryptedPassword.length > 0),
+              });
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[SQLite] Failed to read ftp_profiles_vault.json:', err.message);
+    }
+
+    if (this.isNativeSqlite && this.db) {
+      try {
+        const rows = this.db.prepare('SELECT * FROM ftp_profiles').all();
+        const sqliteByAgency = new Map();
+        for (const row of rows) {
+          const spec = this.getDefaultFtpAgencySpec(row.agency_id);
+          const mapped = {
+            agencyId: row.agency_id,
+            protocol: row.protocol || spec.protocol,
+            host: row.host || spec.host,
+            port: Number(row.port) || spec.port,
+            username: row.username || '',
+            encryptedPassword: row.encrypted_password || '',
+            hasSavedPassword: Boolean(row.encrypted_password && row.encrypted_password.length > 0),
+            passiveMode: Boolean(row.passive_mode),
+            lastVerifiedAt: row.last_verified_at || null,
+            updatedAt: row.updated_at || Date.now(),
+          };
+          sqliteByAgency.set(row.agency_id, mapped);
+          const vaultEntry = this.memoryFallback.ftpProfiles.get(row.agency_id);
+          if (
+            !vaultEntry ||
+            ((mapped.username || mapped.encryptedPassword) &&
+              (!vaultEntry.username || (mapped.updatedAt || 0) >= (vaultEntry.updatedAt || 0)))
+          ) {
+            this.memoryFallback.ftpProfiles.set(row.agency_id, mapped);
+          }
+        }
+
+        // Sync any vault entries back into SQLite if missing or newer in vault
+        for (const [agencyId, vaultProf] of this.memoryFallback.ftpProfiles.entries()) {
+          const sqlRow = sqliteByAgency.get(agencyId);
+          const vaultHasCreds = Boolean(vaultProf.username || vaultProf.encryptedPassword);
+          const sqlHasCreds = Boolean(sqlRow && (sqlRow.username || sqlRow.encryptedPassword));
+          if (
+            vaultHasCreds &&
+            (!sqlHasCreds || (vaultProf.updatedAt || 0) > (sqlRow?.updatedAt || 0))
+          ) {
+            const spec = this.getDefaultFtpAgencySpec(agencyId);
+            this.db
+              .prepare(`
+                INSERT OR REPLACE INTO ftp_profiles (
+                  agency_id, protocol, host, port, username, encrypted_password,
+                  passive_mode, last_verified_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              `)
+              .run(
+                agencyId,
+                vaultProf.protocol || spec.protocol,
+                vaultProf.host || spec.host,
+                Number(vaultProf.port) || spec.port,
+                vaultProf.username || '',
+                vaultProf.encryptedPassword || '',
+                vaultProf.passiveMode !== false ? 1 : 0,
+                vaultProf.lastVerifiedAt || null,
+                vaultProf.updatedAt || Date.now()
+              );
+          }
+        }
+      } catch (err) {
+        console.warn('[SQLite] Failed to sync FTP profiles with SQLite:', err.message);
+      }
+    }
+
+    this._persistFtpProfilesVault();
+  }
+
+  _persistFtpProfilesVault() {
+    if (!this.ftpProfilesVaultPath) return;
+    try {
+      const out = {};
+      for (const [agencyId, prof] of this.memoryFallback.ftpProfiles.entries()) {
+        if (prof && (prof.username || prof.encryptedPassword)) {
+          out[agencyId] = prof;
+        }
+      }
+      fs.writeFileSync(this.ftpProfilesVaultPath, JSON.stringify(out, null, 2), 'utf8');
+    } catch (err) {
+      console.warn('[SQLite] Failed to write ftp_profiles_vault.json:', err.message);
+    }
   }
 
   _hydrateCustomWorkspaceSettings() {
@@ -253,13 +360,20 @@ class SqliteDatabaseManager {
   }
 
   close() {
+    this._persistFtpProfilesVault();
     if (this.db) {
+      try {
+        this.db.pragma('wal_checkpoint(TRUNCATE)');
+      } catch {}
       try {
         this.db.close();
       } catch {}
       this.db = null;
     }
     if (this.queuesDb) {
+      try {
+        this.queuesDb.pragma('wal_checkpoint(TRUNCATE)');
+      } catch {}
       try {
         this.queuesDb.close();
       } catch {}
@@ -2555,14 +2669,18 @@ class SqliteDatabaseManager {
       updatedAt: now,
     };
 
-    if (!this.isNativeSqlite) {
-      const existing = this.memoryFallback.ftpProfiles.get(agencyId);
-      return existing
+    const fallbackEntry = this.memoryFallback.ftpProfiles.get(agencyId);
+
+    if (!this.isNativeSqlite || !this.db) {
+      return fallbackEntry
         ? {
-            ...existing,
-            protocol: existing.protocol || spec.protocol,
-            host: existing.host || spec.host,
-            port: existing.port || spec.port,
+            ...fallbackEntry,
+            protocol: fallbackEntry.protocol || spec.protocol,
+            host: fallbackEntry.host || spec.host,
+            port: Number(fallbackEntry.port) || spec.port,
+            hasSavedPassword: Boolean(
+              fallbackEntry.encryptedPassword && fallbackEntry.encryptedPassword.length > 0
+            ),
           }
         : defaultProfile;
     }
@@ -2570,20 +2688,39 @@ class SqliteDatabaseManager {
     const row = this.db
       .prepare('SELECT * FROM ftp_profiles WHERE agency_id = ?')
       .get(agencyId);
-    if (!row) return defaultProfile;
 
-    return {
+    if (!row || (!row.username && !row.encrypted_password)) {
+      if (fallbackEntry && (fallbackEntry.username || fallbackEntry.encryptedPassword)) {
+        return {
+          ...fallbackEntry,
+          protocol: fallbackEntry.protocol || spec.protocol,
+          host: fallbackEntry.host || spec.host,
+          port: Number(fallbackEntry.port) || spec.port,
+          hasSavedPassword: Boolean(
+            fallbackEntry.encryptedPassword && fallbackEntry.encryptedPassword.length > 0
+          ),
+        };
+      }
+      if (!row) return defaultProfile;
+    }
+
+    const sqlProfile = {
       agencyId: row.agency_id,
       protocol: row.protocol || spec.protocol,
       host: row.host || spec.host,
       port: Number(row.port) || spec.port,
-      username: row.username || '',
-      encryptedPassword: row.encrypted_password || '',
-      hasSavedPassword: Boolean(row.encrypted_password && row.encrypted_password.length > 0),
+      username: row.username || fallbackEntry?.username || '',
+      encryptedPassword: row.encrypted_password || fallbackEntry?.encryptedPassword || '',
+      hasSavedPassword: Boolean(
+        (row.encrypted_password && row.encrypted_password.length > 0) ||
+          (fallbackEntry?.encryptedPassword && fallbackEntry.encryptedPassword.length > 0)
+      ),
       passiveMode: Boolean(row.passive_mode),
-      lastVerifiedAt: row.last_verified_at || undefined,
-      updatedAt: row.updated_at || now,
+      lastVerifiedAt: row.last_verified_at || fallbackEntry?.lastVerifiedAt || undefined,
+      updatedAt: row.updated_at || fallbackEntry?.updatedAt || now,
     };
+
+    return sqlProfile;
   }
 
   saveFtpProfile(payload = {}) {
@@ -2613,29 +2750,34 @@ class SqliteDatabaseManager {
       updatedAt: now,
     };
 
-    if (!this.isNativeSqlite) {
-      this.memoryFallback.ftpProfiles.set(agencyId, updated);
-      return this.getFtpProfile(agencyId);
-    }
+    this.memoryFallback.ftpProfiles.set(agencyId, updated);
+    this._persistFtpProfilesVault();
 
-    this.db
-      .prepare(`
-        INSERT OR REPLACE INTO ftp_profiles (
-          agency_id, protocol, host, port, username, encrypted_password,
-          passive_mode, last_verified_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        updated.agencyId,
-        updated.protocol,
-        updated.host,
-        updated.port,
-        updated.username,
-        updated.encryptedPassword,
-        updated.passiveMode ? 1 : 0,
-        updated.lastVerifiedAt,
-        updated.updatedAt
-      );
+    if (this.isNativeSqlite && this.db) {
+      this.db
+        .prepare(`
+          INSERT OR REPLACE INTO ftp_profiles (
+            agency_id, protocol, host, port, username, encrypted_password,
+            passive_mode, last_verified_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          updated.agencyId,
+          updated.protocol,
+          updated.host,
+          updated.port,
+          updated.username,
+          updated.encryptedPassword,
+          updated.passiveMode ? 1 : 0,
+          updated.lastVerifiedAt,
+          updated.updatedAt
+        );
+      try {
+        this.db.pragma('wal_checkpoint(PASSIVE)');
+      } catch {
+        // ignore
+      }
+    }
 
     return this.getFtpProfile(agencyId);
   }

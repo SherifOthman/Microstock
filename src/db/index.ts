@@ -821,13 +821,38 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
           ? { protocol: 'ftps' as const, host: 'ftps.shutterstock.com', port: 21 }
           : agencyId === 'adobe'
           ? { protocol: 'sftp' as const, host: 'sftp.contributor.adobestock.com', port: 22 }
-          : agencyId === 'freepik'
-          ? { protocol: 'sftp' as const, host: 'ftp.freepik.com', port: 22 }
           : agencyId === 'magnific'
           ? { protocol: 'sftp' as const, host: 'contributor-ftp.magnific.com', port: 60022 }
           : { protocol: 'ftp' as const, host: 'upload.dreamstime.com', port: 21 };
 
       let p = testMemoryStore.ftpProfiles.get(agencyId);
+      if (!p || (!p.username && !p.encryptedPassword)) {
+        try {
+          if (typeof window !== 'undefined' && window.localStorage) {
+            const raw = window.localStorage.getItem(`stockflow_ftp_profile_${agencyId}`);
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (parsed && typeof parsed === 'object' && (parsed.username || parsed.encryptedPassword || parsed.hasSavedPassword)) {
+                p = {
+                  agencyId,
+                  protocol: parsed.protocol || defaultSpec.protocol,
+                  host: parsed.host || defaultSpec.host,
+                  port: Number(parsed.port || defaultSpec.port),
+                  username: parsed.username || '',
+                  encryptedPassword: parsed.encryptedPassword || '',
+                  hasSavedPassword: Boolean(parsed.encryptedPassword || parsed.hasSavedPassword),
+                  passiveMode: true,
+                  lastVerifiedAt: parsed.lastVerifiedAt,
+                  updatedAt: parsed.updatedAt || Date.now(),
+                };
+                testMemoryStore.ftpProfiles.set(agencyId, p);
+              }
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
       if (!p) {
         p = {
           agencyId,
@@ -847,7 +872,7 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
         protocol: p.protocol || defaultSpec.protocol,
         host: p.host || defaultSpec.host,
         port: p.port || defaultSpec.port,
-        hasSavedPassword: Boolean(p.encryptedPassword),
+        hasSavedPassword: Boolean(p.encryptedPassword || p.hasSavedPassword),
       };
     }
     case 'saveFtpProfile': {
@@ -862,13 +887,26 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
           ? { protocol: 'ftps' as const, host: 'ftps.shutterstock.com', port: 21 }
           : agencyId === 'adobe'
           ? { protocol: 'sftp' as const, host: 'sftp.contributor.adobestock.com', port: 22 }
-          : agencyId === 'freepik'
-          ? { protocol: 'sftp' as const, host: 'ftp.freepik.com', port: 22 }
           : agencyId === 'magnific'
           ? { protocol: 'sftp' as const, host: 'contributor-ftp.magnific.com', port: 60022 }
           : { protocol: 'ftp' as const, host: 'upload.dreamstime.com', port: 21 };
 
-      const existing = testMemoryStore.ftpProfiles.get(agencyId);
+      let existing = testMemoryStore.ftpProfiles.get(agencyId);
+      if (!existing || (!existing.username && !existing.encryptedPassword)) {
+        try {
+          if (typeof window !== 'undefined' && window.localStorage) {
+            const raw = window.localStorage.getItem(`stockflow_ftp_profile_${agencyId}`);
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (parsed && typeof parsed === 'object') {
+                existing = parsed;
+              }
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
       const now = Date.now();
       const nextEncrypted =
         typeof payload.encryptedPassword === 'string' && payload.encryptedPassword.length > 0
@@ -881,12 +919,19 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
         port: Number(payload.port || existing?.port || defaultSpec.port),
         username: (payload.username ?? existing?.username ?? '').trim(),
         encryptedPassword: nextEncrypted,
-        hasSavedPassword: Boolean(nextEncrypted),
+        hasSavedPassword: Boolean(nextEncrypted || existing?.hasSavedPassword),
         passiveMode: true,
         lastVerifiedAt: payload.lastVerifiedAt ?? existing?.lastVerifiedAt,
         updatedAt: now,
       };
       testMemoryStore.ftpProfiles.set(agencyId, updated);
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          window.localStorage.setItem(`stockflow_ftp_profile_${agencyId}`, JSON.stringify(updated));
+        }
+      } catch {
+        // ignore
+      }
       return updated;
     }
     case 'createFtpSession': {
@@ -1271,7 +1316,68 @@ export class StockFlowSqliteDB {
 
   ftp = {
     getProfile: async (agencyId: SupportedPlatform | string = 'dreamstime'): Promise<FtpCredentialProfile> => {
-      return await invokeDbRpc('getFtpProfile', agencyId);
+      const rpcRes = (await invokeDbRpc('getFtpProfile', agencyId)) as FtpCredentialProfile | undefined;
+      let localProfile: Partial<FtpCredentialProfile> | null = null;
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          const raw = window.localStorage.getItem(`stockflow_ftp_profile_${agencyId}`);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object') {
+              localProfile = parsed;
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+
+      if (rpcRes && (rpcRes.username || rpcRes.hasSavedPassword)) {
+        try {
+          if (typeof window !== 'undefined' && window.localStorage) {
+            const mergedToStore = {
+              ...localProfile,
+              ...rpcRes,
+              encryptedPassword: rpcRes.encryptedPassword || localProfile?.encryptedPassword || '',
+              hasSavedPassword: Boolean(
+                rpcRes.hasSavedPassword || rpcRes.encryptedPassword || localProfile?.encryptedPassword
+              ),
+            };
+            window.localStorage.setItem(
+              `stockflow_ftp_profile_${agencyId}`,
+              JSON.stringify(mergedToStore)
+            );
+          }
+        } catch {
+          // ignore
+        }
+        return rpcRes;
+      }
+
+      // If backend SQLite / memory store returned empty credentials on startup, auto-restore from localStorage
+      if (localProfile && (localProfile.username || localProfile.encryptedPassword || localProfile.hasSavedPassword)) {
+        const restored = await invokeDbRpc('saveFtpProfile', {
+          agencyId,
+          protocol: localProfile.protocol || rpcRes?.protocol,
+          host: localProfile.host || rpcRes?.host,
+          port: localProfile.port || rpcRes?.port,
+          username: localProfile.username || '',
+          encryptedPassword: localProfile.encryptedPassword || '',
+          passiveMode: true,
+          lastVerifiedAt: localProfile.lastVerifiedAt,
+        });
+        return {
+          ...restored,
+          username: localProfile.username || restored?.username || '',
+          hasSavedPassword: Boolean(
+            restored?.hasSavedPassword ||
+              localProfile.encryptedPassword ||
+              localProfile.hasSavedPassword
+          ),
+        };
+      }
+
+      return rpcRes!;
     },
     saveProfile: async (payload: {
       agencyId?: SupportedPlatform | string;
@@ -1283,7 +1389,50 @@ export class StockFlowSqliteDB {
       passiveMode?: boolean;
       lastVerifiedAt?: number;
     }): Promise<FtpCredentialProfile> => {
-      const res = await invokeDbRpc('saveFtpProfile', payload);
+      const agencyId = payload.agencyId || 'dreamstime';
+      let existingLocal: Partial<FtpCredentialProfile> | null = null;
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          const raw = window.localStorage.getItem(`stockflow_ftp_profile_${agencyId}`);
+          if (raw) {
+            existingLocal = JSON.parse(raw);
+          }
+        }
+      } catch {
+        // ignore
+      }
+
+      const mergedPayload = {
+        ...payload,
+        agencyId,
+        username: payload.username ?? existingLocal?.username,
+        encryptedPassword:
+          typeof payload.encryptedPassword === 'string' && payload.encryptedPassword.length > 0
+            ? payload.encryptedPassword
+            : existingLocal?.encryptedPassword,
+      };
+
+      const res = await invokeDbRpc('saveFtpProfile', mergedPayload);
+
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          const toStore = {
+            ...existingLocal,
+            ...res,
+            ...mergedPayload,
+            hasSavedPassword: Boolean(
+              res?.hasSavedPassword ||
+                mergedPayload.encryptedPassword ||
+                existingLocal?.hasSavedPassword
+            ),
+            updatedAt: Date.now(),
+          };
+          window.localStorage.setItem(`stockflow_ftp_profile_${agencyId}`, JSON.stringify(toStore));
+        }
+      } catch {
+        // ignore
+      }
+
       notifyDbChanged(true, 'ftp');
       return res;
     },

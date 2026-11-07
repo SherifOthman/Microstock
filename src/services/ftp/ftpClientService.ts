@@ -319,31 +319,37 @@ export class DreamstimeFtpOrchestrator {
     username: string;
     password?: string;
     passiveMode?: boolean;
+    lastVerifiedAt?: number;
   }): Promise<FtpCredentialProfile> {
     const cleanHost = (payload.host || 'upload.dreamstime.com').trim();
     const cleanUsername = (payload.username || '').trim();
-
-    if (typeof window !== 'undefined' && window.electronAPI?.ftp?.saveCredentials) {
-      await window.electronAPI.ftp.saveCredentials({
-        agencyId: 'dreamstime',
-        protocol: 'ftp',
-        host: cleanHost,
-        port: 21,
-        username: cleanUsername,
-        password: payload.password,
-        passiveMode: true,
-      });
-      return await db.ftp.getProfile('dreamstime');
-    }
+    const cleanPassword =
+      payload.password === '••••••••••••' ? undefined : payload.password;
 
     let encryptedPassword: string | undefined;
-    if (typeof payload.password === 'string' && payload.password.trim().length > 0) {
-      const enc = await encryptSecret(payload.password.trim());
+    if (typeof cleanPassword === 'string' && cleanPassword.trim().length > 0) {
+      const enc = await encryptSecret(cleanPassword.trim());
       encryptedPassword = enc.startsWith('enc:')
         ? enc
-        : `enc:${Array.from(new TextEncoder().encode(payload.password.trim()))
+        : `enc:${Array.from(new TextEncoder().encode(cleanPassword.trim()))
             .map((b) => b.toString(16).padStart(2, '0'))
             .join('')}`;
+    }
+
+    if (typeof window !== 'undefined' && window.electronAPI?.ftp?.saveCredentials) {
+      try {
+        await window.electronAPI.ftp.saveCredentials({
+          agencyId: 'dreamstime',
+          protocol: 'ftp',
+          host: cleanHost,
+          port: 21,
+          username: cleanUsername,
+          password: cleanPassword,
+          passiveMode: true,
+        });
+      } catch (err) {
+        console.warn('[DreamstimeFtp] Native ftp.saveCredentials warning:', err);
+      }
     }
 
     return await db.ftp.saveProfile({
@@ -354,6 +360,7 @@ export class DreamstimeFtpOrchestrator {
       username: cleanUsername,
       encryptedPassword,
       passiveMode: true,
+      lastVerifiedAt: payload.lastVerifiedAt,
     });
   }
 
@@ -375,6 +382,8 @@ export class DreamstimeFtpOrchestrator {
   }> {
     const host = (payload.host || 'upload.dreamstime.com').trim();
     const username = (payload.username || '').trim();
+    const cleanPassword =
+      payload.password === '••••••••••••' ? undefined : payload.password;
 
     if (!host || !username) {
       return {
@@ -390,8 +399,19 @@ export class DreamstimeFtpOrchestrator {
         host,
         port: 21,
         username,
-        password: payload.password,
+        password: cleanPassword,
       });
+      if (res?.success) {
+        await this.saveDreamstimeCredentials({
+          protocol: 'ftp',
+          host,
+          port: 21,
+          username,
+          password: cleanPassword,
+          passiveMode: true,
+          lastVerifiedAt: res.verifiedAt || Date.now(),
+        });
+      }
       return res;
     }
 
@@ -404,14 +424,8 @@ export class DreamstimeFtpOrchestrator {
       host,
       port: 21,
       username,
-      password: payload.password,
+      password: cleanPassword,
       passiveMode: true,
-    });
-    await db.ftp.saveProfile({
-      agencyId: 'dreamstime',
-      protocol: 'ftp',
-      host,
-      port: 21,
       lastVerifiedAt: now,
     });
 

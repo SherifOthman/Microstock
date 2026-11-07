@@ -209,31 +209,23 @@ export const OneTwoThreeRfFtpUploaderView: React.FC<{
   };
 
   const handleSaveCredentials = async () => {
+    const cleanUsername = username.trim();
+    const passToSend = password === '••••••••••••' ? undefined : password;
+
+    if (!cleanUsername) {
+      setVaultStatus({
+        type: 'error',
+        message: isAr ? 'يرجى إدخال اسم المستخدم' : 'Username is required',
+      });
+      return;
+    }
+
     setVaultStatus({
       type: 'saving',
-      message: isAr ? 'جارٍ اختبار الاتصال وحفظ البيانات...' : 'Testing connection & saving...',
+      message: isAr ? 'جارٍ حفظ بيانات الدخول واختبار الاتصال...' : 'Saving credentials & testing connection...',
     });
     try {
-      const cleanUsername = username.trim();
-      const passToSend = password === '••••••••••••' ? undefined : password;
-
-      const testRes = await ftp123rfService.testConnection({
-        agencyId: selectedAgency,
-        host: agencySpec.host,
-        port: agencySpec.port,
-        protocol: agencySpec.protocol,
-        username: cleanUsername,
-        password: passToSend,
-      });
-
-      if (!testRes.success) {
-        setVaultStatus({
-          type: 'error',
-          message: testRes.error || testRes.message || (isAr ? 'فشل الاتصال بالخادم' : 'Connection failed'),
-        });
-        return;
-      }
-
+      // 1. Always persist credentials first so user login info is never lost even if offline
       await ftp123rfService.saveCredentials({
         agencyId: selectedAgency,
         host: agencySpec.host,
@@ -243,10 +235,33 @@ export const OneTwoThreeRfFtpUploaderView: React.FC<{
         password: passToSend,
       });
 
-      setVaultStatus({
-        type: 'ok',
-        message: isAr ? 'تم الاتصال وحفظ البيانات بنجاح' : 'Connected & Saved Successfully',
+      if (passToSend || storedProfile?.hasSavedPassword) {
+        setPassword('••••••••••••');
+      }
+
+      // 2. Verify live connection after saving
+      const testRes = await ftp123rfService.testConnection({
+        agencyId: selectedAgency,
+        host: agencySpec.host,
+        port: agencySpec.port,
+        protocol: agencySpec.protocol,
+        username: cleanUsername,
+        password: passToSend,
       });
+
+      if (testRes.success) {
+        setVaultStatus({
+          type: 'ok',
+          message: isAr ? 'تم الاتصال وحفظ البيانات بنجاح' : 'Connected & Saved Successfully',
+        });
+      } else {
+        setVaultStatus({
+          type: 'ok',
+          message: isAr
+            ? 'تم حفظ بيانات الدخول في الخزنة الآمنة'
+            : 'Credentials Saved to Secure Vault',
+        });
+      }
 
       setTimeout(() => {
         setIsSettingsOpen(false);

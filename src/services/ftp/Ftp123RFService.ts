@@ -1143,6 +1143,15 @@ export class Ftp123RFService {
         password: cleanPassword,
       });
       if (res?.success) {
+        await this.saveCredentials({
+          agencyId: targetAgency,
+          host,
+          port,
+          protocol,
+          username: credentials.username.trim(),
+          password: cleanPassword,
+          lastVerifiedAt: res.verifiedAt || Date.now(),
+        });
         return {
           ...res,
           message: `Connected (${res.latencyMs || 35}ms)`,
@@ -1160,6 +1169,7 @@ export class Ftp123RFService {
     await this.saveCredentials({
       ...credentials,
       password: cleanPassword,
+      lastVerifiedAt: Date.now(),
     });
     return {
       success: true,
@@ -1175,6 +1185,7 @@ export class Ftp123RFService {
     protocol?: FtpProtocolType;
     username: string;
     password?: string;
+    lastVerifiedAt?: number;
   }): Promise<void> {
     const targetAgency = credentials.agencyId || this.activeAgency || '123rf';
     const spec = AGENCY_FTP_SERVER_SPECS[targetAgency] || AGENCY_FTP_SERVER_SPECS['123rf'];
@@ -1183,18 +1194,6 @@ export class Ftp123RFService {
     const protocol = credentials.protocol || spec.protocol;
     const cleanPassword =
       credentials.password === '••••••••••••' ? undefined : credentials.password;
-
-    if (typeof window !== 'undefined' && (window as any).electronAPI?.ftp?.saveCredentials) {
-      await (window as any).electronAPI.ftp.saveCredentials({
-        agencyId: targetAgency,
-        protocol,
-        host,
-        port,
-        username: credentials.username.trim(),
-        password: cleanPassword,
-      });
-      return;
-    }
 
     let encryptedPassword: string | undefined;
     if (typeof cleanPassword === 'string' && cleanPassword.trim().length > 0) {
@@ -1206,6 +1205,22 @@ export class Ftp123RFService {
             .join('')}`;
     }
 
+    if (typeof window !== 'undefined' && (window as any).electronAPI?.ftp?.saveCredentials) {
+      try {
+        await (window as any).electronAPI.ftp.saveCredentials({
+          agencyId: targetAgency,
+          protocol,
+          host,
+          port,
+          username: credentials.username.trim(),
+          password: cleanPassword,
+          lastVerifiedAt: credentials.lastVerifiedAt,
+        });
+      } catch (err) {
+        console.warn('[Ftp123RFService] Native ftp.saveCredentials warning:', err);
+      }
+    }
+
     await db.ftp.saveProfile({
       agencyId: targetAgency,
       protocol,
@@ -1214,6 +1229,7 @@ export class Ftp123RFService {
       username: credentials.username.trim(),
       encryptedPassword,
       passiveMode: true,
+      lastVerifiedAt: credentials.lastVerifiedAt,
     });
   }
 }

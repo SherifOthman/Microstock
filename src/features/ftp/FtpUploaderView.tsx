@@ -101,42 +101,35 @@ export const FtpUploaderView: React.FC = () => {
   useEffect(() => {
     if (storedProfile) {
       setHost(storedProfile.host || 'upload.dreamstime.com');
-      if (storedProfile.username) {
-        setUsername(storedProfile.username);
-      }
-      if (storedProfile.hasSavedPassword && !password) {
+      setUsername(storedProfile.username || '');
+      if (storedProfile.hasSavedPassword) {
         setPassword('••••••••••••');
+      } else {
+        setPassword('');
       }
     }
-  }, [storedProfile?.updatedAt]);
+  }, [storedProfile?.updatedAt, storedProfile?.username, storedProfile?.hasSavedPassword]);
 
   const handleSaveCredentials = async () => {
+    const cleanHost = host.trim() || 'upload.dreamstime.com';
+    const cleanUsername = username.trim();
+    const passToSend = password === '••••••••••••' ? undefined : password;
+
+    if (!cleanUsername) {
+      setVaultStatus({
+        type: 'error',
+        message: isAr ? 'يرجى إدخال اسم المستخدم' : 'Username is required',
+      });
+      return;
+    }
+
     setVaultStatus({
-      type: 'testing',
-      message: isAr ? 'جارٍ اختبار الاتصال وحفظ البيانات...' : 'Testing connection & saving...',
+      type: 'saving',
+      message: isAr ? 'جارٍ حفظ بيانات الدخول واختبار الاتصال...' : 'Saving credentials & testing connection...',
     });
     try {
-      const cleanHost = host.trim() || 'upload.dreamstime.com';
-      const cleanUsername = username.trim();
-      const passToSend = password === '••••••••••••' ? undefined : password;
-
-      const testRes = await dreamstimeFtpService.testDreamstimeConnection({
-        protocol: 'ftp',
-        host: cleanHost,
-        port: 21,
-        username: cleanUsername,
-        password: passToSend,
-      });
-
-      if (!testRes.success) {
-        setVaultStatus({
-          type: 'error',
-          message: testRes.error || (isAr ? 'فشل الاتصال بخادم FTP' : 'Connection failed'),
-        });
-        return;
-      }
-
-      await dreamstimeFtpService.saveDreamstimeCredentials({
+      // 1. Always persist credentials first so user login info is never lost even if offline
+      const savedProfile = await dreamstimeFtpService.saveDreamstimeCredentials({
         protocol: 'ftp',
         host: cleanHost,
         port: 21,
@@ -145,10 +138,32 @@ export const FtpUploaderView: React.FC = () => {
         passiveMode: true,
       });
 
-      setVaultStatus({
-        type: 'ok',
-        message: isAr ? 'تم الاتصال وحفظ البيانات بنجاح' : 'Connected & Saved Successfully',
+      if (savedProfile?.hasSavedPassword || passToSend) {
+        setPassword('••••••••••••');
+      }
+
+      // 2. Verify live connection after saving
+      const testRes = await dreamstimeFtpService.testDreamstimeConnection({
+        protocol: 'ftp',
+        host: cleanHost,
+        port: 21,
+        username: cleanUsername,
+        password: passToSend,
       });
+
+      if (testRes.success) {
+        setVaultStatus({
+          type: 'ok',
+          message: isAr ? 'تم الاتصال وحفظ البيانات بنجاح' : 'Connected & Saved Successfully',
+        });
+      } else {
+        setVaultStatus({
+          type: 'ok',
+          message: isAr
+            ? 'تم حفظ بيانات الدخول في الخزنة الآمنة'
+            : 'Credentials Saved to Secure Vault',
+        });
+      }
 
       setTimeout(() => {
         setIsSettingsOpen(false);

@@ -287,4 +287,74 @@ describe('Multi-Protocol FTP Architecture, Isolation & Agency Rules', () => {
       expect(screen.getByText(/Non-AI Vector/i)).toBeDefined();
     });
   });
+
+  it('8. FTP Credentials Persistence Across All Stock Agencies & App Reopen', async () => {
+    const { db } = await import('../../src/db');
+    const { dreamstimeFtpService } = await import('../../src/services/ftp/ftpClientService');
+
+    // 1. Save Dreamstime credentials
+    await dreamstimeFtpService.saveDreamstimeCredentials({
+      host: 'upload.dreamstime.com',
+      username: 'dt_studio_user',
+      password: 'dt_secret_password',
+    });
+
+    // 2. Save credentials for all other stock agencies
+    const agenciesToTest = [
+      { id: '123rf' as const, user: 'user_123rf', pass: 'pass_123rf' },
+      { id: 'magnific' as const, user: 'user_magnific', pass: 'pass_magnific' },
+      { id: 'vecteezy' as const, user: 'user_vecteezy', pass: 'pass_vecteezy' },
+      { id: 'shutterstock' as const, user: 'user_shutterstock', pass: 'pass_shutterstock' },
+      { id: 'adobe' as const, user: 'user_adobe', pass: 'pass_adobe' },
+    ];
+
+    for (const agency of agenciesToTest) {
+      await ftp123rfService.saveCredentials({
+        agencyId: agency.id,
+        username: agency.user,
+        password: agency.pass,
+      });
+    }
+
+    // 3. Verify each agency profile is persisted in db.ftp and localStorage
+    const dtProfile = await db.ftp.getProfile('dreamstime');
+    expect(dtProfile.username).toBe('dt_studio_user');
+    expect(dtProfile.hasSavedPassword).toBe(true);
+
+    for (const agency of agenciesToTest) {
+      const prof = await db.ftp.getProfile(agency.id);
+      expect(prof.username).toBe(agency.user);
+      expect(prof.hasSavedPassword).toBe(true);
+
+      const rawLocal = window.localStorage.getItem(`stockflow_ftp_profile_${agency.id}`);
+      expect(rawLocal).toBeTruthy();
+      const parsedLocal = JSON.parse(rawLocal!);
+      expect(parsedLocal.username).toBe(agency.user);
+      expect(parsedLocal.hasSavedPassword).toBe(true);
+    }
+
+    // 4. Mount OneTwoThreeRfFtpUploaderView for Shutterstock (simulating app reopen) and verify Online status + prefilled credentials
+    const { unmount } = render(
+      <LanguageProvider>
+        <OneTwoThreeRfFtpUploaderView selectedAgency="shutterstock" />
+      </LanguageProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Online')).toBeDefined();
+    });
+
+    // Open Site Settings modal and verify saved username & masked password are populated
+    fireEvent.click(screen.getByTestId('123rf-credentials-button'));
+
+    await waitFor(() => {
+      const userInp = screen.getByTestId('ftp-username-input') as HTMLInputElement;
+      const passInp = screen.getByTestId('ftp-password-input') as HTMLInputElement;
+      expect(userInp.value).toBe('user_shutterstock');
+      expect(passInp.value).toBe('••••••••••••');
+    });
+
+    unmount();
+  });
 });
+

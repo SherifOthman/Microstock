@@ -455,6 +455,11 @@ app.on('before-quit', () => {
   } catch (err) {
     console.warn('[Electron Main] before-quit backup warning:', err.message);
   }
+  try {
+    sqliteDb.close();
+  } catch (err) {
+    console.warn('[Electron Main] before-quit sqliteDb.close warning:', err.message);
+  }
   if (trayManager) {
     trayManager.destroy();
   }
