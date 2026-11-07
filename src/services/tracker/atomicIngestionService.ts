@@ -6,6 +6,7 @@ import {
 import { db, getAppSettings } from '../../db';
 import { extractMediaInfo } from '../../utils/mediaExtractor';
 import { stripAudioTrackLossless } from '../video/videoMuterEngine';
+import { rasterizeEpsFile } from '../eps/epsEngine';
 import { keyRingScheduler } from '../scheduler/KeyRingScheduler';
 import { getProviderAdapter, localAiAdapter } from '../providers';
 import {
@@ -20,6 +21,7 @@ import { queuePersistenceService } from '../persistence/queuePersistenceService'
 
 export interface IngestionQueueItem {
   id: string;
+  batchId?: string;
   file?: File;
   sourcePath?: string;
   filename: string;
@@ -99,7 +101,12 @@ export function generateDeterministicFallbackMetadata(
       ? '4K Stock Video Footage'
       : 'Commercial Stock Background';
 
-  const baseTitle = `${titleWords} ${suffix}`.slice(0, 190).trim();
+  const longTitle = `${titleWords} ${suffix}`.slice(0, 190).trim();
+  const shortTitle =
+    longTitle.length < 100
+      ? longTitle
+      : longTitle.slice(0, 99).replace(/\s+\S*$/, '').trim();
+  const baseTitle = longTitle;
   const detailedDescription = `${baseTitle} prepared for commercial microstock distribution and creative design projects.`;
 
   const basePool =
@@ -139,6 +146,8 @@ export function generateDeterministicFallbackMetadata(
     mediaType,
     isAiGenerated,
     baseTitle,
+    shortTitle,
+    longTitle,
     detailedDescription,
     rankedKeywords: mergedKeywords,
     categories: {
@@ -149,6 +158,7 @@ export function generateDeterministicFallbackMetadata(
       dreamstimeCategory3: isAiGenerated ? 114 : 3,
     },
     status: 'completed',
+    workspaceScope: 'tracker',
     pipelineStage: 'committed',
     createdAt: Date.now(),
   };
@@ -278,6 +288,7 @@ class AtomicIngestionService {
 
       const item: IngestionQueueItem = {
         id,
+        batchId,
         file,
         sourcePath,
         filename: file.name,
@@ -307,7 +318,30 @@ class AtomicIngestionService {
       error: undefined,
       tempFilePath: undefined,
     });
-    await this.processItemsByIds([itemId], 'B01', true);
+    await this.processItemsByIds([itemId], existing.batchId || 'B01', true);
+  }
+
+  /**
+   * Pillar 3: Atomic action to retry all failed items in the Tracker pipeline queue.
+   */
+  public async retryAllFailed(): Promise<{ committedCount: number; duplicateCount: number; failedCount: number }> {
+    const failedIds: string[] = [];
+    let resolvedBatchId = 'B01';
+    for (const [id, item] of this.items.entries()) {
+      if (item.stage === 'failed') {
+        if (item.batchId) resolvedBatchId = item.batchId;
+        this.updateItem(id, {
+          stage: 'queued',
+          error: undefined,
+          tempFilePath: undefined,
+        });
+        failedIds.push(id);
+      }
+    }
+    if (failedIds.length === 0) {
+      return { committedCount: 0, duplicateCount: 0, failedCount: 0 };
+    }
+    return await this.processItemsByIds(failedIds, resolvedBatchId, true);
   }
 
   private async processItemsByIds(
@@ -326,6 +360,7 @@ class AtomicIngestionService {
       const item = this.items.get(id);
       if (!item) continue;
 
+      const itemBatchId = item.batchId || batchId;
       let tempFilePath: string | undefined;
 
       try {
@@ -341,8 +376,9 @@ class AtomicIngestionService {
         const stageRes = await db.tracker.stageAndHashFile({
           sourcePath: item.sourcePath,
           fileBuffer: rawBuffer,
+          fileSize: item.file?.size ?? item.fileSize,
           filename: item.filename,
-          batchId,
+          batchId: itemBatchId,
         });
 
         if (!stageRes.success) {
@@ -391,15 +427,40 @@ class AtomicIngestionService {
         let durationSeconds: number | undefined;
         let resolution: string | undefined;
         let hasAudio = false;
+        let previewBuffer: ArrayBuffer | undefined;
+        let mutedVideoBuffer: ArrayBuffer | undefined;
 
         if (item.mediaType === 'vector') {
           this.updateItem(id, { stage: 'extracting_eps' });
+          if (workingFile) {
+            try {
+              const epsRes = await rasterizeEpsFile(workingFile, 4000, 0.92);
+              if (epsRes?.blob && typeof epsRes.blob.arrayBuffer === 'function') {
+                previewBuffer = await epsRes.blob.arrayBuffer();
+              }
+              if (epsRes?.width) width = epsRes.width;
+              if (epsRes?.height) height = epsRes.height;
+              if (epsRes?.dataUrl) thumbnailBase64 = epsRes.dataUrl;
+            } catch (epsErr: any) {
+              if (/corrupt|empty/i.test(String(epsErr?.message || ''))) {
+                throw epsErr;
+              }
+            }
+          }
+          // Guarantee a companion .jpg preview buffer is ready before moving .eps into the Master Vault
+          if (!previewBuffer) {
+            const fallbackJpgBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0xff, 0xd9]);
+            previewBuffer = fallbackJpgBytes.buffer;
+          }
         } else if (item.mediaType === 'video') {
           this.updateItem(id, { stage: 'muting_audio' });
           if (workingFile) {
             try {
               const mutedBlob = await stripAudioTrackLossless(workingFile);
               if (mutedBlob) {
+                if (typeof mutedBlob.arrayBuffer === 'function') {
+                  mutedVideoBuffer = await mutedBlob.arrayBuffer();
+                }
                 workingFile = new File([mutedBlob], item.filename, {
                   type: workingFile.type || 'video/mp4',
                 });
@@ -414,12 +475,12 @@ class AtomicIngestionService {
         if (workingFile) {
           try {
             const mediaInfo = await extractMediaInfo(workingFile, undefined, 512, 0.78);
-            thumbnailBase64 = mediaInfo.thumbnailBase64 || '';
-            width = mediaInfo.width;
-            height = mediaInfo.height;
+            thumbnailBase64 = mediaInfo.thumbnailBase64 || thumbnailBase64 || '';
+            width = mediaInfo.width || width;
+            height = mediaInfo.height || height;
             durationSeconds = mediaInfo.videoDurationSeconds;
             resolution = mediaInfo.videoResolution;
-            hasAudio = Boolean(mediaInfo.hasAudio);
+            hasAudio = item.mediaType === 'video' && mutedVideoBuffer ? false : Boolean(mediaInfo.hasAudio);
           } catch {
             // Fall back to deterministic visual SVG preview below
           }
@@ -456,7 +517,7 @@ class AtomicIngestionService {
           item.filename,
           item.mediaType,
           item.isAiGenerated,
-          batchId,
+          itemBatchId,
           thumbnailBase64
         );
 
@@ -486,7 +547,7 @@ class AtomicIngestionService {
                 rawJson,
                 item.filename,
                 thumbnailBase64,
-                batchId,
+                itemBatchId,
                 item.isAiGenerated,
                 settings.defaultAiModelName || 'Local VLM',
                 'mixed',
@@ -518,7 +579,7 @@ class AtomicIngestionService {
                     rawJson,
                     item.filename,
                     thumbnailBase64,
-                    batchId,
+                    itemBatchId,
                     item.isAiGenerated,
                     lease.keyRecord.modelId,
                     'mixed',
@@ -546,7 +607,7 @@ class AtomicIngestionService {
         const recordToCommit: MasterMetadataRecord = {
           ...metadataRecord,
           id,
-          batchId,
+          batchId: itemBatchId,
           filename: item.filename,
           originalFilename: item.filename,
           originalPath: item.sourcePath,
@@ -556,7 +617,7 @@ class AtomicIngestionService {
           mediaType: item.mediaType,
           isAiGenerated: item.isAiGenerated,
           videoMeta:
-            width || height || durationSeconds || resolution
+            width || height || durationSeconds || resolution || item.mediaType === 'video'
               ? {
                   width,
                   height,
@@ -565,6 +626,7 @@ class AtomicIngestionService {
                   hasAudio,
                 }
               : undefined,
+          workspaceScope: 'tracker',
           pipelineStage: 'committed',
           status: 'completed',
           createdAt: item.createdAt,
@@ -573,6 +635,8 @@ class AtomicIngestionService {
         const committed = await db.tracker.commitAtomicallyToMasterVault({
           record: recordToCommit,
           tempFilePath,
+          previewBuffer,
+          mutedVideoBuffer,
           triggerBackup: false, // We trigger the batch backup right after the loop completes
         });
 

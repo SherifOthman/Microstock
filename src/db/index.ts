@@ -478,6 +478,7 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
       const fileHash = args[0];
       if (!fileHash) return { isDuplicate: false };
       for (const rec of testMemoryStore.masterRecords.values()) {
+        if (rec.workspaceScope === 'studio') continue;
         if (rec.fileHash && rec.fileHash === fileHash) {
           return { isDuplicate: true, existingAssetId: rec.id, existingFilename: rec.filename };
         }
@@ -485,9 +486,9 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
       return { isDuplicate: false };
     }
     case 'stageAndHashFile': {
-      const { sourcePath, fileBuffer, filename, batchId = 'batch_default' } = args[0] || {};
+      const { sourcePath, fileBuffer, fileSize: explicitFileSize, filename, batchId = 'batch_default' } = args[0] || {};
       let hexHash = '';
-      let fileSize = 0;
+      let fileSize = typeof explicitFileSize === 'number' ? explicitFileSize : 0;
       if (fileBuffer && fileBuffer.byteLength > 0) {
         const bytes = new Uint8Array(fileBuffer);
         fileSize = bytes.byteLength;
@@ -503,7 +504,9 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
         hexHash = `${(h2 >>> 0).toString(16).padStart(8, '0')}${(h1 >>> 0).toString(16).padStart(8, '0')}${fileSize.toString(16).padStart(8, '0')}`;
       } else {
         const seed = String(sourcePath || filename || Date.now());
-        fileSize = 1024;
+        if (typeof explicitFileSize !== 'number') {
+          fileSize = fileBuffer && fileBuffer.byteLength === 0 ? 0 : 1024;
+        }
         let acc = 2166136261;
         for (let i = 0; i < seed.length; i++) {
           acc ^= seed.charCodeAt(i);
@@ -513,6 +516,7 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
       }
 
       for (const rec of testMemoryStore.masterRecords.values()) {
+        if (rec.workspaceScope === 'studio') continue;
         if (rec.fileHash && rec.fileHash === hexHash) {
           return {
             success: true,
@@ -534,11 +538,18 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
       };
     }
     case 'commitAtomicallyToMasterVault': {
-      const { record, triggerBackup } = args[0] || {};
+      const { record, previewBuffer, triggerBackup } = args[0] || {};
       const agencyTrackings = ensureTestAgencyTracking(record.id, record.createdAt || Date.now());
+      const baseStem = (record.filename || 'asset').replace(/\.[^.]+$/, '');
+      const computedPreviewPath =
+        previewBuffer && record.mediaType === 'vector'
+          ? `/StockFlow/Master_Vault/${baseStem}.jpg`
+          : record.previewPath;
       const committed: MasterMetadataRecord = {
         ...record,
+        workspaceScope: record.workspaceScope || 'tracker',
         masterPath: record.masterPath || `/StockFlow/Master_Vault/${record.filename}`,
+        previewPath: computedPreviewPath,
         pipelineStage: 'committed',
         status: 'completed',
         agencyTrackings,
@@ -661,7 +672,9 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
       return { updatedCount: assetIds.length };
     }
     case 'getTrackerStats': {
-      const records = Array.from(testMemoryStore.masterRecords.values());
+      const records = Array.from(testMemoryStore.masterRecords.values()).filter(
+        (r) => r.workspaceScope !== 'studio'
+      );
       const perAgencyStats = {} as TrackerSummaryStats['perAgencyStats'];
       for (const agencyId of ALL_AGENCIES) {
         perAgencyStats[agencyId] = {
@@ -1085,6 +1098,7 @@ export class StockFlowSqliteDB {
     stageAndHashFile: async (payload: {
       sourcePath?: string;
       fileBuffer?: ArrayBuffer;
+      fileSize?: number;
       filename: string;
       batchId?: string;
     }): Promise<{
@@ -1103,6 +1117,7 @@ export class StockFlowSqliteDB {
       record: MasterMetadataRecord;
       tempFilePath?: string;
       previewBuffer?: ArrayBuffer;
+      mutedVideoBuffer?: ArrayBuffer;
       triggerBackup?: boolean;
     }): Promise<MasterMetadataRecord> => {
       const res = await invokeDbRpc('commitAtomicallyToMasterVault', payload);

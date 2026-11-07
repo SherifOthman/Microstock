@@ -189,7 +189,13 @@ export function getCleanAssetDisplayTitle(rec: MasterMetadataRecord): string {
  * - 5 `Rejected` assets (With specific agency rejection reasons & notes for Fix & Re-Queue)
  */
 export async function seedMassiveContributorPortfolio(count = 50): Promise<{ seededCount: number }> {
-  await db.masterRecords.clear();
+  const existing = await db.masterRecords.toArray();
+  const trackerIdsToClear = existing.filter((r) => r.workspaceScope !== 'studio').map((r) => r.id);
+  if (trackerIdsToClear.length === existing.length) {
+    await db.masterRecords.clear();
+  } else if (trackerIdsToClear.length > 0) {
+    await db.masterRecords.bulkDelete(trackerIdsToClear);
+  }
   const now = Date.now();
   const records: MasterMetadataRecord[] = [];
 
@@ -343,6 +349,7 @@ export async function seedMassiveContributorPortfolio(count = 50): Promise<{ see
         dreamstimeCategory3: tpl.isAi ? 114 : 104,
       },
       status: 'completed',
+      workspaceScope: 'tracker',
       pipelineStage: 'committed',
       masterPath: `/StockFlow/Master_Vault/${filename}`,
       fileHash: `sha256_seed_${seqNum}_${tpl.batchId.toLowerCase()}`,

@@ -1148,6 +1148,7 @@ class SqliteDatabaseManager {
       pipelineStage: row.pipeline_stage || 'committed',
       status: row.status || 'completed',
       errorMessage: row.error_message ?? undefined,
+      workspaceScope: parsedMetadataJson?.workspaceScope || undefined,
       aiVisionScore: row.ai_vision_score ?? undefined,
       aiFlags,
       agencyTrackings: agencyMapForAsset || undefined,
@@ -1277,6 +1278,7 @@ class SqliteDatabaseManager {
     const metadataJson = JSON.stringify({
       shortTitle: effectiveShortTitle,
       longTitle: effectiveLongTitle,
+      workspaceScope: rec.workspaceScope || undefined,
     });
 
     const upsertAsset = this.db.prepare(`
@@ -1608,16 +1610,21 @@ class SqliteDatabaseManager {
     if (!fileHash) return { isDuplicate: false };
     if (!this.isNativeSqlite) {
       for (const rec of this.memoryFallback.masterRecords.values()) {
+        if (rec.workspaceScope === 'studio') continue;
         if (rec.fileHash && rec.fileHash === fileHash) {
           return { isDuplicate: true, existingAssetId: rec.id, existingFilename: rec.filename };
         }
       }
       return { isDuplicate: false };
     }
-    const row = this.db
-      .prepare('SELECT id, filename, master_path FROM assets WHERE file_hash = ? LIMIT 1')
-      .get(fileHash);
-    if (row) {
+    const rows = this.db
+      .prepare('SELECT id, filename, master_path, metadata_json FROM assets WHERE file_hash = ?')
+      .all(fileHash);
+    for (const row of rows) {
+      try {
+        const meta = row.metadata_json ? JSON.parse(row.metadata_json) : null;
+        if (meta && meta.workspaceScope === 'studio') continue;
+      } catch {}
       return {
         isDuplicate: true,
         existingAssetId: row.id,
@@ -1704,6 +1711,7 @@ class SqliteDatabaseManager {
       record,
       tempFilePath,
       previewBuffer,
+      mutedVideoBuffer,
     } = payload || {};
 
     if (!record || !record.id || !record.filename) {
@@ -1733,6 +1741,24 @@ class SqliteDatabaseManager {
     let previewFullPath = record.previewPath ? this.toAbsoluteWorkspacePath(record.previewPath) : null;
 
     try {
+      // Pillar 6: For vectors, write the companion .jpg preview BEFORE moving the .eps into the Master Vault
+      if (previewBuffer && record.mediaType === 'vector') {
+        const ext = path.extname(record.filename);
+        const base = path.basename(record.filename, ext);
+        previewFullPath = path.join(vaultTargetDir, `${base}.jpg`);
+        fs.writeFileSync(previewFullPath, Buffer.from(previewBuffer));
+      } else if (!previewFullPath && (record.mediaType === 'vector' || record.mediaType === 'video') && record.thumbnailBase64) {
+        const relPreview = this._persistPreviewToDiskIfNeeded(record.id, record.thumbnailBase64);
+        if (relPreview) {
+          previewFullPath = this.toAbsoluteWorkspacePath(relPreview);
+        }
+      }
+
+      // Pillar 6: For videos with a lossless-muted buffer, write the muted bytes to tempFilePath before moving
+      if (mutedVideoBuffer && record.mediaType === 'video' && tempFilePath) {
+        fs.writeFileSync(tempFilePath, Buffer.from(mutedVideoBuffer));
+      }
+
       if (tempFilePath && fs.existsSync(tempFilePath)) {
         try {
           fs.renameSync(tempFilePath, masterFullPath);
@@ -1746,21 +1772,10 @@ class SqliteDatabaseManager {
         }
       }
 
-      if (previewBuffer && record.mediaType === 'vector') {
-        const ext = path.extname(record.filename);
-        const base = path.basename(record.filename, ext);
-        previewFullPath = path.join(vaultTargetDir, `${base}.jpg`);
-        fs.writeFileSync(previewFullPath, Buffer.from(previewBuffer));
-      } else if (!previewFullPath && (record.mediaType === 'vector' || record.mediaType === 'video') && record.thumbnailBase64) {
-        const relPreview = this._persistPreviewToDiskIfNeeded(record.id, record.thumbnailBase64);
-        if (relPreview) {
-          previewFullPath = this.toAbsoluteWorkspacePath(relPreview);
-        }
-      }
-
       // Store portable relative paths in SQLite and strip any Base64 strings
       const finalizedRecord = {
         ...record,
+        workspaceScope: record.workspaceScope || 'tracker',
         masterPath: this.toRelativeWorkspacePath(masterFullPath),
         previewPath: previewFullPath ? this.toRelativeWorkspacePath(previewFullPath) : undefined,
         nativePath: masterFullPath,
@@ -1774,6 +1789,7 @@ class SqliteDatabaseManager {
     } catch (err) {
       try {
         if (tempFilePath && fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+        if (previewFullPath && fs.existsSync(previewFullPath)) fs.unlinkSync(previewFullPath);
       } catch {}
       throw err;
     }
@@ -2181,7 +2197,7 @@ class SqliteDatabaseManager {
   }
 
   getTrackerStats() {
-    const records = this.getMasterRecords();
+    const records = this.getMasterRecords().filter((r) => r.workspaceScope !== 'studio');
     const perAgencyStats = {};
     for (const agencyId of SUPPORTED_AGENCIES) {
       perAgencyStats[agencyId] = {

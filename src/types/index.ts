@@ -87,6 +87,8 @@ export interface MasterMetadataRecord {
   status: 'pending' | 'processing' | 'completed' | 'error';
   errorMessage?: string;
   nativePath?: string;
+  /** Strict workspace isolation scope so Studio and Tracker queues/records never leak into each other */
+  workspaceScope?: 'studio' | 'tracker';
   // Distribution Tracker Extended Vault Fields
   originalPath?: string;
   masterPath?: string;

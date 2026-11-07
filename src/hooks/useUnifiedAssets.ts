@@ -92,8 +92,9 @@ export function useUnifiedAssets(
       });
     });
 
-    // 2. Merge with persistent DB records
-    liveRecords.forEach((rec) => {
+    // 2. Merge with persistent DB records (strictly excluding Distribution Tracker vault records)
+    const studioRecords = liveRecords.filter((rec) => rec.workspaceScope !== 'tracker');
+    studioRecords.forEach((rec) => {
       const recStatus: UnifiedAssetRow['status'] =
         rec.status === 'error'
           ? 'error'

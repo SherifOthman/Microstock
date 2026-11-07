@@ -92,7 +92,16 @@ export function App() {
   const [requeueContext, setRequeueContext] = useState<FixAndRequeueContext | null>(null);
   const [trackerFocusAgency, setTrackerFocusAgency] = useState<SupportedPlatform | undefined>(undefined);
 
-  const masterCount = useSqliteQuery(() => db.masterRecords.count(), [], 0, ['master']) || 0;
+  const masterCount =
+    useSqliteQuery(
+      async () => {
+        const all = await db.masterRecords.toArray();
+        return all.filter((r) => r.workspaceScope !== 'studio').length;
+      },
+      [],
+      0,
+      ['master']
+    ) || 0;
 
   useEffect(() => {
     if (theme === 'dark') {

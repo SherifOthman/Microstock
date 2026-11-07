@@ -438,8 +438,9 @@ export class BatchQueueService {
         rankedKeywords: [],
         categories: undefined,
         status: 'pending',
+        workspaceScope: 'studio',
         createdAt,
-      nativePath: fileNativePath,
+        nativePath: fileNativePath,
       };
       const item: QueueItem = {
         id,
@@ -561,6 +562,7 @@ export class BatchQueueService {
                 rankedKeywords: [],
                 categories: undefined,
                 status: 'error',
+                workspaceScope: 'studio',
                 errorMessage: errMsg,
                 createdAt: item.createdAt || Date.now(),
                 nativePath: (item.file as any)?.__nativePath || (item.file as any)?.path || item.metadataRecord?.nativePath || '',
@@ -625,6 +627,7 @@ export class BatchQueueService {
                 rankedKeywords: item.metadataRecord?.rankedKeywords || [],
                 categories: item.metadataRecord?.categories,
                 status: 'pending',
+                workspaceScope: 'studio',
                 errorMessage: undefined,
                 nativePath:
                   (item.file as any)?.__nativePath ||
@@ -668,6 +671,7 @@ export class BatchQueueService {
                 rankedKeywords: item.metadataRecord?.rankedKeywords || [],
                 categories: item.metadataRecord?.categories,
                 status: 'pending',
+                workspaceScope: 'studio',
                 errorMessage: undefined,
                 nativePath:
                   (item.file as any)?.__nativePath ||
@@ -1194,6 +1198,7 @@ export class BatchQueueService {
             attemptHistory: [...item.attemptHistory],
           };
           masterRecord.status = 'completed';
+          masterRecord.workspaceScope = 'studio';
 
           item.metadataRecord = masterRecord;
           item.status = 'completed';
@@ -1399,7 +1404,7 @@ export class BatchQueueService {
     // 2. Also re-hydrate and re-queue any failed records stored in Dexie IndexedDB
     try {
       const dbFailed = await db.masterRecords
-        .filter((r) => r.status === 'error' || Boolean(r.errorMessage))
+        .filter((r) => r.workspaceScope !== 'tracker' && (r.status === 'error' || Boolean(r.errorMessage)))
         .toArray();
 
       for (const rec of dbFailed) {
@@ -1551,7 +1556,7 @@ export class BatchQueueService {
     // If in-memory queue is empty, rehydrate all records from DB so the global progress bar tracks accurate total/processed counts
     if (this.items.size === 0) {
       try {
-        const allDbRecords = await db.masterRecords.toArray();
+        const allDbRecords = (await db.masterRecords.toArray()).filter((r) => r.workspaceScope !== 'tracker');
         for (const rec of allDbRecords) {
           this.items.set(rec.id, {
             id: rec.id,
@@ -1646,7 +1651,7 @@ export class BatchQueueService {
     // 1. If in-memory items is empty, rehydrate all from DB
     if (this.items.size === 0) {
       try {
-        const allDbRecords = await db.masterRecords.toArray();
+        const allDbRecords = (await db.masterRecords.toArray()).filter((r) => r.workspaceScope !== 'tracker');
         for (const rec of allDbRecords) {
           const queueItem: QueueItem = {
             id: rec.id,
