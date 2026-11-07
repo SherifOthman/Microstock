@@ -57,7 +57,7 @@ describe('Microstock Platform CSV Rules & Filename Edge Cases (platformTransform
     });
   });
 
-  describe('Adobe Stock CRLF (\r\n) Line Ending & 25-Keyword SEO Ceiling', () => {
+  describe('Adobe Stock CRLF (\r\n) Line Ending & 49-Keyword SEO Ceiling', () => {
     const mockRecord: MasterMetadataRecord = {
       id: 'rec-1',
       filename: 'autumn_forest_lake.jpg',
@@ -73,13 +73,13 @@ describe('Microstock Platform CSV Rules & Filename Edge Cases (platformTransform
       status: 'completed',
     };
 
-    it('strictly caps Adobe Stock keywords at 25 for SEO ranking', () => {
+    it('strictly caps Adobe Stock keywords at 49 for SEO ranking', () => {
       const rows = transformForAdobeStock([mockRecord]);
       expect(rows).toHaveLength(1);
       const keywords = String(rows[0].Keywords).split(', ');
-      expect(keywords.length).toBe(25);
+      expect(keywords.length).toBe(49);
       expect(keywords[0]).toBe('keyword1');
-      expect(keywords[24]).toBe('keyword25');
+      expect(keywords[48]).toBe('keyword49');
     });
 
     it('formatAdobeFilename preserves exact disk filename byte-for-byte', () => {

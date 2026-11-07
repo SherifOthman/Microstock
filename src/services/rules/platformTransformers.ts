@@ -128,6 +128,46 @@ export function sanitizeKeywords(keywords: string[]): string[] {
   });
 }
 
+const SINGLE_WORD_STOP_WORDS = new Set([
+  'a', 'an', 'the', 'in', 'on', 'of', 'and', 'or', 'for', 'with', 'by', 'to', 'at', 'from',
+  'is', 'it', 'as', 'into', 'like', 'than', 'onto',
+]);
+
+/**
+ * Programmatically splits compound phrases (e.g., "home office" -> "home", "office"),
+ * strips punctuation/stop-words, deduplicates case-insensitively while preserving SEO priority order,
+ * and slices to maxCount (default 49 for Freepik).
+ */
+export function splitAndDeduplicateSingleWordKeywords(
+  keywords: string[],
+  maxCount = 49
+): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const rawKw of keywords ?? []) {
+    if (!rawKw) continue;
+    const tokens = String(rawKw)
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/gi, ' ')
+      .split(/[\s-]+/)
+      .map((t) => t.trim())
+      .filter((t) => t.length >= 2 && !SINGLE_WORD_STOP_WORDS.has(t) && !/^\d+$/.test(t));
+
+    for (const token of tokens) {
+      if (!seen.has(token)) {
+        seen.add(token);
+        result.push(token);
+        if (result.length >= maxCount) {
+          return result;
+        }
+      }
+    }
+  }
+
+  return result.slice(0, maxCount);
+}
+
 /**
  * Converts text to standard Title Case (for Vecteezy)
  */
@@ -231,11 +271,12 @@ export function formatAdobeFilename(filename: string, mediaType?: string): strin
 // 1. Adobe Stock Transformer
 export function transformForAdobeStock(records: MasterMetadataRecord[]): PlatformExportRow[] {
   return records.map((rec) => {
-    const sanitized = sanitizeNonAiText(rec.baseTitle ?? '');
+    const rawLongTitle = rec.longTitle || rec.baseTitle || rec.shortTitle || '';
+    const sanitized = sanitizeNonAiText(rawLongTitle);
     // Semantic truncate at 200 chars (zero broken words)
     const cleanTitle = smartTruncate(sanitized, 200, false);
-    // Adobe SEO Rule: Strict 25-keyword cap to prioritize highest semantic weight
-    const cleanKw = sanitizeKeywords(rec.rankedKeywords ?? []).slice(0, 25);
+    // Adobe SEO Rule: Capped at 49 ranked keywords (supports 2-word phrases)
+    const cleanKw = sanitizeKeywords(rec.rankedKeywords ?? []).slice(0, 49);
 
     // If media is vector (EPS), default to Category 8 (Graphic Resources) if not explicitly set
     const isVector = rec.mediaType === 'vector' || (rec.filename && /\.(eps|ai|svg)$/i.test(rec.filename));
@@ -304,8 +345,9 @@ export function transformForFreepik(
   });
 
   return eligibleRecords.map((rec) => {
-    // 1. Semantic truncate at 200 chars
-    let cleanTitle = smartTruncate(rec.baseTitle ?? '', 200, false);
+    // 1. Consume shortTitle (<100 chars) and semantic truncate at 100 chars
+    const rawShortTitle = rec.shortTitle || rec.baseTitle || rec.longTitle || '';
+    let cleanTitle = smartTruncate(rawShortTitle, 100, false);
     // 2. Replace hyphens with spaces to prevent Freepik from concatenating words (e.g. Snowy-Winter -> SnowyWinter)
     cleanTitle = (cleanTitle ?? '').replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
 
@@ -316,9 +358,12 @@ export function transformForFreepik(
       ? (options?.modelName || (rec.aiGenerationInfo?.model ? rec.aiGenerationInfo.model : 'Google Nano Banana'))
       : '';
 
-    // 4. Keywords: capped strictly at 49 for AI (Freepik auto-appends '_ai_generated'), or 50 for standard non-AI
-    const maxKws = isAi ? 49 : 50;
-    const keywords = (rec.rankedKeywords ?? []).slice(0, maxKws).join(', ');
+    // 4. Keywords: Programmatically split compound phrases into single words, deduplicate, and slice to 49
+    const singleWordKeywords = splitAndDeduplicateSingleWordKeywords(
+      sanitizeKeywords(rec.rankedKeywords ?? []),
+      49
+    );
+    const keywords = singleWordKeywords.join(', ');
 
     // 5. Generative Prompt (populated only if AI generated)
     const prompt = isAi
@@ -350,8 +395,9 @@ export function transformForShutterstock(
     // Normalize categories strictly to Shutterstock official lists (19 Video vs 26 Image)
     const categoriesStr = formatShutterstockCategories(rec.categories?.shutterstockCategories || [], isVideoMedia);
     
-    // Semantic truncate description at 200 chars ending with a period
-    const cleanDesc = smartTruncate(rec.detailedDescription ?? '', 200, true);
+    // Consume longTitle (or detailedDescription / baseTitle) and semantic truncate at 200 chars ending with a period
+    const rawShutterDesc = rec.longTitle || rec.detailedDescription || rec.baseTitle || '';
+    const cleanDesc = smartTruncate(rawShutterDesc, 200, true);
 
     // Auto-detect illustration flag: if options specify yes OR media is vector (.eps/.ai), set illustration to 'yes'
     const isVectorMedia = rec.mediaType === 'vector' || (rec.filename && /\.(eps|ai|svg)$/i.test(rec.filename));
@@ -413,8 +459,9 @@ export function transformForVecteezy(
       : (rec.filename ?? '');
     const exportFilename = formatVectorFilenameForPlatform(baseFilename, rec.mediaType, 'vecteezy');
 
-    // 2. Strict Title: Title Case, max 100 chars, no special symbols, no trailing period/ellipsis
-    let titleCase = toTitleCase(rec.baseTitle ?? '');
+    // 2. Strict Title: Consume shortTitle (<100 chars), Title Case, max 100 chars, no special symbols, no trailing period/ellipsis
+    const rawVecteezyTitle = rec.shortTitle || rec.baseTitle || rec.longTitle || '';
+    let titleCase = toTitleCase(rawVecteezyTitle);
     titleCase = smartTruncate(titleCase, 100, false);
     titleCase = (titleCase ?? '').replace(/[!@#$%\^&*~`+=<>?\\/|]/g, '');
     titleCase = (titleCase ?? '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ');
@@ -460,7 +507,8 @@ export function transformForDreamstime(
       description = `${description.replace(/\.$/, '')}, AI-generated image.`;
     }
 
-    const cleanTitle = smartTruncate(rec.baseTitle ?? '', 250, false);
+    const rawDreamstimeTitle = rec.longTitle || rec.baseTitle || rec.shortTitle || '';
+    const cleanTitle = smartTruncate(rawDreamstimeTitle, 200, false);
 
     // Rule 1: Description MUST be strictly longer than Image Name
     if (description.length <= cleanTitle.length) {
@@ -535,7 +583,8 @@ export function transformForDreamstimeVideos(
       description = `${description.replace(/\.$/, '')}, AI-generated video.`;
     }
 
-    const cleanTitle = smartTruncate(rec.baseTitle ?? '', 250, false);
+    const rawDreamstimeVideoTitle = rec.longTitle || rec.baseTitle || rec.shortTitle || '';
+    const cleanTitle = smartTruncate(rawDreamstimeVideoTitle, 200, false);
 
     // Rule 1: Description MUST be strictly longer than Video Name
     if (description.length <= cleanTitle.length) {
@@ -599,7 +648,9 @@ export function transformFor123rf(
 
   return records.map((rec) => {
     // 123RF official column schema: "oldfilename","123rf_filename","description","keywords","country"
-    const cleanDesc = smartTruncate(rec.detailedDescription ?? '', 300, true);
+    // Consumes longTitle (or detailedDescription / baseTitle)
+    const raw123rfDesc = rec.longTitle || rec.detailedDescription || rec.baseTitle || '';
+    const cleanDesc = smartTruncate(raw123rfDesc, 300, true);
     const keywords = (rec.rankedKeywords ?? []).slice(0, 50).join(', ');
 
     return {

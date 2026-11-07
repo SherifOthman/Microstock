@@ -166,7 +166,7 @@ export const StockTemplatesModal: React.FC<StockTemplatesModalProps> = ({ open, 
           <div className="p-3.5 space-y-3.5">
             {/* Limits Summary Row */}
             <div className="grid grid-cols-3 gap-2.5">
-              <div className="p-2.5 rounded-lg bg-secondary/60 border border-border">
+              <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-secondary/60 border border-slate-200 dark:border-border">
                 <span className="text-[10px] text-muted-foreground block">
                   {language === 'ar' ? 'حد العنوان (Title)' : 'Title Limit'}
                 </span>
@@ -180,7 +180,7 @@ export const StockTemplatesModal: React.FC<StockTemplatesModalProps> = ({ open, 
                     : 'Uses Description'}
                 </span>
               </div>
-              <div className="p-2.5 rounded-lg bg-secondary/60 border border-border">
+              <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-secondary/60 border border-slate-200 dark:border-border">
                 <span className="text-[10px] text-muted-foreground block">
                   {language === 'ar' ? 'حد الوصف (Description)' : 'Description Limit'}
                 </span>
@@ -194,13 +194,13 @@ export const StockTemplatesModal: React.FC<StockTemplatesModalProps> = ({ open, 
                     : 'Not Required'}
                 </span>
               </div>
-              <div className="p-2.5 rounded-lg bg-secondary/60 border border-border">
+              <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-secondary/60 border border-slate-200 dark:border-border">
                 <span className="text-[10px] text-muted-foreground block">
                   {language === 'ar' ? 'الكلمات المفتاحية (Keywords)' : 'Max Keywords'}
                 </span>
                 <span className="text-xs font-mono font-semibold text-primary tabular-nums">
                   {activeTemplate.id === 'freepik'
-                    ? language === 'ar' ? '49 (AI) / 50 (أصلي)' : '49 (AI) / 50 (Real)'
+                    ? language === 'ar' ? '49 كلمة مفردة' : '49 single words'
                     : language === 'ar' ? `${activeTemplate.maxKeywords} كلمة` : `${activeTemplate.maxKeywords} tags`}
                 </span>
               </div>

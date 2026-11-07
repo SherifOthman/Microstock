@@ -66,6 +66,8 @@ export interface MasterMetadataRecord {
   };
   isAiGenerated: boolean;
   baseTitle: string;
+  shortTitle?: string; // Strictly < 100 chars (Freepik, Vecteezy)
+  longTitle?: string; // Up to 200 chars (Adobe, Shutterstock, Dreamstime, 123RF)
   detailedDescription: string;
   rankedKeywords: string[]; // 40-50 tags
   categories?: {

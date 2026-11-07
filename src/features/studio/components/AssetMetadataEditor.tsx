@@ -24,15 +24,29 @@ export const AssetMetadataEditor: React.FC<AssetMetadataEditorProps> = React.mem
   onCopyText,
 }) => {
   const { t, language } = useLanguage();
-  const [localTitle, setLocalTitle] = useState(rec?.baseTitle || '');
+
+  const deriveShortTitle = (r?: MasterMetadataRecord): string => {
+    if (!r) return '';
+    if (r.shortTitle) return r.shortTitle;
+    const base = r.baseTitle || r.longTitle || '';
+    if (base.length < 100) return base;
+    return base.slice(0, 99).replace(/\s+\S*$/, '').trim();
+  };
+
+  const deriveLongTitle = (r?: MasterMetadataRecord): string => {
+    if (!r) return '';
+    return r.longTitle || r.baseTitle || r.shortTitle || '';
+  };
+
+  const [localShortTitle, setLocalShortTitle] = useState(deriveShortTitle(rec));
+  const [localLongTitle, setLocalLongTitle] = useState(deriveLongTitle(rec));
   const [localDesc, setLocalDesc] = useState(rec?.detailedDescription || '');
   const [isDescExpanded, setIsDescExpanded] = useState(false);
 
   useEffect(() => {
-    if (rec?.baseTitle !== undefined) {
-      setLocalTitle(rec.baseTitle);
-    }
-  }, [rec?.baseTitle]);
+    setLocalShortTitle(deriveShortTitle(rec));
+    setLocalLongTitle(deriveLongTitle(rec));
+  }, [rec?.shortTitle, rec?.longTitle, rec?.baseTitle]);
 
   useEffect(() => {
     if (rec?.detailedDescription !== undefined) {
@@ -40,9 +54,23 @@ export const AssetMetadataEditor: React.FC<AssetMetadataEditorProps> = React.mem
     }
   }, [rec?.detailedDescription]);
 
-  const handleBlurTitle = async () => {
-    if (rec && (localTitle ?? '').trim() !== rec.baseTitle) {
-      await db.masterRecords.update(rec.id, { baseTitle: (localTitle ?? '').trim() });
+  const handleBlurShortTitle = async () => {
+    const trimmed = (localShortTitle ?? '').trim();
+    if (rec && trimmed !== (rec.shortTitle ?? deriveShortTitle(rec))) {
+      await db.masterRecords.update(rec.id, {
+        shortTitle: trimmed,
+        baseTitle: rec.longTitle || rec.baseTitle || trimmed,
+      });
+    }
+  };
+
+  const handleBlurLongTitle = async () => {
+    const trimmed = (localLongTitle ?? '').trim();
+    if (rec && trimmed !== (rec.longTitle ?? rec.baseTitle)) {
+      await db.masterRecords.update(rec.id, {
+        longTitle: trimmed,
+        baseTitle: trimmed || localShortTitle,
+      });
     }
   };
 
@@ -52,21 +80,87 @@ export const AssetMetadataEditor: React.FC<AssetMetadataEditorProps> = React.mem
     }
   };
 
+  const shortLen = (localShortTitle || '').length;
+  const longLen = (localLongTitle || '').length;
+
   return (
     <>
-      {/* Title Field with Copy & Character Counter */}
+      {/* Short Title (<100 chars — Freepik / Vecteezy) */}
       <div className="space-y-1">
         <div className="flex items-center justify-between text-xs">
-          <label className="font-semibold text-foreground flex items-center gap-1.5">
-            <span>{t.title}</span>
-            <span className="text-[10px] font-mono tabular-nums font-normal text-muted-foreground">
-              ({(localTitle || '').length} {language === 'ar' ? 'حرف' : 'chars'})
+          <label className="font-semibold text-foreground flex items-center gap-1.5 flex-wrap">
+            <span>{language === 'ar' ? 'العنوان القصير (Short Title)' : 'Short Title'}</span>
+            <span className="text-[10px] font-normal px-1.5 py-0.2 rounded bg-secondary text-muted-foreground border border-border/60">
+              Freepik · Vecteezy
+            </span>
+            <span
+              className={`text-[10px] font-mono tabular-nums font-normal ${
+                shortLen >= 100 ? 'text-amber-500 font-semibold' : 'text-muted-foreground'
+              }`}
+            >
+              ({shortLen}/99 {language === 'ar' ? 'حرف' : 'chars'})
             </span>
           </label>
           <button
             type="button"
-            onClick={() => onCopyText(localTitle, `${assetId}_title`)}
-            disabled={!localTitle}
+            onClick={() => onCopyText(localShortTitle, `${assetId}_short_title`)}
+            disabled={!localShortTitle}
+            className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition cursor-pointer disabled:opacity-40"
+          >
+            {copiedKey === `${assetId}_short_title` ? (
+              <>
+                <Check className="w-3 h-3 text-emerald-500" />
+                <span className="text-emerald-500">{t.copied}</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-3 h-3 text-muted-foreground" />
+                <span>{t.copy}</span>
+              </>
+            )}
+          </button>
+        </div>
+        <Input
+          dir={localShortTitle ? 'ltr' : language === 'ar' ? 'rtl' : 'ltr'}
+          value={localShortTitle}
+          onChange={(e) => setLocalShortTitle(e.target.value)}
+          onBlur={handleBlurShortTitle}
+          placeholder={
+            isProcessing
+              ? language === 'ar'
+                ? 'جاري توليد العنوان القصير (<100 حرف)...'
+                : 'Generating short title (<100 chars)...'
+              : language === 'ar'
+              ? 'عنوان مكثف أقل من 100 حرف لـ Freepik و Vecteezy...'
+              : 'Dense title strictly under 100 chars (Freepik / Vecteezy)...'
+          }
+          disabled={!rec}
+          className={`text-xs bg-secondary/70 border border-border text-foreground font-medium h-8 focus:ring-1 focus:ring-ring ${
+            localShortTitle ? 'text-left' : 'text-start'
+          }`}
+        />
+      </div>
+
+      {/* Long Title (<=200 chars — Adobe / Shutterstock / Dreamstime / 123RF) */}
+      <div className="space-y-1">
+        <div className="flex items-center justify-between text-xs">
+          <label className="font-semibold text-foreground flex items-center gap-1.5 flex-wrap">
+            <span>{language === 'ar' ? 'العنوان المفصل (Long Title)' : 'Long Title'}</span>
+            <span className="text-[10px] font-normal px-1.5 py-0.2 rounded bg-secondary text-muted-foreground border border-border/60">
+              Adobe · Shutterstock · Dreamstime · 123RF
+            </span>
+            <span
+              className={`text-[10px] font-mono tabular-nums font-normal ${
+                longLen > 200 ? 'text-amber-500 font-semibold' : 'text-muted-foreground'
+              }`}
+            >
+              ({longLen}/200 {language === 'ar' ? 'حرف' : 'chars'})
+            </span>
+          </label>
+          <button
+            type="button"
+            onClick={() => onCopyText(localLongTitle, `${assetId}_title`)}
+            disabled={!localLongTitle}
             className="inline-flex items-center gap-1 text-[11px] h-6 px-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition cursor-pointer disabled:opacity-40"
           >
             {copiedKey === `${assetId}_title` ? (
@@ -83,22 +177,22 @@ export const AssetMetadataEditor: React.FC<AssetMetadataEditorProps> = React.mem
           </button>
         </div>
         <Input
-          dir={localTitle ? 'ltr' : language === 'ar' ? 'rtl' : 'ltr'}
-          value={localTitle}
-          onChange={(e) => setLocalTitle(e.target.value)}
-          onBlur={handleBlurTitle}
+          dir={localLongTitle ? 'ltr' : language === 'ar' ? 'rtl' : 'ltr'}
+          value={localLongTitle}
+          onChange={(e) => setLocalLongTitle(e.target.value)}
+          onBlur={handleBlurLongTitle}
           placeholder={
             isProcessing
               ? language === 'ar'
-                ? 'جاري توليد العنوان...'
-                : 'Generating title...'
+                ? 'جاري توليد العنوان المفصل (حتى 200 حرف)...'
+                : 'Generating detailed long title (up to 200 chars)...'
               : language === 'ar'
-              ? 'عنوان الملف (بالإنجليزية)...'
-              : 'Stock Asset Title...'
+              ? 'عنوان تفصيلي حتى 200 حرف لـ Adobe و Shutterstock...'
+              : 'Detailed stock title up to 200 chars (Adobe / Shutterstock)...'
           }
           disabled={!rec}
           className={`text-xs bg-secondary/70 border border-border text-foreground font-medium h-8 focus:ring-1 focus:ring-ring ${
-            localTitle ? 'text-left' : 'text-start'
+            localLongTitle ? 'text-left' : 'text-start'
           }`}
         />
       </div>

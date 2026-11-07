@@ -21,16 +21,21 @@ Both Vecteezy and Shutterstock strictly prohibit technical specs, brand names, a
    - Do NOT include technical metadata or camera specs (e.g., "4k", "8k", "60fps", "30fps", "1080p", "Canon", "Sony", "Nikon", "DSLR").
    - Container resolution, frame rate, and technical properties are indexed automatically by microstock platforms from file headers.
 
-4. "base_title":
-   - 60 to 95 characters (Universal Safe Zone: fits Vecteezy's 100-char max and Adobe's 200-char max naturally).
-   - TITLES must be highly descriptive, natural, commercial, and accurately describe the exact subject matter without using prohibited terms.
-   - Do NOT include file format/medium descriptions, brand names, technical camera specs, or subjective words ("best", "amazing", "beautiful", "stunning").
+4. "short_title" (STRICTLY UNDER 100 CHARACTERS):
+   - 50 to 95 characters (strictly < 100 chars).
+   - Dense, punchy, commercial title designed specifically for Freepik and Vecteezy (<100 char limit) without needing hard truncation.
+   - TITLES must be highly descriptive, natural, commercial, and accurately describe the exact subject matter without using prohibited terms, brand names, camera specs, or subjective words ("best", "amazing", "beautiful", "stunning").
    - Do NOT include the words "AI", "Generative AI", or model names.
 
-5. "detailed_description":
-   - 120 to 200 characters (Universal Safe Zone: fits Shutterstock's 200-char ceiling while satisfying Dreamstime).
+5. "long_title" (UP TO 200 CHARACTERS):
+   - 110 to 195 characters (strictly <= 200 chars).
+   - Highly detailed, descriptive commercial title designed for Adobe Stock, Shutterstock, Dreamstime, and 123RF (200-char ceiling).
+   - Expands on the subject, setting, lighting, composition, and commercial context without using prohibited format/medium words or trademarks.
+
+6. "detailed_description":
+   - 140 to 220 characters.
    - MUST be formulated as a complete, grammatically sound sentence ending with a period.
-   - MUST be strictly longer in character count than "base_title".
+   - MUST be strictly longer in character count than "long_title".
    - Factually describe the visual subject, setting, lighting, perspective, and composition without prohibited terms.
 
 6. "ranked_keywords":
@@ -94,8 +99,10 @@ OUTPUT FORMAT:
 Return ONLY the raw JSON object without markdown fences, comments, or extra text.
 Example:
 {
-  "base_title": "Modern Solar Panel Installation on Commercial Building Rooftop",
-  "detailed_description": "Aerial view of a photovoltaic solar panel array installed on an industrial building roof during golden morning sunrise.",
+  "short_title": "Modern Solar Panel Installation on Commercial Building Rooftop",
+  "long_title": "Modern Photovoltaic Solar Panel Array Installed on Commercial Industrial Building Rooftop Under Golden Morning Sunrise Light",
+  "base_title": "Modern Photovoltaic Solar Panel Array Installed on Commercial Industrial Building Rooftop Under Golden Morning Sunrise Light",
+  "detailed_description": "Aerial view of a modern photovoltaic solar panel array installed on an industrial commercial building roof during golden morning sunrise with clear sky.",
   "ranked_keywords": ["solar panel", "photovoltaic", "solar energy", "renewable energy", "green power", "electricity", "clean energy", "sustainable", "industrial", "technology", "rooftop", "aerial view", "sunrise", "commercial building", "power generation", "modern", "blue", "sunlight", "alternative energy"],
   "category_adobe": 19,
   "category_shutterstock": ["Technology", "Industrial"],
@@ -108,8 +115,10 @@ export const SYSTEM_LOCAL_VISION_PROMPT = `You are a Microstock SEO Specialist. 
 
 REQUIRED JSON SCHEMA (populate ALL 4 keyword buckets with 12 unique tags each = 48 total tags):
 {
-  "base_title": "Descriptive commercial title 60 to 95 chars",
-  "detailed_description": "Complete factual sentence 120 to 195 chars describing visual subject, lighting, perspective, and setting.",
+  "short_title": "Dense commercial title strictly under 100 chars (50 to 95 chars)",
+  "long_title": "Detailed commercial title 110 to 195 chars (up to 200 chars)",
+  "base_title": "Detailed commercial title 110 to 195 chars",
+  "detailed_description": "Complete factual sentence 140 to 220 chars describing visual subject, lighting, perspective, and setting.",
   "subject_keywords": ["12 core nouns and 2-word subject phrases"],
   "concept_keywords": ["12 actions, commercial concepts, themes, and use cases"],
   "mood_style_keywords": ["12 mood, lighting, atmosphere, composition, and style tags"],
@@ -288,12 +297,13 @@ export function buildVisionPrompt(
     prompt += '\nSTRICT ANTI-GLUING RULE: Maximum 2 words per tag. NEVER glue or concatenate multiple words together without a space (e.g., NEVER output "homegym", "fitnessequipment", "recoverytool", "stretchingtool"). Always put a normal space between two words in a compound tag.';
   }
 
+  prompt += '\nDUAL-TITLE REQUIREMENT: Always output BOTH "short_title" (strictly < 100 chars, 50-95 chars dense summary for Freepik/Vecteezy) AND "long_title" (110-195 chars, up to 200 chars detailed title for Adobe Stock/Shutterstock/Dreamstime/123RF).';
   if (titleLengthPreset === 'short') {
-    prompt += '\nTARGET TITLE LENGTH: Keep "base_title" concise and punchy between 45 and 65 characters (ideal for Adobe Stock and Vecteezy sweet spot).';
+    prompt += '\nTARGET TITLE LENGTH: Keep "short_title" between 45 and 65 characters, and "long_title" between 100 and 150 characters.';
   } else if (titleLengthPreset === 'extended') {
-    prompt += '\nTARGET TITLE LENGTH: Provide an extended, rich "base_title" between 95 and 140 characters detailing the subject and atmosphere.';
+    prompt += '\nTARGET TITLE LENGTH: Keep "short_title" between 70 and 95 characters, and "long_title" between 140 and 195 characters.';
   } else if (titleLengthPreset === 'standard') {
-    prompt += '\nTARGET TITLE LENGTH: Keep "base_title" between 65 and 95 characters (Universal Safe Zone).';
+    prompt += '\nTARGET TITLE LENGTH: Keep "short_title" between 60 and 95 characters, and "long_title" between 110 and 185 characters.';
   }
 
   if (mediaType === 'video') {
@@ -387,7 +397,7 @@ export function buildLocalVisionPrompt(
   const isVectorAsset = mediaType === 'vector' || (filename ? /\.(eps|ai|svg)$/i.test(filename) : false);
 
   const lines: string[] = [
-    'Generate microstock JSON with base_title, detailed_description, and 4 keyword buckets (12 unique tags each = 48 total tags, target 45 to 49 unique keywords):',
+    'Generate microstock JSON with short_title (<100 chars), long_title (110-195 chars), detailed_description, and 4 keyword buckets (12 unique tags each = 48 total tags, target 45 to 49 unique keywords):',
     '- "subject_keywords": 12 core visible nouns & objects',
     '- "concept_keywords": 12 actions, concepts, themes & uses',
     '- "mood_style_keywords": 12 mood, lighting, atmosphere & composition tags',
@@ -403,11 +413,11 @@ export function buildLocalVisionPrompt(
   }
 
   if (titleLengthPreset === 'short') {
-    lines.push('Title length: 45 to 65 chars.');
+    lines.push('short_title length: 45 to 65 chars. long_title length: 100 to 150 chars.');
   } else if (titleLengthPreset === 'extended') {
-    lines.push('Title length: 95 to 135 chars.');
+    lines.push('short_title length: 70 to 95 chars. long_title length: 140 to 195 chars.');
   } else {
-    lines.push('Title length: 65 to 95 chars. Description length: 125 to 195 chars ending with a period.');
+    lines.push('short_title length: 60 to 95 chars (<100 max). long_title length: 110 to 190 chars (<=200 max). Description length: 140 to 220 chars ending with a period.');
   }
 
   if (mediaType === 'video') {

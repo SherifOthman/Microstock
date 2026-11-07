@@ -1,6 +1,26 @@
+import { z } from 'zod';
 import { MasterMetadataRecord } from '../../types';
 import { DREAMSTIME_CATEGORIES, mapToDreamstimeCategories, findDreamstimeCategoryId } from '../../constants/categories';
 import { cleanFilenameHint } from './masterPrompt';
+import { smartTruncate } from '../rules/platformTransformers';
+
+export const AiMetadataZodSchema = z.object({
+  short_title: z.string().max(100).optional(),
+  long_title: z.string().max(200).optional(),
+  base_title: z.string().optional(),
+  detailed_description: z.string().optional(),
+  ranked_keywords: z.union([z.array(z.string()), z.string()]).optional(),
+  subject_keywords: z.union([z.array(z.string()), z.string()]).optional(),
+  concept_keywords: z.union([z.array(z.string()), z.string()]).optional(),
+  mood_style_keywords: z.union([z.array(z.string()), z.string()]).optional(),
+  setting_color_keywords: z.union([z.array(z.string()), z.string()]).optional(),
+  additional_keywords: z.union([z.array(z.string()), z.string()]).optional(),
+  category_adobe: z.coerce.number().optional(),
+  category_shutterstock: z.union([z.array(z.string()), z.string()]).optional(),
+  dreamstime_category_1: z.union([z.string(), z.number()]).optional(),
+  dreamstime_category_2: z.union([z.string(), z.number()]).optional(),
+  suggested_prompt: z.string().optional(),
+});
 
 export const SHUTTERSTOCK_OFFICIAL_CATEGORIES = [
   'Abstract',
@@ -54,6 +74,8 @@ export const SHUTTERSTOCK_VIDEO_CATEGORIES = new Set([
 ]);
 
 export interface RawAiOutput {
+  short_title?: string;
+  long_title?: string;
   base_title?: string;
   detailed_description?: string;
   ranked_keywords?: string[] | string;
@@ -172,41 +194,63 @@ export function parseAndNormalizeAiMetadata(
       cleaned = cleaned.substring(firstBrace, lastBrace + 1);
     }
 
-    parsed = JSON.parse(cleaned);
+    const rawJson = JSON.parse(cleaned);
+    const zodResult = AiMetadataZodSchema.safeParse(rawJson);
+    parsed = zodResult.success ? (zodResult.data as RawAiOutput) : (rawJson as RawAiOutput);
   } catch (err) {
     console.warn(`JSON parse failed for "${filename}", attempting regex fallback extraction:`, err);
     parsed = extractFallbackRegex(rawText ?? '');
   }
 
-  // 2. Normalize Title
+  // 2. Normalize Two Titles (shortTitle < 100 chars, longTitle <= 200 chars, baseTitle = longTitle || shortTitle)
   const isVectorMedia =
     mediaType === 'vector' || /\.(eps|ai|svg)$/i.test(filename ?? '');
-  let baseTitle = (parsed.base_title || '').trim();
-  if (!baseTitle) {
-    const hint = cleanFilenameHint(filename ?? '');
-    baseTitle = hint || (filename ?? '').replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ').trim();
-    baseTitle = baseTitle.charAt(0).toUpperCase() + baseTitle.slice(1);
-  }
 
-  // Sanitize any trailing or embedded hex hashes or IDs (e.g. 33dc072c, _a9608e40, _9710797b_1) leaking into title
-  baseTitle = baseTitle
-    .replace(/\b[0-9a-f]{6,16}(?:[-_]\d+)?\b/gi, (match) => {
-      // Only strip if it contains both a digit and a hex letter (true random hash/ID)
-      return (/\d/.test(match) && /[a-f]/i.test(match)) ? '' : match;
-    })
-    .replace(/[-_\s]+[0-9a-f]{6,16}(?:[-_\s]+\d+)?$/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  if (isVectorMedia) {
-    baseTitle = baseTitle
-      .replace(/\b(?:photograph|photography|photos|photo)\b/gi, 'Graphic')
-      .replace(/\b(?:camera\s+shot|camera)\b/gi, 'Graphic')
+  const sanitizeTitleText = (input: string): string => {
+    let text = (input || '').trim();
+    text = text
+      .replace(/\b[0-9a-f]{6,16}(?:[-_]\d+)?\b/gi, (match) => {
+        return (/\d/.test(match) && /[a-f]/i.test(match)) ? '' : match;
+      })
+      .replace(/[-_\s]+[0-9a-f]{6,16}(?:[-_\s]+\d+)?$/gi, '')
       .replace(/\s+/g, ' ')
       .trim();
+
+    if (isVectorMedia) {
+      text = text
+        .replace(/\b(?:photograph|photography|photos|photo)\b/gi, 'Graphic')
+        .replace(/\b(?:camera\s+shot|camera)\b/gi, 'Graphic')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+    return text;
+  };
+
+  let rawShortTitle = sanitizeTitleText(parsed.short_title || '');
+  let rawLongTitle = sanitizeTitleText(parsed.long_title || '');
+  let rawBaseTitle = sanitizeTitleText(parsed.base_title || '');
+
+  const fallbackFromFilename = (() => {
+    const hint = cleanFilenameHint(filename ?? '');
+    const fb = hint || (filename ?? '').replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ').trim();
+    return fb ? fb.charAt(0).toUpperCase() + fb.slice(1) : '';
+  })();
+
+  let longTitle = rawLongTitle || rawBaseTitle || rawShortTitle || fallbackFromFilename;
+  if (longTitle.length > 200) {
+    longTitle = smartTruncate(longTitle, 200, false);
   }
 
-  if (baseTitle.length > 200) baseTitle = baseTitle.substring(0, 197) + '...';
+  let shortTitle = rawShortTitle || rawBaseTitle || longTitle;
+  // Strictly under 100 characters (< 100 chars, i.e., max 99 chars)
+  if (shortTitle.length >= 100) {
+    shortTitle = smartTruncate(shortTitle, 99, false);
+  }
+
+  let baseTitle = longTitle || shortTitle;
+  if (baseTitle.length > 200) {
+    baseTitle = smartTruncate(baseTitle, 200, false);
+  }
 
   // 3. Normalize Description (Dreamstime Rule: Must be strictly longer than Title & complete sentence)
   let detailedDescription = (parsed.detailed_description || '').trim();
@@ -222,7 +266,7 @@ export function parseAndNormalizeAiMetadata(
       .replace(/\s+/g, ' ')
       .trim();
   }
-  // Ensure description is strictly longer than baseTitle
+  // Ensure description is strictly longer than baseTitle / longTitle
   if (detailedDescription.length <= baseTitle.length) {
     detailedDescription = isVectorMedia
       ? `${detailedDescription} Scalable commercial vector graphic artwork with clean lines and professional composition.`
@@ -365,7 +409,7 @@ export function parseAndNormalizeAiMetadata(
   }
 
   // If AI generation failed to produce meaningful metadata, throw to trigger failover retry
-  if (!parsed.base_title && rawList.length < 5) {
+  if (!parsed.base_title && !parsed.short_title && !parsed.long_title && rawList.length < 5) {
     throw new Error(`AI vision model returned incomplete output for "${filename}" (missing title & keywords). Triggering failover retry.`);
   }
 
@@ -488,6 +532,8 @@ export function parseAndNormalizeAiMetadata(
     thumbnailBase64: thumbnailBase64 ?? '',
     isAiGenerated,
     baseTitle,
+    shortTitle,
+    longTitle,
     detailedDescription,
     rankedKeywords: uniqueKeywords.slice(0, maxKeywordCap),
     mediaType,
@@ -698,6 +744,12 @@ export function findClosestCategory(input: string, isVideo = false): string | nu
 function extractFallbackRegex(text: string): RawAiOutput {
   const result: RawAiOutput = {};
   if (!text) return result;
+
+  const shortTitleMatch = text.match(/"short_title"\s*:\s*"([^"]+)"/i);
+  if (shortTitleMatch) result.short_title = shortTitleMatch[1];
+
+  const longTitleMatch = text.match(/"long_title"\s*:\s*"([^"]+)"/i);
+  if (longTitleMatch) result.long_title = longTitleMatch[1];
 
   const titleMatch = text.match(/"base_title"\s*:\s*"([^"]+)"/i);
   if (titleMatch) result.base_title = titleMatch[1];

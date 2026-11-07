@@ -1102,6 +1102,21 @@ class SqliteDatabaseManager {
     const primaryDiskPath = resolvedPreviewPath || resolvedMasterPath || resolvedOriginalPath;
     const previewUrl = primaryDiskPath ? this.buildStockflowProtocolUrl(primaryDiskPath) : '';
 
+    let parsedMetadataJson = null;
+    try {
+      if (row.metadata_json) parsedMetadataJson = JSON.parse(row.metadata_json);
+    } catch {
+      parsedMetadataJson = null;
+    }
+
+    const rawBaseTitle = row.m_base_title ?? row.base_title ?? '';
+    const longTitle = parsedMetadataJson?.longTitle || rawBaseTitle || '';
+    const shortTitle =
+      parsedMetadataJson?.shortTitle ||
+      (rawBaseTitle.length < 100
+        ? rawBaseTitle
+        : rawBaseTitle.slice(0, 99).replace(/\s+\S*$/, '').trim());
+
     return {
       id: row.id,
       batchId: row.batch_id || '',
@@ -1123,7 +1138,9 @@ class SqliteDatabaseManager {
       mediaType: row.media_type || 'image',
       videoMeta,
       isAiGenerated: isAi,
-      baseTitle: row.m_base_title ?? row.base_title ?? '',
+      baseTitle: rawBaseTitle || longTitle || shortTitle,
+      shortTitle: shortTitle || undefined,
+      longTitle: longTitle || undefined,
       detailedDescription: row.m_detailed_description ?? row.detailed_description ?? '',
       rankedKeywords,
       categories,
@@ -1250,20 +1267,32 @@ class SqliteDatabaseManager {
       relPreviewPath = this._persistPreviewToDiskIfNeeded(rec.id, rec.thumbnailBase64);
     }
 
+    const effectiveLongTitle = rec.longTitle || rec.baseTitle || rec.shortTitle || '';
+    const effectiveShortTitle =
+      rec.shortTitle ||
+      (effectiveLongTitle.length < 100
+        ? effectiveLongTitle
+        : effectiveLongTitle.slice(0, 99).replace(/\s+\S*$/, '').trim());
+    const effectiveBaseTitle = rec.baseTitle || effectiveLongTitle || effectiveShortTitle || '';
+    const metadataJson = JSON.stringify({
+      shortTitle: effectiveShortTitle,
+      longTitle: effectiveLongTitle,
+    });
+
     const upsertAsset = this.db.prepare(`
       INSERT INTO assets (
         id, batch_id, original_path, master_path, preview_path,
         filename, original_filename, file_hash, perceptual_hash,
         media_type, file_size, compressed_size,
         width, height, duration_seconds, has_audio, resolution, thumbnail_base64,
-        is_ai_generated, base_title, detailed_description, keywords_json, categories_json,
+        is_ai_generated, base_title, detailed_description, keywords_json, categories_json, metadata_json,
         pipeline_stage, status, error_message, created_at, updated_at
       ) VALUES (
         @id, @batch_id, @original_path, @master_path, @preview_path,
         @filename, @original_filename, @file_hash, @perceptual_hash,
         @media_type, @file_size, @compressed_size,
         @width, @height, @duration_seconds, @has_audio, @resolution, '',
-        @is_ai_generated, @base_title, @detailed_description, @keywords_json, @categories_json,
+        @is_ai_generated, @base_title, @detailed_description, @keywords_json, @categories_json, @metadata_json,
         @pipeline_stage, @status, @error_message, @created_at, @updated_at
       )
       ON CONFLICT(id) DO UPDATE SET
@@ -1289,6 +1318,7 @@ class SqliteDatabaseManager {
         detailed_description = excluded.detailed_description,
         keywords_json = excluded.keywords_json,
         categories_json = COALESCE(excluded.categories_json, assets.categories_json),
+        metadata_json = COALESCE(excluded.metadata_json, assets.metadata_json),
         pipeline_stage = COALESCE(excluded.pipeline_stage, assets.pipeline_stage),
         status = excluded.status,
         error_message = excluded.error_message,
@@ -1345,10 +1375,11 @@ class SqliteDatabaseManager {
       has_audio: rec.videoMeta?.hasAudio ? 1 : 0,
       resolution: rec.videoMeta?.resolution ?? null,
       is_ai_generated: isAiInt,
-      base_title: rec.baseTitle || '',
+      base_title: effectiveBaseTitle,
       detailed_description: rec.detailedDescription || '',
       keywords_json: kwJson,
       categories_json: catJson,
+      metadata_json: metadataJson,
       pipeline_stage: rec.pipelineStage || 'committed',
       status: rec.status || 'completed',
       error_message: rec.errorMessage ?? null,
@@ -1358,7 +1389,7 @@ class SqliteDatabaseManager {
 
     upsertMeta.run({
       asset_id: rec.id,
-      base_title: rec.baseTitle || '',
+      base_title: effectiveBaseTitle,
       detailed_description: rec.detailedDescription || '',
       keywords_json: kwJson,
       categories_json: catJson,
