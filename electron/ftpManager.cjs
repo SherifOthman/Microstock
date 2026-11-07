@@ -3,6 +3,13 @@ const fs = require('fs');
 const path = require('path');
 const { Readable } = require('stream');
 
+let SftpClient = null;
+try {
+  SftpClient = require('ssh2-sftp-client');
+} catch (e) {
+  console.warn('[FtpManager] ssh2-sftp-client could not be loaded:', e.message);
+}
+
 const SUPPORTED_MEDIA_EXTENSIONS = new Set([
   '.jpg',
   '.jpeg',
@@ -311,6 +318,176 @@ class PlainFtpAdapter {
   }
 }
 
+/**
+ * Persistent SFTP Adapter via ssh2-sftp-client (Port 2022 for 123RF Footage / Videos)
+ * - Automatically connects with hostVerifier bypass for microstock SFTP hosts.
+ * - Handles remote directory verification and recursive creation.
+ * - Supports fastPut for local disk paths and put for memory buffers.
+ */
+class SftpAdapter {
+  constructor() {
+    this.client = null;
+    this.connectedConfigKey = null;
+    this.currentRemoteDir = null;
+    this.remoteDirListingCache = new Map();
+  }
+
+  isConnected() {
+    return Boolean(this.client && this.client.sftp);
+  }
+
+  async ensureConnected({ host, port = 2022, username, password, timeoutMs = 30000 }) {
+    if (!SftpClient) {
+      throw new Error('SFTP client library (ssh2-sftp-client) is not available.');
+    }
+    const cleanHost = (host || 'footage.ftp.123rf.com').trim();
+    const cleanUser = (username || '').trim();
+    const sftpPort = Number(port) || 2022;
+    const configKey = `${cleanHost}:${sftpPort}:${cleanUser}`;
+
+    if (this.isConnected() && this.connectedConfigKey === configKey) {
+      return;
+    }
+
+    await this.disconnect();
+    const client = new SftpClient();
+    await client.connect({
+      host: cleanHost,
+      port: sftpPort,
+      username: cleanUser,
+      password: password || '',
+      readyTimeout: timeoutMs,
+      hostVerifier: () => true,
+    });
+    this.client = client;
+    this.connectedConfigKey = configKey;
+    this.currentRemoteDir = null;
+    this.remoteDirListingCache.clear();
+  }
+
+  async navigateToRemoteFolder(remoteDir) {
+    if (!this.isConnected()) throw new Error('SFTP client is not connected.');
+    const normalized =
+      !remoteDir || remoteDir === '/'
+        ? '/'
+        : remoteDir.startsWith('/')
+        ? remoteDir
+        : `/${remoteDir}`;
+
+    if (normalized !== '/') {
+      try {
+        const exists = await this.client.exists(normalized);
+        if (!exists) {
+          await this.client.mkdir(normalized, true);
+        }
+      } catch {
+        // continue if directory already exists or cannot be created
+      }
+    }
+    this.currentRemoteDir = normalized;
+    return normalized;
+  }
+
+  async checkRemoteDuplicate(normalizedFolder, targetName, localSize) {
+    if (!this.isConnected()) return false;
+    try {
+      let fileMap = this.remoteDirListingCache.get(normalizedFolder);
+      if (!fileMap) {
+        const list = await this.client.list(normalizedFolder);
+        fileMap = new Map();
+        if (Array.isArray(list)) {
+          for (const entry of list) {
+            if (entry && entry.name) {
+              fileMap.set(entry.name.toLowerCase(), Number(entry.size || 0));
+            }
+          }
+        }
+        this.remoteDirListingCache.set(normalizedFolder, fileMap);
+      }
+      const existingSize = fileMap.get(targetName.toLowerCase());
+      if (existingSize !== undefined && existingSize > 0) {
+        if (!localSize || existingSize >= Math.floor(localSize * 0.95)) {
+          return true;
+        }
+      }
+    } catch {}
+    return false;
+  }
+
+  markFileUploadedInCache(normalizedFolder, targetName, fileSize) {
+    let fileMap = this.remoteDirListingCache.get(normalizedFolder);
+    if (!fileMap) {
+      fileMap = new Map();
+      this.remoteDirListingCache.set(normalizedFolder, fileMap);
+    }
+    fileMap.set(targetName.toLowerCase(), Number(fileSize || 1));
+  }
+
+  async uploadFile({ localPath, fileBuffer, remoteFolder, filename, onProgress }) {
+    if (!this.isConnected()) throw new Error('SFTP client is not connected.');
+    const targetDir = await this.navigateToRemoteFolder(remoteFolder);
+    const targetName = sanitizeRemoteFilename(filename || localPath || 'upload.bin');
+    const remotePath = targetDir === '/' ? `/${targetName}` : `${targetDir}/${targetName}`;
+
+    const hasDiskFile =
+      typeof localPath === 'string' && localPath.length > 0 && fs.existsSync(localPath);
+    const hasMemoryBuffer =
+      fileBuffer && (Buffer.isBuffer(fileBuffer) || fileBuffer.byteLength > 0);
+
+    if (!hasDiskFile && !hasMemoryBuffer) {
+      const err = new Error(`Local source file not found on disk: ${localPath || filename}`);
+      err.code = 'ENOENT';
+      throw err;
+    }
+
+    let localSize = 0;
+    if (hasDiskFile) {
+      try {
+        localSize = fs.statSync(localPath).size;
+      } catch {
+        localSize = 0;
+      }
+    } else if (hasMemoryBuffer) {
+      localSize = Buffer.isBuffer(fileBuffer) ? fileBuffer.length : fileBuffer.byteLength;
+    }
+
+    const alreadyExists = await this.checkRemoteDuplicate(targetDir, targetName, localSize);
+    if (alreadyExists) {
+      const dupErr = new Error(`550 File already exists on server: ${targetName}`);
+      dupErr.code = 'FTP_DUPLICATE_550';
+      dupErr.isDuplicateSkip = true;
+      throw dupErr;
+    }
+
+    if (hasDiskFile) {
+      await this.client.fastPut(localPath, remotePath, {
+        step: (transferred) => {
+          if (typeof onProgress === 'function') onProgress(transferred);
+        },
+      });
+    } else {
+      const buf = Buffer.isBuffer(fileBuffer) ? fileBuffer : Buffer.from(fileBuffer);
+      await this.client.put(buf, remotePath);
+      if (typeof onProgress === 'function') onProgress(localSize);
+    }
+
+    this.markFileUploadedInCache(targetDir, targetName, localSize);
+    return { bytesTransferred: localSize };
+  }
+
+  async disconnect() {
+    if (this.client) {
+      try {
+        await this.client.end();
+      } catch {}
+      this.client = null;
+    }
+    this.connectedConfigKey = null;
+    this.currentRemoteDir = null;
+    this.remoteDirListingCache.clear();
+  }
+}
+
 function scanDirectoryForMediaFiles(rootDir) {
   const results = [];
   const stack = [rootDir];
@@ -357,6 +534,7 @@ class ElectronFtpManager {
     this.getMainWindow = getMainWindow;
     this.dialog = dialog;
     this.persistentAdapter = new PlainFtpAdapter();
+    this.sftpAdapter = new SftpAdapter();
     this.uploadMutex = Promise.resolve();
   }
 
@@ -403,7 +581,7 @@ class ElectronFtpManager {
     return this.sqliteDb.saveFtpProfile({
       agencyId,
       protocol: 'ftp',
-      host: (payload.host || 'ftp.dreamstime.com').trim(),
+      host: (payload.host || (agencyId === '123rf' ? 'ftp.123rf.com' : 'ftp.dreamstime.com')).trim(),
       port: 21,
       username: (payload.username || '').trim(),
       encryptedPassword,
@@ -502,11 +680,13 @@ class ElectronFtpManager {
 
   abortActiveBatch() {
     this.persistentAdapter.disconnect();
+    if (this.sftpAdapter) this.sftpAdapter.disconnect();
     return { aborted: true };
   }
 
   disconnectSession() {
     this.persistentAdapter.disconnect();
+    if (this.sftpAdapter) this.sftpAdapter.disconnect();
     return { disconnected: true };
   }
 
@@ -518,6 +698,10 @@ class ElectronFtpManager {
     const run = async () => {
       const {
         agencyId = 'dreamstime',
+        protocol: explicitProtocol,
+        port: explicitPort,
+        hostOverride,
+        mediaType,
         localPath,
         fileBuffer,
         remoteFolder = '/',
@@ -527,7 +711,11 @@ class ElectronFtpManager {
       } = payload;
 
       const profileWithSecret = this.sqliteDb.getFtpProfileWithSecret(agencyId);
-      const host = (profileWithSecret?.host || 'ftp.dreamstime.com').trim();
+      const isVideoMedia = mediaType === 'video' || (filename && /\.(mp4|mov|m4v|webm|avi|mkv)$/i.test(filename)) || remoteFolder === '/ai_video';
+      const protocol = explicitProtocol || (agencyId === '123rf' && isVideoMedia ? 'sftp' : 'ftp');
+      const sftpPort = explicitPort || (agencyId === '123rf' ? 2022 : 22);
+      const defaultHost = agencyId === '123rf' ? (protocol === 'sftp' ? 'footage.ftp.123rf.com' : 'ftp.123rf.com') : 'ftp.dreamstime.com';
+      const host = (hostOverride || (protocol === 'sftp' ? 'footage.ftp.123rf.com' : profileWithSecret?.host) || defaultHost).trim();
       const username = (profileWithSecret?.username || '').trim();
       const password = this.decryptPassword(profileWithSecret?.encryptedPassword || '');
 
@@ -536,11 +724,51 @@ class ElectronFtpManager {
           success: false,
           errorCode: 'NO_CREDENTIALS',
           errorMessage:
-            'Dreamstime FTP credentials are not configured. Open Site Settings to save your login.',
+            `${agencyId === '123rf' ? '123RF' : 'Dreamstime'} FTP credentials are not configured. Open Site Settings to save your login.`,
         };
       }
 
       let lastEmit = 0;
+
+      if (protocol === 'sftp') {
+        try {
+          await this.sftpAdapter.ensureConnected({
+            host,
+            port: sftpPort,
+            username,
+            password,
+            timeoutMs: 30000,
+          });
+
+          await this.sftpAdapter.uploadFile({
+            localPath,
+            fileBuffer,
+            remoteFolder,
+            filename,
+            onProgress: (bytesTransferred) => {
+              const now = Date.now();
+              if (now - lastEmit >= 40) {
+                lastEmit = now;
+                this.sendTelemetry({
+                  type: 'file-progress',
+                  itemId,
+                  bytesTransferred: Number(byteOffset || 0) + Number(bytesTransferred || 0),
+                  timestamp: now,
+                });
+              }
+            },
+          });
+
+          return { success: true };
+        } catch (err) {
+          return {
+            success: false,
+            isDuplicateSkip: Boolean(err.isDuplicateSkip || err.code === 'FTP_DUPLICATE_550'),
+            errorCode: String(err.code || 'SFTP_TRANSFER_ERR'),
+            errorMessage: err.message || 'SFTP transfer failed.',
+          };
+        }
+      }
 
       try {
         await this.persistentAdapter.ensureConnected({

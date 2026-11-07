@@ -50,6 +50,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
+import { OneTwoThreeRfFtpUploaderView } from './OneTwoThreeRfFtpUploaderView';
 
 type QueueSubTab = 'all' | 'succeeded' | 'failed' | 'skipped';
 
@@ -293,6 +294,21 @@ export const FtpUploaderView: React.FC = () => {
   const { language } = useLanguage();
   const isAr = language === 'ar';
 
+  const [selectedAgency, setSelectedAgency] = useState<'dreamstime' | '123rf'>(() => {
+    try {
+      return (localStorage.getItem('stock_ftp_agency') as any) || 'dreamstime';
+    } catch {
+      return 'dreamstime';
+    }
+  });
+
+  const handleAgencyChange = (agency: 'dreamstime' | '123rf') => {
+    setSelectedAgency(agency);
+    try {
+      localStorage.setItem('stock_ftp_agency', agency);
+    } catch {}
+  };
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -510,6 +526,10 @@ export const FtpUploaderView: React.FC = () => {
       ? skippedItems
       : queue;
 
+  if (selectedAgency === '123rf') {
+    return <OneTwoThreeRfFtpUploaderView onSwitchAgency={handleAgencyChange} />;
+  }
+
   return (
     <div
       data-testid="ftp-uploader-view"
@@ -549,6 +569,23 @@ export const FtpUploaderView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center p-0.5 rounded-lg bg-slate-100 dark:bg-secondary border border-slate-200 dark:border-border text-xs mr-1 rtl:mr-0 rtl:ml-1">
+            <button
+              type="button"
+              className="px-2.5 py-1 rounded-md font-bold bg-white dark:bg-card text-foreground shadow-xs cursor-default flex items-center gap-1.5 border border-slate-200 dark:border-transparent"
+            >
+              {getPlatformLogo('dreamstime', 14)}
+              <span>Dreamstime</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleAgencyChange('123rf')}
+              className="px-2.5 py-1 rounded-md text-muted-foreground hover:text-foreground transition cursor-pointer flex items-center gap-1.5 font-medium"
+            >
+              {getPlatformLogo('123rf', 14)}
+              <span>123RF</span>
+            </button>
+          </div>
           {/* Subtle Keep Awake ☕ Icon (Only appears when actively uploading) */}
           {telemetry.isRunning && (
             <Tooltip

@@ -2483,7 +2483,7 @@ class SqliteDatabaseManager {
     const defaultProfile = {
       agencyId,
       protocol: 'ftp',
-      host: agencyId === 'dreamstime' ? 'ftp.dreamstime.com' : '',
+      host: agencyId === '123rf' ? 'ftp.123rf.com' : agencyId === 'dreamstime' ? 'ftp.dreamstime.com' : '',
       port: 21,
       username: '',
       encryptedPassword: '',
@@ -2505,7 +2505,7 @@ class SqliteDatabaseManager {
     return {
       agencyId: row.agency_id,
       protocol: 'ftp',
-      host: row.host || 'ftp.dreamstime.com',
+      host: row.host || (agencyId === '123rf' ? 'ftp.123rf.com' : 'ftp.dreamstime.com'),
       port: 21,
       username: row.username || '',
       encryptedPassword: row.encrypted_password || '',

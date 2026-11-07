@@ -2,6 +2,8 @@ import { LocalHardwareProfile, ModelInfo } from '../../types';
 import { combineAbortSignals } from './types';
 import { SYSTEM_LOCAL_VISION_PROMPT } from '../ai/masterPrompt';
 
+export type LocalAiConnectionStatus = 'connected' | 'unreachable' | 'untested';
+
 export interface LocalConnectionTestResult {
   success: boolean;
   latencyMs: number;
@@ -226,6 +228,32 @@ export class LocalAiAdapter {
     }
   }
 
+  private connectionStatus: LocalAiConnectionStatus = (() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const saved = window.localStorage.getItem('stock_local_ai_status') as LocalAiConnectionStatus;
+        if (saved === 'connected' || saved === 'unreachable') return saved;
+      }
+    } catch {}
+    return 'untested';
+  })();
+
+  getConnectionStatus(): LocalAiConnectionStatus {
+    return this.connectionStatus;
+  }
+
+  setConnectionStatus(status: LocalAiConnectionStatus): void {
+    this.connectionStatus = status;
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem('stock_local_ai_status', status);
+      }
+    } catch {}
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('stockflow:local-ai-status-changed', { detail: status }));
+    }
+  }
+
   /**
    * Tests connectivity to the local LM Studio server via the standard GET /v1/models endpoint.
    */
@@ -253,6 +281,7 @@ export class LocalAiAdapter {
             errorMsg = errData.error.message;
           }
         } catch {}
+        this.setConnectionStatus('unreachable');
         return {
           success: false,
           latencyMs,
@@ -270,6 +299,7 @@ export class LocalAiAdapter {
         (preferredModel && detectedModels.includes(preferredModel) ? preferredModel : detectedModels[0]) ||
         'local-model';
 
+      this.setConnectionStatus('connected');
       return {
         success: true,
         latencyMs,
@@ -290,6 +320,7 @@ export class LocalAiAdapter {
         errorMsg = `Server unreachable at ${normalizedUrl}. Ensure LM Studio is open and the Local Server is running (Developer / Local Server tab).`;
       }
 
+      this.setConnectionStatus('unreachable');
       return {
         success: false,
         latencyMs,

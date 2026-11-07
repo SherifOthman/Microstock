@@ -3,7 +3,7 @@ import { ApiKeyRecord, ProviderType, AiExecutionMode } from '../../../types';
 import { LocalAiSettingsPanel } from './LocalAiSettingsPanel';
 import { PROVIDERS_META, PROVIDER_ORDER, MODEL_DISPLAY_NAMES } from '../../../constants/providers';
 import { keyRingScheduler, RoutingStrategy } from '../../../services/scheduler/KeyRingScheduler';
-import { updateApiKey, removeApiKey, getAiExecutionMode, setAiExecutionMode, subscribeToDbChanges } from '../../../db';
+import { updateApiKey, removeApiKey, getAiExecutionMode, setAiExecutionMode, saveAppSettings, subscribeToDbChanges } from '../../../db';
 import { decryptSecret } from '../../../services/desktop/secureStorage';
 import { AddKeyDialog } from './AddKeyDialog';
 import { Button } from '../../../components/ui/button';
@@ -74,7 +74,16 @@ export const KeyRingView: React.FC = () => {
 
   const handleModeChange = async (mode: AiExecutionMode) => {
     setAiMode(mode);
-    await setAiExecutionMode(mode);
+    try {
+      await saveAppSettings({ aiExecutionMode: mode });
+      await setAiExecutionMode(mode);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('stock_ai_execution_mode', mode);
+        window.dispatchEvent(new CustomEvent('stockflow:ai-mode-changed', { detail: mode }));
+      }
+    } catch (err) {
+      console.error('[KeyRingView] Failed to update aiExecutionMode in SQLite:', err);
+    }
   };
 
   useEffect(() => {
@@ -251,9 +260,12 @@ export const KeyRingView: React.FC = () => {
       <div className="flex items-center p-1 bg-slate-100 dark:bg-secondary/50 rounded-xl border border-slate-200 dark:border-border">
         <Button
           type="button"
+          data-testid="cloud-apis-tab"
           variant={aiMode === 'cloud' ? 'default' : 'ghost'}
           size="sm"
-          onClick={() => handleModeChange('cloud')}
+          onClick={async () => {
+            await handleModeChange('cloud');
+          }}
           className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 h-9 rounded-lg text-xs font-bold transition cursor-pointer ${
             aiMode === 'cloud'
               ? 'bg-white text-slate-900 shadow-xs border border-slate-200 dark:bg-primary dark:text-primary-foreground dark:border-transparent'
@@ -265,9 +277,12 @@ export const KeyRingView: React.FC = () => {
         </Button>
         <Button
           type="button"
+          data-testid="local-ai-tab"
           variant={aiMode === 'local' ? 'default' : 'ghost'}
           size="sm"
-          onClick={() => handleModeChange('local')}
+          onClick={async () => {
+            await handleModeChange('local');
+          }}
           className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 h-9 rounded-lg text-xs font-bold transition cursor-pointer ${
             aiMode === 'local'
               ? 'bg-white text-slate-900 shadow-xs border border-slate-200 dark:bg-primary dark:text-primary-foreground dark:border-transparent'

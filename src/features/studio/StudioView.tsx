@@ -12,7 +12,6 @@ import { StudioToolbar } from '../../components/studio/StudioToolbar';
 import { GlobalProgressBanner } from '../../components/studio/GlobalProgressBanner';
 import { MarketplaceSidebar } from '../../components/studio/MarketplaceSidebar';
 import { AssetCardList } from '../../components/studio/AssetCardList';
-import { KeyRingView } from '../keyring/components/KeyRingView';
 import { StockTemplatesModal } from '../tools/StockTemplatesModal';
 import { MediaLightboxModal } from '../../components/MediaLightboxModal';
 import { Dialog } from '../../components/ui/dialog';
@@ -22,14 +21,17 @@ import { PLATFORMS_CONFIG } from '../../constants/platforms';
 import { getPlatformLogo } from '../../components/icons/StockLogos';
 import { MasterMetadataRecord, SupportedPlatform } from '../../types';
 import { FixAndRequeueContext } from '../tracker/DistributionTrackerView';
-import { Copy, Eye, Check, Download, KeyRound, FolderDown, Loader2, AlertTriangle, Volume2, VolumeX, Wrench, RotateCcw } from 'lucide-react';
+import { Copy, Eye, Check, Download, KeyRound, Server, FolderDown, Loader2, AlertTriangle, Volume2, VolumeX, Wrench, RotateCcw } from 'lucide-react';
 import { Alert, AlertTitle, AlertDescription } from '../../components/ui/alert';
+import { localAiAdapter, LocalAiConnectionStatus } from '../../services/providers/localAi';
 
 export interface StudioViewProps {
   onOpenVideoMuter?: () => void;
   requeueContext?: FixAndRequeueContext | null;
   onCompleteRequeue?: (agencyId: SupportedPlatform) => void;
   onDismissRequeue?: () => void;
+  onOpenKeyRing?: () => void;
+  onOpenTemplates?: () => void;
 }
 
 export const StudioView: React.FC<StudioViewProps> = ({
@@ -37,6 +39,8 @@ export const StudioView: React.FC<StudioViewProps> = ({
   requeueContext,
   onCompleteRequeue,
   onDismissRequeue,
+  onOpenKeyRing,
+  onOpenTemplates,
 }) => {
   const { t, language } = useLanguage();
   const [, startTransition] = useTransition();
@@ -64,11 +68,95 @@ export const StudioView: React.FC<StudioViewProps> = ({
 
   const keys = useSqliteQuery(() => db.apiKeys.toArray(), [], [], ['keys']) || [];
   const appSettings = useSqliteQuery(() => getAppSettings(), [], null, ['settings']);
-  const isLocalMode = appSettings?.aiExecutionMode === 'local';
+  const [explicitAiMode, setExplicitAiMode] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('stock_ai_execution_mode');
+    } catch {
+      return null;
+    }
+  });
+
+  const [isLocalMode, setIsLocalMode] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('stock_ai_execution_mode');
+      if (stored) return stored === 'local';
+    } catch {}
+    return false;
+  });
+
+  React.useEffect(() => {
+    const handleAiModeEvent = (e: Event) => {
+      const custom = e as CustomEvent<string>;
+      if (custom.detail) {
+        setExplicitAiMode(custom.detail);
+        setIsLocalMode(custom.detail === 'local');
+        try {
+          localStorage.setItem('stock_ai_execution_mode', custom.detail);
+        } catch {}
+      }
+    };
+    window.addEventListener('stockflow:ai-mode-changed', handleAiModeEvent);
+    return () => window.removeEventListener('stockflow:ai-mode-changed', handleAiModeEvent);
+  }, []);
+
+  React.useEffect(() => {
+    if (appSettings?.aiExecutionMode && !explicitAiMode) {
+      setIsLocalMode(appSettings.aiExecutionMode === 'local');
+    }
+  }, [appSettings?.aiExecutionMode, explicitAiMode]);
   const healthyKeys = useMemo(() => keys.filter((k) => k.status !== 'invalid' && k.status !== 'disabled'), [keys]);
-  const canRunAi = isLocalMode || healthyKeys.length > 0;
+
+  const [localAiStatus, setLocalAiStatus] = useState<LocalAiConnectionStatus>(() => {
+    return localAiAdapter.getConnectionStatus();
+  });
+
+  React.useEffect(() => {
+    const handleStatusChange = (e: Event) => {
+      const custom = e as CustomEvent<LocalAiConnectionStatus>;
+      setLocalAiStatus(custom.detail || localAiAdapter.getConnectionStatus());
+    };
+    window.addEventListener('stockflow:local-ai-status-changed', handleStatusChange);
+    return () => window.removeEventListener('stockflow:local-ai-status-changed', handleStatusChange);
+  }, []);
+
+  // Proactively check local AI server if in local mode and status is currently untested
+  React.useEffect(() => {
+    if (isLocalMode && localAiStatus === 'untested') {
+      const baseUrl = appSettings?.localAiConfig?.baseUrl || 'http://127.0.0.1:1234/v1';
+      localAiAdapter
+        .testConnection(baseUrl, appSettings?.localAiConfig?.modelId)
+        .then((res) => {
+          setLocalAiStatus(res.success ? 'connected' : 'unreachable');
+        })
+        .catch(() => {
+          setLocalAiStatus('unreachable');
+        });
+    }
+  }, [isLocalMode, localAiStatus, appSettings?.localAiConfig?.baseUrl, appSettings?.localAiConfig?.modelId]);
+
+  const canRunAi = isLocalMode ? (localAiStatus === 'connected') : (healthyKeys.length > 0);
   const combinedRpm = useMemo(() => healthyKeys.reduce((acc, k) => acc + (k.rpmLimit || 15), 0), [healthyKeys]);
   const [isKeyShake, setIsKeyShake] = useState(false);
+
+  const handleManageNavigation = useCallback(() => {
+    if (onOpenKeyRing) {
+      onOpenKeyRing();
+    } else {
+      window.dispatchEvent(
+        new CustomEvent('stockflow:navigate-tab', { detail: { tab: 'settings', settingsTab: 'keys' } })
+      );
+    }
+  }, [onOpenKeyRing]);
+
+  const handleTemplatesNavigation = useCallback(() => {
+    if (onOpenTemplates) {
+      onOpenTemplates();
+    } else {
+      window.dispatchEvent(
+        new CustomEvent('stockflow:navigate-tab', { detail: { tab: 'settings', settingsTab: 'csv' } })
+      );
+    }
+  }, [onOpenTemplates]);
 
   const [viewMode, setViewMode] = useState<'compact' | 'detailed'>(() => {
     return (localStorage.getItem('stock_view_mode') as 'compact' | 'detailed') || 'detailed';
@@ -327,8 +415,9 @@ export const StudioView: React.FC<StudioViewProps> = ({
         settings={settings}
         healthyKeysCount={healthyKeys.length}
         combinedRpm={combinedRpm}
-        onOpenKeyRing={() => dialogs.setIsKeyRingOpen(true)}
-        onOpenTemplates={() => dialogs.setIsTemplatesOpen(true)}
+        localAiStatus={localAiStatus}
+        onOpenKeyRing={handleManageNavigation}
+        onOpenTemplates={handleTemplatesNavigation}
         onUnlockDt={() => dialogs.setIsDtUnlockDialogOpen(true)}
         onUnlockShutter={() => dialogs.setIsShutterUnlockDialogOpen(true)}
       />
@@ -399,17 +488,26 @@ export const StudioView: React.FC<StudioViewProps> = ({
 
         {!canRunAi && (
           <Alert variant="warning" className={isKeyShake ? 'animate-shake ring-2 ring-amber-500/50' : ''}>
-            <KeyRound className="w-4 h-4" />
+            {isLocalMode ? (
+              <Server className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+            ) : (
+              <KeyRound className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+            )}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full">
               <div>
                 <AlertTitle className="text-xs font-semibold text-amber-700 dark:text-amber-400">
-                  {t.apiKeyMissingBannerTitle}
+                  {isLocalMode ? t.localAiUnreachableBannerTitle : t.apiKeyMissingBannerTitle}
                 </AlertTitle>
                 <AlertDescription className="text-xs text-amber-800/90 dark:text-amber-300/80">
-                  {t.apiKeyMissingBannerDesc}
+                  {isLocalMode ? t.localAiUnreachableBannerDesc : t.apiKeyMissingBannerDesc}
                 </AlertDescription>
               </div>
-              <Button size="sm" onClick={() => dialogs.setIsKeyRingOpen(true)} className="h-7 px-3 text-xs shrink-0 cursor-pointer">
+              <Button
+                data-testid="banner-manage-keys-button"
+                size="sm"
+                onClick={handleManageNavigation}
+                className="h-7 px-3 text-xs shrink-0 cursor-pointer"
+              >
                 {t.manageKeys}
               </Button>
             </div>
@@ -525,10 +623,6 @@ export const StudioView: React.FC<StudioViewProps> = ({
       </main>
 
       {/* Modals & Dialogs */}
-      <Dialog open={dialogs.isKeyRingOpen} onClose={() => dialogs.setIsKeyRingOpen(false)} title={t.keysTitle} size="lg">
-        <KeyRingView />
-      </Dialog>
-
       <Dialog
         open={dialogs.isExportOpen}
         onClose={() => dialogs.setIsExportOpen(false)}

@@ -66,6 +66,7 @@ export const LocalAiSettingsPanel: React.FC = () => {
     const updated = { ...config, baseUrl: newUrl };
     setConfig(updated);
     await saveLocalAiConfig(updated);
+    localAiAdapter.setConnectionStatus('untested');
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 1200);
   };
@@ -94,6 +95,7 @@ export const LocalAiSettingsPanel: React.FC = () => {
     const updated = { ...config, baseUrl: defaultUrl };
     setConfig(updated);
     await saveLocalAiConfig(updated);
+    localAiAdapter.setConnectionStatus('untested');
   };
 
   const handleTestConnection = async () => {

@@ -30,7 +30,6 @@ import {
 } from 'lucide-react';
 import { Dialog } from './components/ui/dialog';
 import { Tooltip } from './components/ui/tooltip';
-import { KeyRingView } from './features/keyring/components/KeyRingView';
 import { StockTemplatesModal } from './features/tools/StockTemplatesModal';
 import { AppLogo } from './components/icons/AppLogo';
 import { useLanguage } from './context/LanguageContext';
@@ -88,7 +87,6 @@ export function App() {
     if (saved === 'light' || saved === 'dark') return saved;
     return 'dark';
   });
-  const [isKeyRingOpen, setIsKeyRingOpen] = useState(false);
   const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'storage' | 'keys' | 'csv'>('storage');
   const [requeueContext, setRequeueContext] = useState<FixAndRequeueContext | null>(null);
@@ -108,6 +106,20 @@ export function App() {
   useEffect(() => {
     localStorage.setItem('stock_rail_collapsed', String(isRailCollapsed));
   }, [isRailCollapsed]);
+
+  useEffect(() => {
+    const handleNavigateEvent = (e: Event) => {
+      const custom = e as CustomEvent<{ tab: AppTab; settingsTab?: 'storage' | 'keys' | 'csv' }>;
+      if (custom.detail?.settingsTab) {
+        setSettingsTab(custom.detail.settingsTab);
+      }
+      if (custom.detail?.tab) {
+        handleTabChange(custom.detail.tab);
+      }
+    };
+    window.addEventListener('stockflow:navigate-tab', handleNavigateEvent);
+    return () => window.removeEventListener('stockflow:navigate-tab', handleNavigateEvent);
+  }, []);
 
   useEffect(() => {
     if (isElectron) return;
@@ -484,6 +496,14 @@ export function App() {
                     handleTabChange('tracker');
                   }}
                   onDismissRequeue={() => setRequeueContext(null)}
+                  onOpenKeyRing={() => {
+                    setSettingsTab('keys');
+                    handleTabChange('settings');
+                  }}
+                  onOpenTemplates={() => {
+                    setSettingsTab('csv');
+                    handleTabChange('settings');
+                  }}
                 />
               </div>
             )}
@@ -529,15 +549,6 @@ export function App() {
       </div>
 
       {/* Global Dialogs */}
-      <Dialog
-        open={isKeyRingOpen}
-        onClose={() => setIsKeyRingOpen(false)}
-        title={t.keysTitle}
-        size="lg"
-      >
-        <KeyRingView />
-      </Dialog>
-
       <StockTemplatesModal open={isTemplatesOpen} onClose={() => setIsTemplatesOpen(false)} />
     </div>
   );

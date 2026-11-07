@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useSqliteQuery, getAiExecutionMode } from '../../db';
 import { SupportedPlatform } from '../../types';
+import { LocalAiConnectionStatus } from '../../services/providers/localAi';
 import { PLATFORMS_CONFIG } from '../../constants/platforms';
 import { useLanguage } from '../../context/LanguageContext';
 import { Button } from '../../components/ui/button';
@@ -62,6 +63,7 @@ export interface MarketplaceSidebarProps {
   setUserCustomPrompt?: (val: string) => void;
   healthyKeysCount: number;
   combinedRpm: number;
+  localAiStatus?: LocalAiConnectionStatus;
   onOpenKeyRing: () => void;
   onOpenTemplates: () => void;
 }
@@ -324,7 +326,9 @@ export const MarketplaceSidebar: React.FC<MarketplaceSidebarProps> = (props) => 
               <span className="font-semibold text-foreground block">{t.apiKeysWidget}</span>
               <span className="text-[11px] text-muted-foreground font-mono tabular-nums">
                 {aiMode === 'local'
-                  ? (language === 'ar' ? 'خادم محلي (LM Studio)' : 'Local AI (LM Studio)')
+                  ? (props.localAiStatus === 'connected'
+                      ? (language === 'ar' ? 'خادم محلي (متصل)' : 'Local AI (Ready)')
+                      : (language === 'ar' ? 'خادم محلي (غير متصل)' : 'Local AI (Offline)'))
                   : props.healthyKeysCount > 0
                   ? t.readyRpm
                       .replace('{count}', String(props.healthyKeysCount))
