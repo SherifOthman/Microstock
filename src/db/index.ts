@@ -271,7 +271,7 @@ const testMemoryStore = {
       {
         agencyId: 'dreamstime',
         protocol: 'ftps',
-        host: 'ftp.dreamstime.com',
+        host: 'upload.dreamstime.com',
         port: 21,
         username: '',
         encryptedPassword: '',
@@ -798,7 +798,7 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
           ? { protocol: 'ftps' as const, host: 'ftps.shutterstock.com', port: 21 }
           : agencyId === 'adobe'
           ? { protocol: 'sftp' as const, host: 'sftp.contributor.adobestock.com', port: 22 }
-          : { protocol: 'ftp' as const, host: 'ftp.dreamstime.com', port: 21 };
+          : { protocol: 'ftp' as const, host: 'upload.dreamstime.com', port: 21 };
 
       let p = testMemoryStore.ftpProfiles.get(agencyId);
       if (!p) {
@@ -835,7 +835,7 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
           ? { protocol: 'ftps' as const, host: 'ftps.shutterstock.com', port: 21 }
           : agencyId === 'adobe'
           ? { protocol: 'sftp' as const, host: 'sftp.contributor.adobestock.com', port: 22 }
-          : { protocol: 'ftp' as const, host: 'ftp.dreamstime.com', port: 21 };
+          : { protocol: 'ftp' as const, host: 'upload.dreamstime.com', port: 21 };
 
       const existing = testMemoryStore.ftpProfiles.get(agencyId);
       const now = Date.now();

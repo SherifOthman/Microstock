@@ -307,7 +307,7 @@ export class DreamstimeFtpOrchestrator {
     password?: string;
     passiveMode?: boolean;
   }): Promise<FtpCredentialProfile> {
-    const cleanHost = (payload.host || 'ftp.dreamstime.com').trim();
+    const cleanHost = (payload.host || 'upload.dreamstime.com').trim();
     const cleanUsername = (payload.username || '').trim();
 
     if (typeof window !== 'undefined' && window.electronAPI?.ftp?.saveCredentials) {
@@ -345,7 +345,7 @@ export class DreamstimeFtpOrchestrator {
   }
 
   /**
-   * Tests Plain FTP connection on port 21 to `ftp.dreamstime.com`.
+   * Tests Plain FTP connection on port 21 to `upload.dreamstime.com`.
    */
   async testDreamstimeConnection(payload: {
     protocol?: FtpProtocolType;
@@ -360,7 +360,7 @@ export class DreamstimeFtpOrchestrator {
     verifiedAt?: number;
     error?: string;
   }> {
-    const host = (payload.host || 'ftp.dreamstime.com').trim();
+    const host = (payload.host || 'upload.dreamstime.com').trim();
     const username = (payload.username || '').trim();
 
     if (!host || !username) {

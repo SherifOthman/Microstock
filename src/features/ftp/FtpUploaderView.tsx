@@ -328,7 +328,7 @@ export const FtpUploaderView: React.FC = () => {
   const storedProfile = useSqliteQuery(() => db.ftp.getProfile('dreamstime'), [], undefined, ['ftp']);
 
   // Site Settings Credential State (Plain FTP Port 21: Host, Username, Password)
-  const [host, setHost] = useState('ftp.dreamstime.com');
+  const [host, setHost] = useState('upload.dreamstime.com');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -355,7 +355,7 @@ export const FtpUploaderView: React.FC = () => {
 
   useEffect(() => {
     if (storedProfile) {
-      setHost(storedProfile.host || 'ftp.dreamstime.com');
+      setHost(storedProfile.host || 'upload.dreamstime.com');
       if (storedProfile.username) {
         setUsername(storedProfile.username);
       }
@@ -371,7 +371,7 @@ export const FtpUploaderView: React.FC = () => {
       message: isAr ? 'جارٍ اختبار الاتصال وحفظ البيانات...' : 'Testing connection & saving...',
     });
     try {
-      const cleanHost = host.trim() || 'ftp.dreamstime.com';
+      const cleanHost = host.trim() || 'upload.dreamstime.com';
       const cleanUsername = username.trim();
       const passToSend = password === '••••••••••••' ? undefined : password;
 
@@ -424,7 +424,7 @@ export const FtpUploaderView: React.FC = () => {
       message: isAr ? 'جارٍ اختبار الاتصال (Port 21)...' : 'Testing Plain FTP (Port 21)...',
     });
     try {
-      const cleanHost = host.trim() || 'ftp.dreamstime.com';
+      const cleanHost = host.trim() || 'upload.dreamstime.com';
       const cleanUsername = username.trim();
       const passToSend = password === '••••••••••••' ? undefined : password;
 
@@ -580,6 +580,8 @@ export const FtpUploaderView: React.FC = () => {
               [
                 { id: 'dreamstime', label: 'Dreamstime' },
                 { id: '123rf', label: '123RF' },
+                { id: 'freepik', label: 'Freepik' },
+                { id: 'magnific', label: 'Magnific' },
                 { id: 'vecteezy', label: 'Vecteezy' },
                 { id: 'shutterstock', label: 'Shutterstock' },
                 { id: 'adobe', label: 'Adobe Stock' },
@@ -622,7 +624,7 @@ export const FtpUploaderView: React.FC = () => {
           <Tooltip
             content={
               storedProfile?.username
-                ? `${storedProfile.username}@${storedProfile.host || 'ftp.dreamstime.com'} (Port 21)`
+                ? `${storedProfile.username}@${storedProfile.host || 'upload.dreamstime.com'}`
                 : isAr
                 ? 'غير متصل - يرجى حفظ بيانات الدخول'
                 : 'Offline - Please configure credentials'
@@ -1034,18 +1036,12 @@ export const FtpUploaderView: React.FC = () => {
                       {queue.length === 0
                         ? isAr
                           ? 'اسحب الملفات أو المجلدات هنا لرفعها إلى Dreamstime'
-                          : 'Drop Files or Shoot Folders Here'
+                          : 'Drop files or folders here to upload to Dreamstime'
                         : isAr
                         ? 'لا توجد ملفات في هذا التبويب'
                         : 'No files in this tab'}
                     </h3>
-                    {queue.length === 0 && (
-                      <p className="text-xs text-muted-foreground max-w-md mx-auto">
-                        {isAr
-                          ? 'يتم تلقائياً ربط أزواج الفيكتور (JPG + EPS) وترتيب الصور ثم الفيكتور ثم الفيديو'
-                          : 'Automatically pairs JPG + EPS Vector Bundles and sorts Photos → Vectors → Videos'}
-                      </p>
-                    )}
+                    
                   </div>
 
                   {queue.length === 0 && (
@@ -1375,14 +1371,7 @@ export const FtpUploaderView: React.FC = () => {
                   </span>
                 )}
               </label>
-              <Input
-                data-testid="ftp-host-input"
-                dir="ltr"
-                value={host}
-                onChange={(e) => setHost(e.target.value)}
-                placeholder="ftp.dreamstime.com"
-                className="h-9 text-xs font-mono"
-              />
+              <Input data-testid="ftp-host-input" dir="ltr" value="upload.dreamstime.com" readOnly disabled className="h-9 text-xs font-mono bg-muted/50 cursor-not-allowed select-all opacity-80" />
             </div>
 
             <div className="space-y-1">

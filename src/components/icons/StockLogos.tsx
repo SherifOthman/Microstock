@@ -199,6 +199,7 @@ export function getPlatformLogo(platformId: string, size = 18) {
     case 'adobe':
       return <AdobeStockLogo size={size} />;
     case 'freepik':
+    case 'magnific':
       return <FreepikLogo size={size} />;
     case 'shutterstock':
       return <ShutterstockLogo size={size} />;

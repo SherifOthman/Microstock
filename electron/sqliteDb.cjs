@@ -121,7 +121,7 @@ class SqliteDatabaseManager {
     this.memoryFallback.ftpProfiles.set('dreamstime', {
       agencyId: 'dreamstime',
       protocol: 'ftp',
-      host: 'ftp.dreamstime.com',
+      host: 'upload.dreamstime.com',
       port: 21,
       username: '',
       encryptedPassword: '',
@@ -607,7 +607,7 @@ class SqliteDatabaseManager {
       CREATE TABLE IF NOT EXISTS ftp_profiles (
         agency_id TEXT PRIMARY KEY,
         protocol TEXT NOT NULL DEFAULT 'ftp',
-        host TEXT NOT NULL DEFAULT 'ftp.dreamstime.com',
+        host TEXT NOT NULL DEFAULT 'upload.dreamstime.com',
         port INTEGER NOT NULL DEFAULT 21,
         username TEXT NOT NULL DEFAULT '',
         encrypted_password TEXT NOT NULL DEFAULT '',
@@ -2504,9 +2504,13 @@ class SqliteDatabaseManager {
         return { protocol: 'ftps', host: 'ftps.shutterstock.com', port: 21 };
       case 'adobe':
         return { protocol: 'sftp', host: 'sftp.contributor.adobestock.com', port: 22 };
+      case 'freepik':
+        return { protocol: 'sftp', host: 'ftp.freepik.com', port: 22 };
+      case 'magnific':
+        return { protocol: 'sftp', host: 'contributor-ftp.magnific.com', port: 60022 };
       case 'dreamstime':
       default:
-        return { protocol: 'ftp', host: 'ftp.dreamstime.com', port: 21 };
+        return { protocol: 'ftp', host: 'upload.dreamstime.com', port: 21 };
     }
   }
 

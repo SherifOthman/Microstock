@@ -24,10 +24,23 @@ export const SHUTTERSTOCK_FTPS_PORT = 21;
 export const ADOBE_STOCK_SFTP_HOST = 'sftp.contributor.adobestock.com';
 export const ADOBE_STOCK_SFTP_PORT = 22;
 
-export const DREAMSTIME_FTP_HOST = 'ftp.dreamstime.com';
+export const FREEPIK_SFTP_HOST = 'ftp.freepik.com';
+export const FREEPIK_SFTP_PORT = 22;
+
+export const MAGNIFIC_SFTP_HOST = 'contributor-ftp.magnific.com';
+export const MAGNIFIC_SFTP_PORT = 60022;
+
+export const DREAMSTIME_FTP_HOST = 'upload.dreamstime.com';
 export const DREAMSTIME_FTP_PORT = 21;
 
-export type FtpSupportedAgencyId = 'dreamstime' | '123rf' | 'vecteezy' | 'shutterstock' | 'adobe';
+export type FtpSupportedAgencyId =
+  | 'dreamstime'
+  | '123rf'
+  | 'freepik'
+  | 'magnific'
+  | 'vecteezy'
+  | 'shutterstock'
+  | 'adobe';
 
 export interface AgencyFtpServerSpec {
   agencyId: FtpSupportedAgencyId;
@@ -79,6 +92,22 @@ export const AGENCY_FTP_SERVER_SPECS: Record<FtpSupportedAgencyId, AgencyFtpServ
     protocol: 'sftp',
     host: ADOBE_STOCK_SFTP_HOST,
     port: ADOBE_STOCK_SFTP_PORT,
+    rootFolder: '/',
+  },
+  magnific: {
+    agencyId: 'magnific',
+    name: 'Magnific',
+    protocol: 'sftp',
+    host: MAGNIFIC_SFTP_HOST,
+    port: MAGNIFIC_SFTP_PORT,
+    rootFolder: '/',
+  },
+  freepik: {
+    agencyId: 'freepik',
+    name: 'Freepik',
+    protocol: 'sftp',
+    host: FREEPIK_SFTP_HOST,
+    port: FREEPIK_SFTP_PORT,
     rootFolder: '/',
   },
 };

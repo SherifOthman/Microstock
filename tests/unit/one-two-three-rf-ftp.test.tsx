@@ -16,6 +16,10 @@ import {
   SHUTTERSTOCK_FTPS_PORT,
   ADOBE_STOCK_SFTP_HOST,
   ADOBE_STOCK_SFTP_PORT,
+  FREEPIK_SFTP_HOST,
+  FREEPIK_SFTP_PORT,
+  MAGNIFIC_SFTP_HOST,
+  MAGNIFIC_SFTP_PORT,
 } from '../../src/services/ftp/oneTwoThreeRfFtpRouter';
 import { ftp123rfService } from '../../src/services/ftp/Ftp123RFService';
 import { OneTwoThreeRfFtpUploaderView } from '../../src/features/ftp/OneTwoThreeRfFtpUploaderView';
@@ -134,6 +138,20 @@ describe('123RF FTP/SFTP Dynamic Router & Routing Rules', () => {
     expect(adobeRoute.protocol).toBe('sftp');
     expect(adobeRoute.host).toBe(ADOBE_STOCK_SFTP_HOST);
     expect(adobeRoute.port).toBe(ADOBE_STOCK_SFTP_PORT);
+
+    const freepikRoute = resolveMultiAgencyRoute('freepik', 'image', true);
+    expect(freepikRoute.protocol).toBe('sftp');
+    expect(freepikRoute.host).toBe(FREEPIK_SFTP_HOST);
+    expect(freepikRoute.port).toBe(FREEPIK_SFTP_PORT);
+    expect(freepikRoute.remoteFolder).toBe('/');
+    expect(freepikRoute.isAiIgnored).toBe(true);
+
+    const magnificRoute = resolveMultiAgencyRoute('magnific', 'image', true);
+    expect(magnificRoute.protocol).toBe('sftp');
+    expect(magnificRoute.host).toBe(MAGNIFIC_SFTP_HOST);
+    expect(magnificRoute.port).toBe(MAGNIFIC_SFTP_PORT);
+    expect(magnificRoute.remoteFolder).toBe('/');
+    expect(magnificRoute.isAiIgnored).toBe(true);
     expect(adobeRoute.remoteFolder).toBe('/');
   });
 });

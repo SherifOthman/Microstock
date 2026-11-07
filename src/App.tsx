@@ -484,7 +484,7 @@ export function App() {
               </div>
             )}
             {activeTab === 'tracker' && (
-              <div className="flex-1 min-h-0 h-full px-4 sm:px-5 py-3.5 overflow-hidden flex flex-col">
+              <div className="flex-1 min-h-0 h-full px-4 sm:px-6 py-4 overflow-hidden flex flex-col">
                 <DistributionTrackerView
                   initialFocusAgency={trackerFocusAgency}
                   onFixAndRequeue={(ctx) => {
@@ -544,7 +544,7 @@ export function App() {
               </div>
             )}
             {activeTab === 'ftp' && (
-              <div className="flex-1 min-h-0 h-full px-4 sm:px-5 py-3.5 overflow-hidden flex flex-col">
+              <div className="flex-1 min-h-0 h-full px-4 sm:px-6 py-4 overflow-hidden flex flex-col">
                 <FtpUploaderView />
               </div>
             )}

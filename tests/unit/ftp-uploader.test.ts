@@ -148,14 +148,14 @@ describe('Dreamstime FTP Uploader (Plain FTP Port 21, Vector Pair Bundling, Prec
   it('forces Plain FTP on port 21 and encrypts passwords at rest with enc:<hex> prefix in SQLite', async () => {
     const orchestrator = new DreamstimeFtpOrchestrator();
     const saved = await orchestrator.saveDreamstimeCredentials({
-      host: 'ftp.dreamstime.com',
+      host: 'upload.dreamstime.com',
       username: 'dt_contributor_99',
       password: 'SuperSecretFtpPassword!2026',
     });
 
     expect(saved.agencyId).toBe('dreamstime');
     expect(saved.protocol).toBe('ftp');
-    expect(saved.host).toBe('ftp.dreamstime.com');
+    expect(saved.host).toBe('upload.dreamstime.com');
     expect(saved.port).toBe(21);
     expect(saved.username).toBe('dt_contributor_99');
     expect(saved.hasSavedPassword).toBe(true);
