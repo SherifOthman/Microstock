@@ -34,7 +34,13 @@ let cachedCleanerRawFiles: File[] = [];
 let cachedCleanerNativePaths: Record<string, string> = {};
 let cachedCleanerOverrides: Record<string, string> = {};
 let cachedCleanerLastProcessed: File[] = [];
-let hasHydratedCleanerFromDisk = false;
+
+export function resetFileCleanerInMemoryCache(): void {
+  cachedCleanerRawFiles = [];
+  cachedCleanerNativePaths = {};
+  cachedCleanerOverrides = {};
+  cachedCleanerLastProcessed = [];
+}
 
 export function buildRenamedFilesFromCleanedItems(items: CleanedFileItem[], masterDir?: string): File[] {
   return items
@@ -214,10 +220,11 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
     message: string;
   } | null>(null);
 
-  // Hydrate persisted File Cleaner queue from SQLite on initial app startup
+  // Hydrate persisted File Cleaner queue from SQLite / localStorage on app startup
+  const hasHydratedRef = useRef(false);
   useEffect(() => {
-    if (hasHydratedCleanerFromDisk || cachedCleanerRawFiles.length > 0) return;
-    hasHydratedCleanerFromDisk = true;
+    if (hasHydratedRef.current || cachedCleanerRawFiles.length > 0) return;
+    hasHydratedRef.current = true;
     let cancelled = false;
     (async () => {
       try {
@@ -253,6 +260,13 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
             cachedCleanerOverrides = snap.telemetry.manualOverrides;
             setManualOverrides(snap.telemetry.manualOverrides);
           }
+          if (snap.telemetry?.options) {
+            const restoredOptions = snap.telemetry.options;
+            setOptionsState((prev) => ({
+              ...prev,
+              ...restoredOptions,
+            }));
+          }
         }
       } catch {
         // ignore
@@ -264,6 +278,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
   }, []);
 
   // Sync module cache, SQLite persistence, and Main Process lifecycle
+  const hadFilesRef = useRef(rawFiles.length > 0);
   useEffect(() => {
     cachedCleanerRawFiles = rawFiles;
     cachedCleanerNativePaths = nativePaths;
@@ -287,6 +302,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
       .catch(() => {});
 
     if (rawFiles.length > 0) {
+      hadFilesRef.current = true;
       const serializableQueue = rawFiles.map((f) => ({
         name: f.name,
         size: f.size,
@@ -302,13 +318,17 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
             queue: serializableQueue,
             telemetry: {
               manualOverrides,
+              options,
             },
           },
           !isRunning
         )
         .catch(() => {});
+    } else if (hadFilesRef.current) {
+      hadFilesRef.current = false;
+      queuePersistenceService.clearModuleQueueSnapshot('cleaner').catch(() => {});
     }
-  }, [rawFiles, nativePaths, manualOverrides, lastProcessedFiles, isProcessing, isBulkMoving, processProgress]);
+  }, [rawFiles, nativePaths, manualOverrides, options, lastProcessedFiles, isProcessing, isBulkMoving, processProgress]);
 
   // Dialog States for Duplicates & Success
   const [showDuplicateInterceptDialog, setShowDuplicateInterceptDialog] = useState(false);
@@ -656,14 +676,20 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
       }
     }
 
-    setRawFiles((prev) =>
-      prev.filter((f) => {
+    setRawFiles((prev) => {
+      const next = prev.filter((f) => {
         if (fileToRemove) {
           return f !== fileToRemove && !(f.name === fileToRemove.name && f.size === fileToRemove.size && f.lastModified === fileToRemove.lastModified);
         }
         return !id.startsWith(`${f.name}-${f.size}`);
-      })
-    );
+      });
+      cachedCleanerRawFiles = next;
+      if (next.length === 0) {
+        hadFilesRef.current = false;
+        queuePersistenceService.clearModuleQueueSnapshot('cleaner').catch(() => {});
+      }
+      return next;
+    });
     setManualOverrides((prev) => {
       const copy = { ...prev };
       delete copy[id];
@@ -695,7 +721,15 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
       const lowResIds = new Set(lowResPhotos.map((i) => i.id));
       const lowResFileNames = new Set(lowResPhotos.map((i) => i.originalName));
 
-      setRawFiles((prev) => prev.filter((f) => !lowResFileNames.has(f.name)));
+      setRawFiles((prev) => {
+        const next = prev.filter((f) => !lowResFileNames.has(f.name));
+        cachedCleanerRawFiles = next;
+        if (next.length === 0) {
+          hadFilesRef.current = false;
+          queuePersistenceService.clearModuleQueueSnapshot('cleaner').catch(() => {});
+        }
+        return next;
+      });
       setManualOverrides((prev) => {
         const copy = { ...prev };
         for (const id of lowResIds) {
@@ -728,6 +762,7 @@ export function useFileCleaner(language: string, onSendToStudio?: (files: File[]
     cachedCleanerNativePaths = {};
     cachedCleanerOverrides = {};
     cachedCleanerLastProcessed = [];
+    hadFilesRef.current = false;
     setRawFiles([]);
     lastProcessedFilesRef.current = [];
     setLastProcessedFiles([]);

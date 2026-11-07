@@ -56,18 +56,41 @@ export function invalidateMasterRecordsCache(): void {
 
 export function resolveAssetPreviewUrl(rec?: Partial<MasterMetadataRecord> | null): string {
   if (!rec) return '';
+  const hasElectronProtocol =
+    typeof window !== 'undefined' && Boolean((window as any).electronAPI);
   if (rec.previewUrl && typeof rec.previewUrl === 'string' && rec.previewUrl.trim()) {
-    return rec.previewUrl;
+    const trimmedPreview = rec.previewUrl.trim();
+    if (
+      !trimmedPreview.startsWith('stockflow://') ||
+      hasElectronProtocol ||
+      !rec.thumbnailBase64
+    ) {
+      return trimmedPreview;
+    }
   }
   const diskPath = rec.previewPath || rec.masterPath || rec.originalPath || rec.nativePath;
-  if (diskPath && typeof diskPath === 'string' && diskPath.trim()) {
-    return `stockflow://local?path=${encodeURIComponent(diskPath.trim())}`;
+  const trimmedDiskPath = typeof diskPath === 'string' ? diskPath.trim() : '';
+  const isRenderableImageFile =
+    Boolean(trimmedDiskPath) &&
+    /\.(jpe?g|png|webp|gif|bmp|svg|avif)$/i.test(trimmedDiskPath) &&
+    !trimmedDiskPath.startsWith('/StockFlow/');
+
+  if (hasElectronProtocol && isRenderableImageFile) {
+    return `stockflow://local?path=${encodeURIComponent(trimmedDiskPath)}`;
   }
-  // Only fall back to in-memory data URL if running in non-disk test/preview environment
+
   if (rec.thumbnailBase64 && typeof rec.thumbnailBase64 === 'string' && rec.thumbnailBase64.trim()) {
-    return rec.thumbnailBase64.startsWith('data:') || rec.thumbnailBase64.startsWith('stockflow://') || rec.thumbnailBase64.startsWith('blob:')
-      ? rec.thumbnailBase64
-      : `data:image/jpeg;base64,${rec.thumbnailBase64}`;
+    const thumb = rec.thumbnailBase64.trim();
+    return thumb.startsWith('data:') || thumb.startsWith('stockflow://') || thumb.startsWith('blob:') || thumb.startsWith('http')
+      ? thumb
+      : `data:image/jpeg;base64,${thumb}`;
+  }
+
+  if (trimmedDiskPath && isRenderableImageFile) {
+    return `stockflow://local?path=${encodeURIComponent(trimmedDiskPath)}`;
+  }
+  if (trimmedDiskPath && !rec.thumbnailBase64 && /\.(jpe?g|png|webp|gif|bmp|svg|avif)$/i.test(trimmedDiskPath)) {
+    return `stockflow://local?path=${encodeURIComponent(trimmedDiskPath)}`;
   }
   return '';
 }
@@ -798,6 +821,10 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
           ? { protocol: 'ftps' as const, host: 'ftps.shutterstock.com', port: 21 }
           : agencyId === 'adobe'
           ? { protocol: 'sftp' as const, host: 'sftp.contributor.adobestock.com', port: 22 }
+          : agencyId === 'freepik'
+          ? { protocol: 'sftp' as const, host: 'ftp.freepik.com', port: 22 }
+          : agencyId === 'magnific'
+          ? { protocol: 'sftp' as const, host: 'contributor-ftp.magnific.com', port: 60022 }
           : { protocol: 'ftp' as const, host: 'upload.dreamstime.com', port: 21 };
 
       let p = testMemoryStore.ftpProfiles.get(agencyId);
@@ -835,6 +862,10 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
           ? { protocol: 'ftps' as const, host: 'ftps.shutterstock.com', port: 21 }
           : agencyId === 'adobe'
           ? { protocol: 'sftp' as const, host: 'sftp.contributor.adobestock.com', port: 22 }
+          : agencyId === 'freepik'
+          ? { protocol: 'sftp' as const, host: 'ftp.freepik.com', port: 22 }
+          : agencyId === 'magnific'
+          ? { protocol: 'sftp' as const, host: 'contributor-ftp.magnific.com', port: 60022 }
           : { protocol: 'ftp' as const, host: 'upload.dreamstime.com', port: 21 };
 
       const existing = testMemoryStore.ftpProfiles.get(agencyId);
@@ -975,6 +1006,13 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
         updatedAt: payload.updatedAt || now,
       };
       testMemoryStore.persistentTaskQueues.set(moduleId, rec);
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          window.localStorage.setItem(`stockflow_ephemeral_queue_${moduleId}`, JSON.stringify(rec));
+        }
+      } catch {
+        // ignore storage quota errors
+      }
       return {
         moduleId: rec.moduleId,
         sessionId: rec.sessionId,
@@ -985,13 +1023,33 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
     }
     case 'getQueueSnapshot': {
       const moduleId = String(args[0] || 'ftp').trim();
-      const rec = testMemoryStore.persistentTaskQueues.get(moduleId);
+      let rec = testMemoryStore.persistentTaskQueues.get(moduleId);
+      if (!rec && typeof window !== 'undefined' && window.localStorage) {
+        try {
+          const raw = window.localStorage.getItem(`stockflow_ephemeral_queue_${moduleId}`);
+          if (raw) {
+            rec = JSON.parse(raw);
+            if (rec) {
+              testMemoryStore.persistentTaskQueues.set(moduleId, rec);
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
       if (!rec) return null;
       return JSON.parse(JSON.stringify(rec));
     }
     case 'clearQueueSnapshot': {
       const moduleId = String(args[0] || 'ftp').trim();
       testMemoryStore.persistentTaskQueues.delete(moduleId);
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          window.localStorage.removeItem(`stockflow_ephemeral_queue_${moduleId}`);
+        }
+      } catch {
+        // ignore
+      }
       return { cleared: true, moduleId };
     }
     default:
@@ -1286,6 +1344,19 @@ export class StockFlowSqliteDB {
       agencyId: string;
       updatedAt: number;
     }> => {
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          window.localStorage.setItem(
+            `stockflow_ephemeral_queue_${payload.moduleId}`,
+            JSON.stringify({
+              ...payload,
+              updatedAt: payload.updatedAt || Date.now(),
+            })
+          );
+        }
+      } catch {
+        // ignore
+      }
       return await invokeDbRpc('saveQueueSnapshot', payload);
     },
     getSnapshot: async <TItem = any, TTelemetry = Record<string, any>>(
@@ -1299,11 +1370,35 @@ export class StockFlowSqliteDB {
       telemetry: TTelemetry;
       updatedAt: number;
     } | null> => {
-      return (await invokeDbRpc('getQueueSnapshot', moduleId)) || null;
+      const rpcSnap = await invokeDbRpc('getQueueSnapshot', moduleId);
+      if (rpcSnap && Array.isArray(rpcSnap.queue) && rpcSnap.queue.length > 0) {
+        return rpcSnap;
+      }
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          const raw = window.localStorage.getItem(`stockflow_ephemeral_queue_${moduleId}`);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && Array.isArray(parsed.queue) && parsed.queue.length > 0) {
+              return parsed;
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+      return rpcSnap || null;
     },
     clearSnapshot: async (
       moduleId: 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio' | 'tracker' = 'ftp'
     ): Promise<{ cleared: boolean; moduleId: string }> => {
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          window.localStorage.removeItem(`stockflow_ephemeral_queue_${moduleId}`);
+        }
+      } catch {
+        // ignore
+      }
       return await invokeDbRpc('clearQueueSnapshot', moduleId);
     },
   };

@@ -312,8 +312,8 @@ export const OneTwoThreeRfFtpUploaderView: React.FC<{
         </div>
       </div>
 
-      {/* Minimalist Toolbar & Subtle 123RF AI-Generated Batch Checkbox */}
-      {(is123Rf || queue.length > 0) && (
+      {/* Minimalist Toolbar & Subtle 123RF AI-Generated Batch Checkbox (Shown when queue has items) */}
+      {queue.length > 0 && (
         <div className="shrink-0 px-3.5 py-2 rounded-xl border border-border bg-card flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3 flex-wrap">
             {is123Rf && (
@@ -331,8 +331,7 @@ export const OneTwoThreeRfFtpUploaderView: React.FC<{
               </label>
             )}
 
-            {queue.length > 0 && (
-              <div className="flex items-center gap-1.5 border-l border-border pl-3">
+            <div className={`flex items-center gap-1.5 ${is123Rf ? 'border-l border-border pl-3' : ''}`}>
                 <Button
                   size="sm"
                   variant="outline"
@@ -361,8 +360,7 @@ export const OneTwoThreeRfFtpUploaderView: React.FC<{
                   <Trash2 className="w-3.5 h-3.5 mr-1" />
                   <span>{isAr ? 'مسح الكل' : 'Clear All'}</span>
                 </Button>
-              </div>
-            )}
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -442,6 +440,22 @@ export const OneTwoThreeRfFtpUploaderView: React.FC<{
                 : `Drop files or folders here to upload to ${agencySpec.name}`}
             </h3>
           </div>
+          {is123Rf && (
+            <div className="flex items-center justify-center pt-0.5">
+              <label className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-secondary/50 border border-border/80 text-xs text-muted-foreground hover:text-foreground transition cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  data-testid="batch-ai-toggle"
+                  checked={batchIsAi}
+                  onChange={handleBatchAiToggle}
+                  className="h-3.5 w-3.5 rounded border-border accent-primary cursor-pointer"
+                />
+                <span className="font-medium">
+                  {isAr ? 'دفعة مولدة بالذكاء الاصطناعي (AI-Generated Batch)' : 'AI-Generated Batch'}
+                </span>
+              </label>
+            </div>
+          )}
           <div className="flex items-center justify-center gap-2 pt-1">
             <Button
               size="sm"
@@ -700,6 +714,7 @@ export const OneTwoThreeRfFtpUploaderView: React.FC<{
                 )}
               </label>
               <Input
+                data-testid="123rf-host-readonly-input"
                 type="text"
                 dir="ltr"
                 value={agencySpec.host}
@@ -794,7 +809,7 @@ export const OneTwoThreeRfFtpUploaderView: React.FC<{
               disabled={isTesting || !username}
               className="h-8 text-xs gap-1.5 cursor-pointer"
             >
-              {isTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Server className="w-3.5 h-3.5" />}
+              {isTesting ? <RefreshCw className="w-3.5 h-3.5" /> : <Server className="w-3.5 h-3.5" />}
               <span>
                 {isTesting
                   ? isAr

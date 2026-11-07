@@ -22,7 +22,10 @@ export interface EpsConvertItem {
 
 // Module-level session cache so unmounting the view on tab switch preserves active in-memory items & blobs
 let cachedEpsItems: EpsConvertItem[] = [];
-let hasHydratedEpsFromDisk = false;
+
+export function resetEpsConverterInMemoryCache(): void {
+  cachedEpsItems = [];
+}
 
 async function createLightweightThumbnail(blob?: Blob, maxDim = 384): Promise<string> {
   if (!blob || typeof createImageBitmap !== 'function' || typeof document === 'undefined') {
@@ -82,10 +85,11 @@ export function useEpsConverter(
     objectUrlsRef.current.clear();
   }, []);
 
-  // Hydrate persisted EPS queue from SQLite on initial app startup
+  // Hydrate persisted EPS queue from SQLite / localStorage on app startup
+  const hasHydratedRef = useRef(false);
   useEffect(() => {
-    if (hasHydratedEpsFromDisk || cachedEpsItems.length > 0) return;
-    hasHydratedEpsFromDisk = true;
+    if (hasHydratedRef.current || cachedEpsItems.length > 0) return;
+    hasHydratedRef.current = true;
     let cancelled = false;
     (async () => {
       try {
@@ -99,10 +103,21 @@ export function useEpsConverter(
               mimeType: 'application/postscript',
               size: raw.size,
             });
+            const isDone = raw.status === 'completed' && Boolean(raw.previewThumbnailUrl || raw.result?.dataUrl);
+            const restoredThumb = raw.previewThumbnailUrl || raw.result?.dataUrl;
             return {
               ...raw,
               file,
-              status: raw.status === 'completed' && raw.previewThumbnailUrl ? 'completed' : 'idle',
+              status: isDone ? 'completed' : 'idle',
+              previewThumbnailUrl: restoredThumb,
+              result: isDone
+                ? {
+                    ...(raw.result || ({} as any)),
+                    dataUrl: restoredThumb,
+                    width: raw.result?.width || 4000,
+                    height: raw.result?.height || 3000,
+                  }
+                : raw.result,
             };
           })
         );
@@ -120,6 +135,7 @@ export function useEpsConverter(
   }, []);
 
   // Keep module cache and SQLite persistence in sync with items & batch status
+  const hadItemsRef = useRef(items.length > 0);
   useEffect(() => {
     cachedEpsItems = items;
     const completed = items.filter((i) => i.status === 'completed').length;
@@ -138,6 +154,7 @@ export function useEpsConverter(
       .catch(() => {});
 
     if (items.length > 0) {
+      hadItemsRef.current = true;
       queuePersistenceService
         .saveModuleQueueSnapshot(
           {
@@ -148,6 +165,9 @@ export function useEpsConverter(
           !isConvertingBatch
         )
         .catch(() => {});
+    } else if (hadItemsRef.current) {
+      hadItemsRef.current = false;
+      queuePersistenceService.clearModuleQueueSnapshot('eps').catch(() => {});
     }
   }, [items, isConvertingBatch]);
 
@@ -401,9 +421,21 @@ export function useEpsConverter(
     onSendToStudio(filesToSend);
   }, [items, onSendToStudio]);
 
+  const handleRemoveItem = useCallback((id: string) => {
+    setItems((prev) => {
+      const next = prev.filter((item) => item.id !== id);
+      cachedEpsItems = next;
+      if (next.length === 0) {
+        queuePersistenceService.clearModuleQueueSnapshot('eps').catch(() => {});
+      }
+      return next;
+    });
+  }, []);
+
   const handleClearAll = useCallback(() => {
     revokeAllObjectUrls();
     cachedEpsItems = [];
+    hadItemsRef.current = false;
     setItems([]);
     setStatusMessage(null);
     setIsBatchSaved(false);
@@ -424,6 +456,7 @@ export function useEpsConverter(
     handleSaveSingleJpg,
     handleSaveToDirectory,
     handleSendToStudio,
+    handleRemoveItem,
     handleClearAll,
     isBatchSaved,
   };

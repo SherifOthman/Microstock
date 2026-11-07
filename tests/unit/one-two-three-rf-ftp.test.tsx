@@ -193,10 +193,11 @@ describe('123RF UI Uploader & AI Toggle Component', () => {
     });
 
     // Toggle Batch AI ON
+    const activeToggle = screen.getByTestId('batch-ai-toggle') as HTMLInputElement;
     act(() => {
-      fireEvent.click(toggle);
+      fireEvent.click(activeToggle);
     });
-    expect(toggle.checked).toBe(true);
+    expect(activeToggle.checked).toBe(true);
 
     // Verify destinations updated dynamically
     await waitFor(() => {

@@ -251,7 +251,18 @@ function registerStockflowProtocol() {
         }
       }
       if (filePath) {
+        filePath = filePath.replace(/^file:\/\/\/?/i, '');
+        if (process.platform === 'win32' && /^\/[a-zA-Z]:[\\/]/.test(filePath)) {
+          filePath = filePath.slice(1);
+        }
         filePath = path.normalize(filePath);
+      }
+
+      if (filePath && !fs.existsSync(filePath) && sqliteDb && typeof sqliteDb.toAbsoluteWorkspacePath === 'function') {
+        const resolvedCandidate = sqliteDb.toAbsoluteWorkspacePath(filePath);
+        if (resolvedCandidate && fs.existsSync(resolvedCandidate)) {
+          filePath = resolvedCandidate;
+        }
       }
 
       if (!filePath || !fs.existsSync(filePath)) {
@@ -265,6 +276,20 @@ function registerStockflowProtocol() {
 
       const mimeType = getMimeTypeForFile(filePath);
       const totalSize = stat.size;
+
+      // Serve image thumbnails/photos directly from buffer to avoid WebStream decode aborts in <img> tags
+      if (mimeType.startsWith('image/') && totalSize <= 50 * 1024 * 1024) {
+        const buf = await fs.promises.readFile(filePath);
+        return new Response(buf, {
+          status: 200,
+          headers: {
+            'Content-Type': mimeType,
+            'Content-Length': String(buf.byteLength),
+            'Cache-Control': 'no-cache',
+          },
+        });
+      }
+
       const rangeHeader = request.headers.get('range') || request.headers.get('Range');
 
       if (rangeHeader) {

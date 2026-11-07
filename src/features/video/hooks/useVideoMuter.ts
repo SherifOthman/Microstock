@@ -24,7 +24,10 @@ export interface VideoMuteItem {
 
 // Module-level session cache so unmounting on tab switch preserves active in-memory items
 let cachedVideoMuteItems: VideoMuteItem[] = [];
-let hasHydratedAudioFromDisk = false;
+
+export function resetVideoMuterInMemoryCache(): void {
+  cachedVideoMuteItems = [];
+}
 
 export function useVideoMuter(language: string, onSendToStudio?: (files: File[]) => void) {
   const [items, setItems] = useState<VideoMuteItem[]>(() => cachedVideoMuteItems);
@@ -34,10 +37,11 @@ export function useVideoMuter(language: string, onSendToStudio?: (files: File[])
   const [isExporting, setIsExporting] = useState(false);
   const [exportSuccessMessage, setExportSuccessMessage] = useState<string | null>(null);
 
-  // Hydrate persisted Audio Stripper queue from SQLite on initial app startup
+  // Hydrate persisted Audio Stripper queue from SQLite / localStorage on app startup
+  const hasHydratedRef = useRef(false);
   useEffect(() => {
-    if (hasHydratedAudioFromDisk || cachedVideoMuteItems.length > 0) return;
-    hasHydratedAudioFromDisk = true;
+    if (hasHydratedRef.current || cachedVideoMuteItems.length > 0) return;
+    hasHydratedRef.current = true;
     let cancelled = false;
     (async () => {
       try {
@@ -73,6 +77,7 @@ export function useVideoMuter(language: string, onSendToStudio?: (files: File[])
   }, []);
 
   // Sync module cache, SQLite persistence, and Main Process lifecycle
+  const hadItemsRef = useRef(items.length > 0);
   useEffect(() => {
     cachedVideoMuteItems = items;
     const isRunning = isMutingBatch || isExporting;
@@ -92,6 +97,7 @@ export function useVideoMuter(language: string, onSendToStudio?: (files: File[])
       .catch(() => {});
 
     if (items.length > 0) {
+      hadItemsRef.current = true;
       queuePersistenceService
         .saveModuleQueueSnapshot(
           {
@@ -102,6 +108,9 @@ export function useVideoMuter(language: string, onSendToStudio?: (files: File[])
           !isRunning
         )
         .catch(() => {});
+    } else if (hadItemsRef.current) {
+      hadItemsRef.current = false;
+      queuePersistenceService.clearModuleQueueSnapshot('audio').catch(() => {});
     }
   }, [items, isMutingBatch, isExporting]);
 
@@ -170,6 +179,11 @@ export function useVideoMuter(language: string, onSendToStudio?: (files: File[])
     setItems((prev) => {
       const next = prev.filter((item) => item.id !== id);
       itemsRef.current = next;
+      cachedVideoMuteItems = next;
+      if (next.length === 0) {
+        hadItemsRef.current = false;
+        queuePersistenceService.clearModuleQueueSnapshot('audio').catch(() => {});
+      }
       return next;
     });
   }, []);
@@ -177,6 +191,7 @@ export function useVideoMuter(language: string, onSendToStudio?: (files: File[])
   const handleClearAll = useCallback(() => {
     cachedVideoMuteItems = [];
     itemsRef.current = [];
+    hadItemsRef.current = false;
     setItems([]);
     setExportSuccessMessage(null);
     queuePersistenceService.clearModuleQueueSnapshot('audio').catch(() => {});

@@ -421,7 +421,7 @@ export const FtpUploaderView: React.FC = () => {
   const handleTestConnection = async () => {
     setVaultStatus({
       type: 'testing',
-      message: isAr ? 'جارٍ اختبار الاتصال (Port 21)...' : 'Testing Plain FTP (Port 21)...',
+      message: isAr ? 'جارٍ اختبار الاتصال...' : 'Testing connection...',
     });
     try {
       const cleanHost = host.trim() || 'upload.dreamstime.com';
@@ -958,6 +958,55 @@ export const FtpUploaderView: React.FC = () => {
         })()}
 
         {/* Queue Table or Empty State Dropzone */}
+        {queue.length === 0 ? (
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDraggingOver(true);
+            }}
+            onDragLeave={() => setIsDraggingOver(false)}
+            onDrop={handleDrop}
+            className={`border-2 border-dashed rounded-xl p-10 text-center transition space-y-3 bg-card ${
+              isDraggingOver ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'
+            }`}
+          >
+            <div className="w-11 h-11 rounded-xl bg-secondary text-primary flex items-center justify-center mx-auto border border-border">
+              <CloudUpload className="w-5 h-5" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-sm font-semibold text-foreground">
+                {isAr
+                  ? 'اسحب الملفات أو المجلدات هنا لرفعها إلى Dreamstime'
+                  : 'Drop files or folders here to upload to Dreamstime'}
+              </h3>
+            </div>
+            <div className="flex items-center justify-center gap-2 pt-1">
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                data-testid="ftp-add-files-btn"
+                onClick={() => fileInputRef.current?.click()}
+                className="h-8 px-3 text-xs gap-1.5 cursor-pointer font-semibold"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>{isAr ? 'إضافة ملفات' : 'Add Files'}</span>
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="ftp-add-folder-btn"
+                onClick={handleAddFolderClick}
+                className="h-8 px-3 text-xs gap-1.5 cursor-pointer font-semibold"
+              >
+                <FolderPlus className="w-3.5 h-3.5 text-primary" />
+                <span>{isAr ? 'إضافة مجلد' : 'Add Folder'}</span>
+              </Button>
+            </div>
+          </div>
+        ) : (
         <div
           onDragOver={(e) => {
             e.preventDefault();
@@ -970,108 +1019,64 @@ export const FtpUploaderView: React.FC = () => {
           }`}
         >
           {/* Sub-Tabs: Shown when queue has items */}
-          {queue.length > 0 && (
-            <div
-              className="shrink-0 h-10 px-3 border-b border-border flex items-center justify-between gap-2"
-              dir={isAr ? 'rtl' : 'ltr'}
-            >
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setActiveSubTab('all')}
-                  className={`px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer ${
-                    activeSubTab === 'all'
-                      ? 'bg-primary text-primary-foreground font-semibold'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  {isAr ? 'قائمة الانتظار' : 'Queue'} ({queue.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveSubTab('succeeded')}
-                  className={`px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer ${
-                    activeSubTab === 'succeeded'
-                      ? 'bg-emerald-500 text-black font-semibold'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  {isAr ? 'المكتملة' : 'Completed'} ({succeededItems.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveSubTab('failed')}
-                  className={`px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer ${
-                    activeSubTab === 'failed'
-                      ? 'bg-destructive text-destructive-foreground font-semibold'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  {isAr ? 'الفاشلة' : 'Failed'} ({failedItems.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveSubTab('skipped')}
-                  className={`px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer ${
-                    activeSubTab === 'skipped'
-                      ? 'bg-slate-500 text-white font-semibold'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  {isAr ? 'المتخطاة' : 'Skipped'} ({skippedItems.length})
-                </button>
-              </div>
+          <div
+            className="shrink-0 h-10 px-3 border-b border-border flex items-center justify-between gap-2"
+            dir={isAr ? 'rtl' : 'ltr'}
+          >
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('all')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer ${
+                  activeSubTab === 'all'
+                    ? 'bg-primary text-primary-foreground font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {isAr ? 'قائمة الانتظار' : 'Queue'} ({queue.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('succeeded')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer ${
+                  activeSubTab === 'succeeded'
+                    ? 'bg-emerald-500 text-black font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {isAr ? 'المكتملة' : 'Completed'} ({succeededItems.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('failed')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer ${
+                  activeSubTab === 'failed'
+                    ? 'bg-destructive text-destructive-foreground font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {isAr ? 'الفاشلة' : 'Failed'} ({failedItems.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('skipped')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer ${
+                  activeSubTab === 'skipped'
+                    ? 'bg-slate-500 text-white font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {isAr ? 'المتخطاة' : 'Skipped'} ({skippedItems.length})
+              </button>
             </div>
-          )}
+          </div>
 
           <div className="flex-1 min-h-0 overflow-y-auto">
             {visibleQueue.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center p-4">
-                <div className="w-full border-2 border-dashed border-border hover:border-primary/50 bg-card rounded-xl p-10 text-center transition space-y-3">
-                  <div className="w-11 h-11 rounded-xl bg-secondary text-primary flex items-center justify-center mx-auto border border-border">
-                    <CloudUpload className="w-5 h-5" />
-                  </div>
-                  <div className="space-y-1">
-                    <h3 className="text-sm font-semibold text-foreground">
-                      {queue.length === 0
-                        ? isAr
-                          ? 'اسحب الملفات أو المجلدات هنا لرفعها إلى Dreamstime'
-                          : 'Drop files or folders here to upload to Dreamstime'
-                        : isAr
-                        ? 'لا توجد ملفات في هذا التبويب'
-                        : 'No files in this tab'}
-                    </h3>
-                    
-                  </div>
-
-                  {queue.length === 0 && (
-                    <div className="flex items-center justify-center gap-2 pt-1">
-                      <Button
-                        type="button"
-                        variant="default"
-                        size="sm"
-                        data-testid="ftp-add-files-btn"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="h-8 px-3 text-xs gap-1.5 cursor-pointer font-semibold"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>{isAr ? 'إضافة ملفات' : 'Add Files'}</span>
-                      </Button>
-
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        data-testid="ftp-add-folder-btn"
-                        onClick={handleAddFolderClick}
-                        className="h-8 px-3 text-xs gap-1.5 cursor-pointer font-semibold"
-                      >
-                        <FolderPlus className="w-3.5 h-3.5 text-primary" />
-                        <span>{isAr ? 'إضافة مجلد' : 'Add Folder'}</span>
-                      </Button>
-                    </div>
-                  )}
-                </div>
+              <div className="h-full flex flex-col items-center justify-center p-10 text-center">
+                <h3 className="text-sm font-semibold text-foreground">
+                  {isAr ? 'لا توجد ملفات في هذا التبويب' : 'No files in this tab'}
+                </h3>
               </div>
             ) : (
               <table
@@ -1190,7 +1195,7 @@ export const FtpUploaderView: React.FC = () => {
                         )}
                         {item.status === 'uploading' && (
                           <span className="inline-flex items-center gap-1 text-primary">
-                            <RefreshCw className="w-3 h-3 animate-spin" />
+                            <RefreshCw className="w-3 h-3" />
                             {isAr ? 'جارٍ الرفع...' : 'Uploading'}
                           </span>
                         )}
@@ -1290,6 +1295,7 @@ export const FtpUploaderView: React.FC = () => {
             )}
           </div>
         </div>
+        )}
       </div>
 
       {/* Media Lightbox Preview Modal (Opened on clicking filename or magnifier icon) */}
@@ -1355,8 +1361,8 @@ export const FtpUploaderView: React.FC = () => {
               <Lock className="w-4 h-4 text-primary" />
               <span>
                 {isAr
-                  ? 'إعدادات خادم Dreamstime (FTP Site Settings)'
-                  : 'Dreamstime FTP Site Settings'}
+                  ? 'إعدادات الاتصال بـ Dreamstime'
+                  : 'Dreamstime Connection Settings'}
               </span>
             </DialogTitle>
           </DialogHeader>

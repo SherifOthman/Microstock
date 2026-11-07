@@ -23,7 +23,6 @@ import {
 } from '../../services/tracker/bulkTrackerOperations';
 import {
   getCleanAssetDisplayTitle,
-  seedMassiveContributorPortfolio,
 } from '../../services/tracker/portfolioSeeder';
 import { RejectionReasonModal } from './RejectionReasonModal';
 import { ExportBasketReconcileModal } from './ExportBasketReconcileModal';
@@ -52,7 +51,6 @@ import {
   Film,
   PenTool,
   Image as ImageIcon,
-  Sparkles,
   Check,
   Eye,
   Wrench,
@@ -64,7 +62,6 @@ import {
   LayoutGrid,
   List,
   Plus,
-  Trash2,
   Activity,
   RotateCcw,
   ChevronDown,
@@ -166,6 +163,79 @@ function triggerBrowserCsvDownload(filename: string, csvContent: string) {
     // ignore in non-DOM test environments
   }
 }
+
+const TrackerAssetThumbnail: React.FC<{
+  record: MasterMetadataRecord;
+  alt: string;
+  variant?: 'gallery' | 'list' | 'modal';
+}> = ({ record, alt, variant = 'gallery' }) => {
+  const primarySrc = resolveAssetPreviewUrl(record);
+  const inlineDataFallback = useMemo(() => {
+    const raw = record.thumbnailBase64?.trim();
+    if (!raw) return '';
+    return raw.startsWith('data:') || raw.startsWith('blob:') || raw.startsWith('http')
+      ? raw
+      : `data:image/jpeg;base64,${raw}`;
+  }, [record.thumbnailBase64]);
+
+  const [activeSrc, setActiveSrc] = useState<string>(primarySrc || inlineDataFallback);
+  const [hasFailed, setHasFailed] = useState(false);
+
+  useEffect(() => {
+    setActiveSrc(primarySrc || inlineDataFallback);
+    setHasFailed(false);
+  }, [primarySrc, inlineDataFallback, record.id]);
+
+  if (activeSrc && !hasFailed) {
+    return (
+      <img
+        src={activeSrc}
+        alt={alt}
+        referrerPolicy="no-referrer"
+        onError={() => {
+          if (inlineDataFallback && activeSrc !== inlineDataFallback) {
+            setActiveSrc(inlineDataFallback);
+          } else {
+            setHasFailed(true);
+          }
+        }}
+        className={
+          variant === 'list'
+            ? 'w-7 h-7 rounded object-cover shrink-0 border border-slate-200 dark:border-border'
+            : variant === 'modal'
+            ? 'w-full h-full object-cover'
+            : 'w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-200'
+        }
+      />
+    );
+  }
+
+  if (variant === 'list') {
+    return (
+      <div className="w-7 h-7 rounded bg-slate-100 dark:bg-secondary flex items-center justify-center shrink-0">
+        {record.mediaType === 'video' ? (
+          <Film className="w-3.5 h-3.5 text-muted-foreground" />
+        ) : record.mediaType === 'vector' ? (
+          <PenTool className="w-3.5 h-3.5 text-muted-foreground" />
+        ) : (
+          <ImageIcon className="w-3.5 h-3.5 text-muted-foreground" />
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full h-full flex flex-col items-center justify-center gap-1.5 text-muted-foreground">
+      {record.mediaType === 'video' ? (
+        <Film className="w-7 h-7" />
+      ) : record.mediaType === 'vector' ? (
+        <PenTool className="w-7 h-7" />
+      ) : (
+        <ImageIcon className="w-7 h-7" />
+      )}
+    </div>
+  );
+};
 
 export const DistributionTrackerView: React.FC<DistributionTrackerViewProps> = ({
   initialFocusAgency,
@@ -1180,27 +1250,6 @@ export const DistributionTrackerView: React.FC<DistributionTrackerViewProps> = (
                 <FolderOpen className="w-3.5 h-3.5" />
                 <span>Import Entire Shoot Folder</span>
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => seedMassiveContributorPortfolio(50)}
-                className="text-xs gap-2 cursor-pointer"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-primary" />
-                <span>Reset / Seed 50 Sample Assets</span>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={() => {
-                  const ids = masterRecords.map((r) => r.id);
-                  if (ids.length > 0) {
-                    db.masterRecords.bulkDelete(ids);
-                  }
-                  setSelectedIds(new Set());
-                }}
-                className="text-xs gap-2 text-destructive cursor-pointer"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Clear Master Vault</span>
-              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -1433,33 +1482,21 @@ export const DistributionTrackerView: React.FC<DistributionTrackerViewProps> = (
             </h3>
             <p className="text-xs text-muted-foreground max-w-sm mt-1">
               {masterRecords.length === 0
-                ? 'Import local photos, vectors, or videos, or load the 50-asset contributor portfolio to explore the visual gallery.'
+                ? 'Import local photos, vectors, or videos into the Master Vault to manage multi-agency distribution.'
                 : 'Clear your active search or status filters to view all assets.'}
             </p>
             <div className="flex items-center gap-2 mt-4">
               {masterRecords.length === 0 ? (
-                <>
-                  <Button
-                    type="button"
-                    variant="default"
-                    size="sm"
-                    onClick={() => seedMassiveContributorPortfolio(50)}
-                    className="h-8 text-xs gap-1.5 cursor-pointer"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>Load 50 Sample Assets</span>
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="h-8 text-xs gap-1.5 cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Import Local Files</span>
-                  </Button>
-                </>
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="h-8 text-xs gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Import Local Files</span>
+                </Button>
               ) : (
                 <Button
                   type="button"
@@ -1508,24 +1545,7 @@ export const DistributionTrackerView: React.FC<DistributionTrackerViewProps> = (
                 >
                   {/* Large 4:3 Visual Thumbnail Frame */}
                   <div className="relative aspect-[4/3] w-full bg-slate-100 dark:bg-secondary overflow-hidden">
-                    {resolveAssetPreviewUrl(rec) ? (
-                      <img
-                        src={resolveAssetPreviewUrl(rec)}
-                        alt={cleanTitle}
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-200"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex flex-col items-center justify-center gap-1.5 text-muted-foreground">
-                        {rec.mediaType === 'video' ? (
-                          <Film className="w-7 h-7" />
-                        ) : rec.mediaType === 'vector' ? (
-                          <PenTool className="w-7 h-7" />
-                        ) : (
-                          <ImageIcon className="w-7 h-7" />
-                        )}
-                      </div>
-                    )}
+                    <TrackerAssetThumbnail record={rec} alt={cleanTitle} variant="gallery" />
 
                     {/* Top-Left Selection Checkbox */}
                     <div
@@ -1746,18 +1766,7 @@ export const DistributionTrackerView: React.FC<DistributionTrackerViewProps> = (
 
                     {/* Thumbnail + Clean Title (Clicking row toggles selection) */}
                     <div className="flex-1 min-w-[200px] flex items-center gap-2.5 truncate">
-                      {resolveAssetPreviewUrl(rec) ? (
-                        <img
-                          src={resolveAssetPreviewUrl(rec)}
-                          alt={cleanTitle}
-                          referrerPolicy="no-referrer"
-                          className="w-7 h-7 rounded object-cover shrink-0 border border-slate-200 dark:border-border"
-                        />
-                      ) : (
-                        <div className="w-7 h-7 rounded bg-slate-100 dark:bg-secondary flex items-center justify-center shrink-0">
-                          <ImageIcon className="w-3.5 h-3.5 text-muted-foreground" />
-                        </div>
-                      )}
+                      <TrackerAssetThumbnail record={rec} alt={cleanTitle} variant="list" />
                       <span className="font-medium text-foreground truncate">
                         {cleanTitle}
                       </span>
@@ -2148,26 +2157,24 @@ export const DistributionTrackerView: React.FC<DistributionTrackerViewProps> = (
         </div>
       </Dialog>
 
-      {/* Clean Lightbox & Metadata Inspector Modal (Opened ONLY via the dedicated Eye button) */}
+      {/* Clean Lightbox & Metadata Inspector Modal (Opened ONLY via the dedicated Eye button, expanded to max-w-4xl) */}
       <Dialog
         open={Boolean(inspectedAsset)}
         onClose={() => setInspectedAssetId(null)}
         title={inspectedAsset ? getCleanAssetDisplayTitle(inspectedAsset) : 'Asset Metadata'}
-        size="lg"
+        size="xl"
+        className="max-w-4xl w-[95vw]"
       >
         {inspectedAsset && (
-          <div data-testid="tracker-metadata-inspector-modal" className="grid grid-cols-1 md:grid-cols-12 gap-4">
+          <div data-testid="tracker-metadata-inspector-modal" className="grid grid-cols-1 md:grid-cols-12 gap-5">
             {/* Left Preview Column */}
             <div className="md:col-span-5 space-y-2.5">
               <div className="aspect-[4/3] rounded-xl border border-slate-200 dark:border-border overflow-hidden bg-slate-100 dark:bg-secondary">
-                {resolveAssetPreviewUrl(inspectedAsset) && (
-                  <img
-                    src={resolveAssetPreviewUrl(inspectedAsset)}
-                    alt={getCleanAssetDisplayTitle(inspectedAsset)}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover"
-                  />
-                )}
+                <TrackerAssetThumbnail
+                  record={inspectedAsset}
+                  alt={getCleanAssetDisplayTitle(inspectedAsset)}
+                  variant="modal"
+                />
               </div>
               <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-secondary/40 border border-slate-200 dark:border-border space-y-1 text-[11px] font-mono text-muted-foreground">
                 <div className="truncate" title={inspectedAsset.filename}>

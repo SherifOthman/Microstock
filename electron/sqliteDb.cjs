@@ -363,25 +363,39 @@ class SqliteDatabaseManager {
   _persistPreviewToDiskIfNeeded(assetId, previewBufferOrBase64) {
     if (!assetId || !previewBufferOrBase64) return null;
     try {
+      const targetDir = this.previewsDir || path.join(this.masterVaultDir || process.cwd(), '.stockflow_previews');
+      fs.mkdirSync(targetDir, { recursive: true });
+      const safeId = String(assetId).replace(/[^a-zA-Z0-9_-]/g, '_');
+
+      if (typeof previewBufferOrBase64 === 'string' && previewBufferOrBase64.startsWith('data:image/svg+xml')) {
+        const commaIdx = previewBufferOrBase64.indexOf(',');
+        if (commaIdx !== -1) {
+          const payload = previewBufferOrBase64.slice(commaIdx + 1);
+          const svgContent = previewBufferOrBase64.includes(';base64,')
+            ? Buffer.from(payload, 'base64').toString('utf8')
+            : decodeURIComponent(payload);
+          if (svgContent && svgContent.includes('<svg')) {
+            const svgFullPath = path.join(targetDir, `${safeId}.svg`);
+            fs.writeFileSync(svgFullPath, svgContent, 'utf8');
+            return this.toRelativeWorkspacePath(svgFullPath);
+          }
+        }
+        return null;
+      }
+
       let buf = null;
       if (Buffer.isBuffer(previewBufferOrBase64)) {
         buf = previewBufferOrBase64;
       } else if (previewBufferOrBase64 instanceof ArrayBuffer || ArrayBuffer.isView(previewBufferOrBase64)) {
         buf = Buffer.from(previewBufferOrBase64);
       } else if (typeof previewBufferOrBase64 === 'string' && previewBufferOrBase64.length > 0) {
-        if (previewBufferOrBase64.startsWith('data:image/svg+xml')) {
-          return null; // SVG placeholders are not written as binary JPEGs
-        }
         const rawB64 = previewBufferOrBase64.replace(/^data:image\/[^;]+;base64,/, '');
-        if (rawB64.length > 32) {
+        if (rawB64.length >= 4) {
           buf = Buffer.from(rawB64, 'base64');
         }
       }
       if (!buf || buf.length === 0) return null;
 
-      const targetDir = this.previewsDir || path.join(this.masterVaultDir || process.cwd(), '.stockflow_previews');
-      fs.mkdirSync(targetDir, { recursive: true });
-      const safeId = String(assetId).replace(/[^a-zA-Z0-9_-]/g, '_');
       const previewFullPath = path.join(targetDir, `${safeId}.jpg`);
       fs.writeFileSync(previewFullPath, buf);
       return this.toRelativeWorkspacePath(previewFullPath);
@@ -1099,7 +1113,21 @@ class SqliteDatabaseManager {
     const resolvedMasterPath = this.toAbsoluteWorkspacePath(row.master_path);
     const resolvedPreviewPath = this.toAbsoluteWorkspacePath(row.preview_path);
     const resolvedOriginalPath = this.toAbsoluteWorkspacePath(row.original_path);
-    const primaryDiskPath = resolvedPreviewPath || resolvedMasterPath || resolvedOriginalPath;
+    const isRenderableImagePath = (p) =>
+      typeof p === 'string' && /\.(jpe?g|png|webp|gif|bmp|svg|avif)$/i.test(p.trim());
+
+    const candidateImagePaths = [resolvedPreviewPath, resolvedMasterPath, resolvedOriginalPath].filter(
+      (p) => p && isRenderableImagePath(p)
+    );
+    const existingImagePath =
+      candidateImagePaths.find((p) => {
+        try {
+          return fs.existsSync(p);
+        } catch {
+          return false;
+        }
+      }) || candidateImagePaths[0];
+    const primaryDiskPath = existingImagePath || resolvedPreviewPath || (row.media_type === 'image' ? resolvedMasterPath || resolvedOriginalPath : undefined);
     const previewUrl = primaryDiskPath ? this.buildStockflowProtocolUrl(primaryDiskPath) : '';
 
     let parsedMetadataJson = null;
@@ -1262,9 +1290,9 @@ class SqliteDatabaseManager {
     const relOriginalPath = this.toRelativeWorkspacePath(rec.originalPath || rec.nativePath);
     let relPreviewPath = this.toRelativeWorkspacePath(rec.previewPath);
 
-    // If a vector/video has no previewPath on disk yet, optionally write its rasterized JPEG preview to disk
-    // and never store Base64 in SQLite.
-    if (!relPreviewPath && (rec.mediaType === 'vector' || rec.mediaType === 'video') && rec.thumbnailBase64) {
+    // If an asset has no previewPath on disk yet, write its rasterized JPEG/SVG preview to .stockflow_previews
+    // so local thumbnails always render even for vectors, videos, or dropped files, with ZERO Base64 in SQLite.
+    if (!relPreviewPath && rec.thumbnailBase64) {
       relPreviewPath = this._persistPreviewToDiskIfNeeded(rec.id, rec.thumbnailBase64);
     }
 
@@ -1747,7 +1775,7 @@ class SqliteDatabaseManager {
         const base = path.basename(record.filename, ext);
         previewFullPath = path.join(vaultTargetDir, `${base}.jpg`);
         fs.writeFileSync(previewFullPath, Buffer.from(previewBuffer));
-      } else if (!previewFullPath && (record.mediaType === 'vector' || record.mediaType === 'video') && record.thumbnailBase64) {
+      } else if (!previewFullPath && record.thumbnailBase64) {
         const relPreview = this._persistPreviewToDiskIfNeeded(record.id, record.thumbnailBase64);
         if (relPreview) {
           previewFullPath = this.toAbsoluteWorkspacePath(relPreview);
