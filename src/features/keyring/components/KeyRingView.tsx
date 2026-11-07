@@ -75,12 +75,12 @@ export const KeyRingView: React.FC = () => {
   const handleModeChange = async (mode: AiExecutionMode) => {
     setAiMode(mode);
     try {
-      await saveAppSettings({ aiExecutionMode: mode });
-      await setAiExecutionMode(mode);
       if (typeof window !== 'undefined') {
         localStorage.setItem('stock_ai_execution_mode', mode);
         window.dispatchEvent(new CustomEvent('stockflow:ai-mode-changed', { detail: mode }));
       }
+      await saveAppSettings({ aiExecutionMode: mode });
+      await setAiExecutionMode(mode);
     } catch (err) {
       console.error('[KeyRingView] Failed to update aiExecutionMode in SQLite:', err);
     }

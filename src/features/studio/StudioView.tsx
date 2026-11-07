@@ -24,6 +24,7 @@ import { FixAndRequeueContext } from '../tracker/DistributionTrackerView';
 import { Copy, Eye, Check, Download, KeyRound, Server, FolderDown, Loader2, AlertTriangle, Volume2, VolumeX, Wrench, RotateCcw } from 'lucide-react';
 import { Alert, AlertTitle, AlertDescription } from '../../components/ui/alert';
 import { localAiAdapter, LocalAiConnectionStatus } from '../../services/providers/localAi';
+import { keyRingScheduler } from '../../services/scheduler/KeyRingScheduler';
 
 export interface StudioViewProps {
   onOpenVideoMuter?: () => void;
@@ -66,32 +67,37 @@ export const StudioView: React.FC<StudioViewProps> = ({
   const settings = useStudioMarketplaceSettings();
   const dialogs = useStudioDialogs();
 
-  const keys = useSqliteQuery(() => db.apiKeys.toArray(), [], [], ['keys']) || [];
-  const appSettings = useSqliteQuery(() => getAppSettings(), [], null, ['settings']);
-  const [explicitAiMode, setExplicitAiMode] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem('stock_ai_execution_mode');
-    } catch {
-      return null;
-    }
-  });
+  const dbKeys = useSqliteQuery(() => db.apiKeys.toArray(), [], [], ['keys']) || [];
+  const [schedulerKeys, setSchedulerKeys] = useState<typeof dbKeys>([]);
+  React.useEffect(() => {
+    const unsub = keyRingScheduler.subscribe((updated) => {
+      setSchedulerKeys([...updated]);
+    });
+    return () => unsub();
+  }, []);
 
-  const [isLocalMode, setIsLocalMode] = useState<boolean>(() => {
-    try {
-      const stored = localStorage.getItem('stock_ai_execution_mode');
-      if (stored) return stored === 'local';
-    } catch {}
-    return false;
+  const keys = useMemo(() => {
+    return dbKeys.length > 0 ? dbKeys : schedulerKeys;
+  }, [dbKeys, schedulerKeys]);
+
+  const appSettings = useSqliteQuery(() => getAppSettings(), [], null, ['settings']);
+  const [explicitAiMode, setExplicitAiMode] = useState<'local' | 'cloud' | null>(null);
+
+  const [localAiStatus, setLocalAiStatus] = useState<LocalAiConnectionStatus>(() => {
+    return localAiAdapter.getConnectionStatus();
   });
 
   React.useEffect(() => {
     const handleAiModeEvent = (e: Event) => {
-      const custom = e as CustomEvent<string>;
-      if (custom.detail) {
-        setExplicitAiMode(custom.detail);
-        setIsLocalMode(custom.detail === 'local');
+      const custom = e as CustomEvent<string | { mode?: string }>;
+      const mode = typeof custom.detail === 'string' ? custom.detail : custom.detail?.mode;
+      if (mode === 'local' || mode === 'cloud') {
+        setExplicitAiMode(mode);
+        if (mode === 'local' && localAiAdapter.getConnectionStatus() !== 'unreachable') {
+          setLocalAiStatus('connected');
+        }
         try {
-          localStorage.setItem('stock_ai_execution_mode', custom.detail);
+          localStorage.setItem('stock_ai_execution_mode', mode);
         } catch {}
       }
     };
@@ -99,16 +105,14 @@ export const StudioView: React.FC<StudioViewProps> = ({
     return () => window.removeEventListener('stockflow:ai-mode-changed', handleAiModeEvent);
   }, []);
 
-  React.useEffect(() => {
-    if (appSettings?.aiExecutionMode && !explicitAiMode) {
-      setIsLocalMode(appSettings.aiExecutionMode === 'local');
-    }
-  }, [appSettings?.aiExecutionMode, explicitAiMode]);
-  const healthyKeys = useMemo(() => keys.filter((k) => k.status !== 'invalid' && k.status !== 'disabled'), [keys]);
+  const isLocalMode = explicitAiMode
+    ? explicitAiMode === 'local'
+    : appSettings?.aiExecutionMode === 'local';
 
-  const [localAiStatus, setLocalAiStatus] = useState<LocalAiConnectionStatus>(() => {
-    return localAiAdapter.getConnectionStatus();
-  });
+  const healthyKeys = useMemo(
+    () => keys.filter((k) => k.status !== 'invalid' && k.status !== 'disabled'),
+    [keys]
+  );
 
   React.useEffect(() => {
     const handleStatusChange = (e: Event) => {
@@ -134,7 +138,9 @@ export const StudioView: React.FC<StudioViewProps> = ({
     }
   }, [isLocalMode, localAiStatus, appSettings?.localAiConfig?.baseUrl, appSettings?.localAiConfig?.modelId]);
 
-  const canRunAi = isLocalMode ? (localAiStatus === 'connected') : (healthyKeys.length > 0);
+  const canRunAi = isLocalMode
+    ? localAiStatus === 'connected' || explicitAiMode === 'local'
+    : healthyKeys.length > 0;
   const combinedRpm = useMemo(() => healthyKeys.reduce((acc, k) => acc + (k.rpmLimit || 15), 0), [healthyKeys]);
   const [isKeyShake, setIsKeyShake] = useState(false);
 

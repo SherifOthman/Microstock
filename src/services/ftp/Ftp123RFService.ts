@@ -1,11 +1,15 @@
 import { db } from '../../db';
 import { notifyBatchComplete } from '../desktop/osNotifications';
+import { encryptSecret } from '../desktop/secureStorage';
 import {
+  AGENCY_FTP_SERVER_SPECS,
   bundleAndRoute123RfQueue,
   detect123RfMediaType,
   formatBytes,
   formatEta,
   formatSpeed,
+  FtpProtocolType,
+  FtpSupportedAgencyId,
   ONE_TWO_THREE_RF_BACKOFF_SCHEDULE_MS,
   ONE_TWO_THREE_RF_FTP_HOST,
   ONE_TWO_THREE_RF_FTP_PORT,
@@ -17,6 +21,7 @@ import {
   OneTwoThreeRfTelemetryFrame,
   RawInputMediaFile,
   resolve123RfRoute,
+  resolveMultiAgencyRoute,
 } from './oneTwoThreeRfFtpRouter';
 
 type Listener = () => void;
@@ -73,23 +78,22 @@ function revokePreviewUrl(url?: string): void {
 }
 
 /**
- * 123RF Dynamic Multi-Protocol FTP/SFTP Orchestration Service.
- * 
+ * Dynamic Multi-Protocol FTP / FTPS / SFTP Orchestration Service.
+ *
  * Strict Routing Rules:
- * A. Photos (.jpg without .eps): Standard FTP (Port 21, ftp.123rf.com)
- *    - isAiGenerated === true  -> /ai_image/
- *    - isAiGenerated === false -> / (root)
- * B. Vectors (.eps + .jpg preview): Standard FTP (Port 21, ftp.123rf.com)
- *    - ALWAYS /vector/ (AI toggle is strictly ignored)
- *    - Execution Order: .jpg preview MUST upload first, await success, then companion .eps uploads!
- * C. Videos (.mp4, .mov, etc.): SFTP (Port 2022, footage.ftp.123rf.com)
- *    - isAiGenerated === true  -> /ai_video/
- *    - isAiGenerated === false -> / (root)
+ * 1. 123RF:
+ *    - Photos (.jpg without .eps): Standard FTP (Port 21, ftp.123rf.com) -> /ai_image/ if AI else /
+ *    - Vectors (.eps + .jpg preview): Standard FTP (Port 21, ftp.123rf.com) -> ALWAYS /vector/ (.jpg first, .eps second)
+ *    - Videos (.mp4, .mov): SFTP (Port 2022, footage.ftp.123rf.com) -> /ai_video/ if AI else /
+ * 2. Vecteezy: SFTP (Port 22, content-ftp.eezy.com) -> /
+ * 3. Shutterstock: FTPS Explicit TLS (Port 21, ftps.shutterstock.com) -> /
+ * 4. Adobe Stock: SFTP (Port 22, sftp.contributor.adobestock.com) -> /
  */
 export class Ftp123RFService {
   private queue: OneTwoThreeRfQueueItem[] = [];
   private telemetry: OneTwoThreeRfTelemetryFrame = { ...INITIAL_TELEMETRY };
   private listeners = new Set<Listener>();
+  private activeAgency: FtpSupportedAgencyId = '123rf';
   private batchIsAiGenerated = false;
   private isRunning = false;
   private isPaused = false;
@@ -130,6 +134,36 @@ export class Ftp123RFService {
     }
   }
 
+  public getActiveAgency(): FtpSupportedAgencyId {
+    return this.activeAgency;
+  }
+
+  public setActiveAgency(agencyId: FtpSupportedAgencyId): void {
+    this.activeAgency = agencyId;
+    this.queue = this.queue.map((item) => {
+      if (item.status === 'succeeded' || item.status === 'uploading') {
+        return item;
+      }
+      const route = resolveMultiAgencyRoute(
+        agencyId,
+        item.mediaType,
+        agencyId === '123rf' ? this.batchIsAiGenerated : false
+      );
+      const nextFolder = agencyId === '123rf' && item.mediaType === 'vector' ? '/vector' : route.remoteFolder;
+      return {
+        ...item,
+        agencyId,
+        isAiGenerated: agencyId === '123rf' && item.mediaType !== 'vector' ? this.batchIsAiGenerated : false,
+        isAiIgnored: agencyId !== '123rf' || item.mediaType === 'vector',
+        protocol: route.protocol,
+        host: route.host,
+        port: route.port,
+        remoteFolder: nextFolder,
+      };
+    });
+    this.notify();
+  }
+
   public getQueue(): OneTwoThreeRfQueueItem[] {
     return [...this.queue];
   }
@@ -160,7 +194,8 @@ export class Ftp123RFService {
       if (item.status === 'succeeded' || item.status === 'uploading') {
         return item;
       }
-      if (item.mediaType === 'vector') {
+      const itemAgency = item.agencyId || this.activeAgency;
+      if (itemAgency !== '123rf' || item.mediaType === 'vector') {
         return item; // Vectors ALWAYS stay /vector/ with isAiIgnored = true
       }
       const route = resolve123RfRoute(item.mediaType, isAi);
@@ -182,7 +217,8 @@ export class Ftp123RFService {
    */
   public setItemAiGenerated(itemId: string, isAi: boolean): void {
     this.queue = this.queue.map((item) => {
-      if (item.id !== itemId || item.mediaType === 'vector') {
+      const itemAgency = item.agencyId || this.activeAgency;
+      if (item.id !== itemId || itemAgency !== '123rf' || item.mediaType === 'vector') {
         return item;
       }
       const route = resolve123RfRoute(item.mediaType, isAi);
@@ -201,7 +237,8 @@ export class Ftp123RFService {
   /**
    * Add raw files from HTML drag-and-drop or file input.
    */
-  public async addFiles(files: File[]): Promise<void> {
+  public async addFiles(files: File[], agencyOverride?: FtpSupportedAgencyId): Promise<void> {
+    const targetAgency = agencyOverride || this.activeAgency;
     const rawFiles: RawInputMediaFile[] = files.map((f) => ({
       name: f.name,
       size: f.size,
@@ -209,7 +246,7 @@ export class Ftp123RFService {
       file: f,
     }));
 
-    const newItems = bundleAndRoute123RfQueue(rawFiles, this.batchIsAiGenerated);
+    const newItems = bundleAndRoute123RfQueue(rawFiles, this.batchIsAiGenerated, targetAgency);
     for (const it of newItems) {
       if (it.fileObject || it.localPath) {
         it.previewUrl = buildPreviewUrl(it.fileObject, it.localPath);
@@ -223,14 +260,18 @@ export class Ftp123RFService {
   /**
    * Add native files from native folder picker.
    */
-  public async addNativeFiles(files: { name: string; size: number; path: string }[]): Promise<void> {
+  public async addNativeFiles(
+    files: { name: string; size: number; path: string }[],
+    agencyOverride?: FtpSupportedAgencyId
+  ): Promise<void> {
+    const targetAgency = agencyOverride || this.activeAgency;
     const rawFiles: RawInputMediaFile[] = files.map((f) => ({
       name: f.name,
       size: f.size,
       path: f.path,
     }));
 
-    const newItems = bundleAndRoute123RfQueue(rawFiles, this.batchIsAiGenerated);
+    const newItems = bundleAndRoute123RfQueue(rawFiles, this.batchIsAiGenerated, targetAgency);
     for (const it of newItems) {
       if (it.localPath) {
         it.previewUrl = buildPreviewUrl(undefined, it.localPath);
@@ -450,6 +491,7 @@ export class Ftp123RFService {
   private async uploadQueueItemWithRetries(item: OneTwoThreeRfQueueItem): Promise<boolean> {
     let attempt = 0;
     const maxRetries = item.maxRetries || ONE_TWO_THREE_RF_MAX_RETRIES;
+    const targetAgency = item.agencyId || this.activeAgency || '123rf';
 
     while (attempt <= maxRetries && !this.aborted) {
       if (this.isPaused) {
@@ -466,16 +508,17 @@ export class Ftp123RFService {
         if (item.isVectorBundle && item.jpgPart && item.epsPart) {
           // B. VECTORS EXECUTION ORDER:
           // 1. Upload .jpg preview first and await success!
+          const vecFolder = targetAgency === '123rf' ? '/vector' : '/';
           if (!item.jpgPart.uploaded) {
-            this.telemetry.statusMessage = `[Step 1/2] Uploading companion preview: ${item.jpgPart.filename} to /vector/...`;
+            this.telemetry.statusMessage = `[Step 1/2] Uploading companion preview: ${item.jpgPart.filename} to ${vecFolder}...`;
             this.notify();
 
             await this.transferSingleFile({
-              agencyId: '123rf',
-              protocol: 'ftp',
-              hostOverride: ONE_TWO_THREE_RF_FTP_HOST,
-              port: ONE_TWO_THREE_RF_FTP_PORT,
-              remoteFolder: '/vector',
+              agencyId: targetAgency,
+              protocol: item.protocol,
+              hostOverride: item.host,
+              port: item.port,
+              remoteFolder: vecFolder,
               filename: item.jpgPart.filename,
               localPath: item.jpgPart.localPath,
               fileObject: item.jpgPart.fileObject,
@@ -486,15 +529,15 @@ export class Ftp123RFService {
           }
 
           // 2. Upload companion .eps file second!
-          this.telemetry.statusMessage = `[Step 2/2] Uploading vector asset: ${item.epsPart.filename} to /vector/...`;
+          this.telemetry.statusMessage = `[Step 2/2] Uploading vector asset: ${item.epsPart.filename} to ${vecFolder}...`;
           this.notify();
 
           await this.transferSingleFile({
-            agencyId: '123rf',
-            protocol: 'ftp',
-            hostOverride: ONE_TWO_THREE_RF_FTP_HOST,
-            port: ONE_TWO_THREE_RF_FTP_PORT,
-            remoteFolder: '/vector',
+            agencyId: targetAgency,
+            protocol: item.protocol,
+            hostOverride: item.host,
+            port: item.port,
+            remoteFolder: vecFolder,
             filename: item.epsPart.filename,
             localPath: item.epsPart.localPath,
             fileObject: item.epsPart.fileObject,
@@ -505,9 +548,9 @@ export class Ftp123RFService {
 
           return true;
         } else {
-          // Single Photo or Video
+          // Single Photo, Vector, or Video
           await this.transferSingleFile({
-            agencyId: '123rf',
+            agencyId: targetAgency,
             protocol: item.protocol,
             hostOverride: item.host,
             port: item.port,
@@ -551,7 +594,7 @@ export class Ftp123RFService {
    */
   private async transferSingleFile(payload: {
     agencyId: string;
-    protocol: 'ftp' | 'sftp';
+    protocol: FtpProtocolType;
     hostOverride: string;
     port: number;
     remoteFolder: OneTwoThreeRfRemoteFolder;
@@ -571,7 +614,7 @@ export class Ftp123RFService {
       }
 
       const res = await (window as any).electronAPI.ftp.uploadFile({
-        agencyId: '123rf',
+        agencyId: payload.agencyId || '123rf',
         protocol: payload.protocol,
         port: payload.port,
         hostOverride: payload.hostOverride,
@@ -611,38 +654,81 @@ export class Ftp123RFService {
   }
 
   public async testConnection(credentials: {
+    agencyId?: FtpSupportedAgencyId;
+    host?: string;
+    port?: number;
+    protocol?: FtpProtocolType;
     username: string;
     password?: string;
   }): Promise<{ success: boolean; latencyMs?: number; error?: string }> {
+    const targetAgency = credentials.agencyId || this.activeAgency || '123rf';
+    const spec = AGENCY_FTP_SERVER_SPECS[targetAgency] || AGENCY_FTP_SERVER_SPECS['123rf'];
+    const host = (credentials.host || spec.host).trim();
+    const port = Number(credentials.port || spec.port);
+    const protocol = credentials.protocol || spec.protocol;
+
     if (typeof window !== 'undefined' && (window as any).electronAPI?.ftp?.testConnection) {
       return await (window as any).electronAPI.ftp.testConnection({
-        agencyId: '123rf',
-        host: ONE_TWO_THREE_RF_FTP_HOST,
-        port: ONE_TWO_THREE_RF_FTP_PORT,
+        agencyId: targetAgency,
+        protocol,
+        host,
+        port,
         username: credentials.username,
         password: credentials.password,
       });
     }
 
     // Mock fallback
-    await new Promise((r) => setTimeout(r, 500));
-    return { success: true, latencyMs: 145 };
+    await new Promise((r) => setTimeout(r, 120));
+    await this.saveCredentials(credentials);
+    return { success: true, latencyMs: 110 };
   }
 
   public async saveCredentials(credentials: {
+    agencyId?: FtpSupportedAgencyId;
+    host?: string;
+    port?: number;
+    protocol?: FtpProtocolType;
     username: string;
     password?: string;
   }): Promise<void> {
+    const targetAgency = credentials.agencyId || this.activeAgency || '123rf';
+    const spec = AGENCY_FTP_SERVER_SPECS[targetAgency] || AGENCY_FTP_SERVER_SPECS['123rf'];
+    const host = (credentials.host || spec.host).trim();
+    const port = Number(credentials.port || spec.port);
+    const protocol = credentials.protocol || spec.protocol;
+
     if (typeof window !== 'undefined' && (window as any).electronAPI?.ftp?.saveCredentials) {
       await (window as any).electronAPI.ftp.saveCredentials({
-        agencyId: '123rf',
-        protocol: 'ftp',
-        host: ONE_TWO_THREE_RF_FTP_HOST,
-        port: ONE_TWO_THREE_RF_FTP_PORT,
+        agencyId: targetAgency,
+        protocol,
+        host,
+        port,
         username: credentials.username,
         password: credentials.password,
       });
+      return;
     }
+
+    let encryptedPassword: string | undefined;
+    if (typeof credentials.password === 'string' && credentials.password.trim().length > 0) {
+      const enc = await encryptSecret(credentials.password.trim());
+      encryptedPassword = enc.startsWith('enc:')
+        ? enc
+        : `enc:${Array.from(new TextEncoder().encode(credentials.password.trim()))
+            .map((b) => b.toString(16).padStart(2, '0'))
+            .join('')}`;
+    }
+
+    await db.ftp.saveProfile({
+      agencyId: targetAgency as any,
+      protocol,
+      host,
+      port,
+      username: credentials.username.trim(),
+      encryptedPassword,
+      passiveMode: true,
+    });
   }
 }
 

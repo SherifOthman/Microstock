@@ -4,11 +4,18 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import {
   detect123RfMediaType,
   resolve123RfRoute,
+  resolveMultiAgencyRoute,
   bundleAndRoute123RfQueue,
   ONE_TWO_THREE_RF_FTP_HOST,
   ONE_TWO_THREE_RF_FTP_PORT,
   ONE_TWO_THREE_RF_SFTP_HOST,
   ONE_TWO_THREE_RF_SFTP_PORT,
+  VECTEEZY_SFTP_HOST,
+  VECTEEZY_SFTP_PORT,
+  SHUTTERSTOCK_FTPS_HOST,
+  SHUTTERSTOCK_FTPS_PORT,
+  ADOBE_STOCK_SFTP_HOST,
+  ADOBE_STOCK_SFTP_PORT,
 } from '../../src/services/ftp/oneTwoThreeRfFtpRouter';
 import { ftp123rfService } from '../../src/services/ftp/Ftp123RFService';
 import { OneTwoThreeRfFtpUploaderView } from '../../src/features/ftp/OneTwoThreeRfFtpUploaderView';
@@ -108,15 +115,37 @@ describe('123RF FTP/SFTP Dynamic Router & Routing Rules', () => {
     expect(videoItem?.protocol).toBe('sftp');
     expect(videoItem?.port).toBe(2022);
   });
+
+  it('5. Multi-Protocol Routing for Vecteezy (SFTP:22), Shutterstock (FTPS Explicit TLS:21), and Adobe Stock (SFTP:22)', () => {
+    const vecteezyRoute = resolveMultiAgencyRoute('vecteezy', 'image', true);
+    expect(vecteezyRoute.protocol).toBe('sftp');
+    expect(vecteezyRoute.host).toBe(VECTEEZY_SFTP_HOST);
+    expect(vecteezyRoute.port).toBe(VECTEEZY_SFTP_PORT);
+    expect(vecteezyRoute.remoteFolder).toBe('/');
+
+    const shutterstockRoute = resolveMultiAgencyRoute('shutterstock', 'video', true);
+    expect(shutterstockRoute.protocol).toBe('ftps');
+    expect(shutterstockRoute.host).toBe(SHUTTERSTOCK_FTPS_HOST);
+    expect(shutterstockRoute.port).toBe(SHUTTERSTOCK_FTPS_PORT);
+    expect(shutterstockRoute.explicitTls).toBe(true);
+    expect(shutterstockRoute.remoteFolder).toBe('/');
+
+    const adobeRoute = resolveMultiAgencyRoute('adobe', 'vector', false);
+    expect(adobeRoute.protocol).toBe('sftp');
+    expect(adobeRoute.host).toBe(ADOBE_STOCK_SFTP_HOST);
+    expect(adobeRoute.port).toBe(ADOBE_STOCK_SFTP_PORT);
+    expect(adobeRoute.remoteFolder).toBe('/');
+  });
 });
 
 describe('123RF UI Uploader & AI Toggle Component', () => {
   beforeEach(() => {
     ftp123rfService.clearQueue();
+    ftp123rfService.setActiveAgency('123rf');
     ftp123rfService.setBatchAiGenerated(false);
   });
 
-  it('5. UI renders AI Toggle and dynamically updates destination routing for photos and videos while keeping vectors in /vector/', async () => {
+  it('6. UI renders AI Toggle and dynamically updates destination routing for photos and videos while keeping vectors in /vector/', async () => {
     render(
       <LanguageProvider>
         <OneTwoThreeRfFtpUploaderView />
@@ -164,3 +193,4 @@ describe('123RF UI Uploader & AI Toggle Component', () => {
     });
   });
 });
+

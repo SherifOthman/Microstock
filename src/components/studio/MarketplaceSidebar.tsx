@@ -79,7 +79,28 @@ const PLATFORM_LIMIT_SUMMARY: Record<string, { en: string; ar: string }> = {
 
 export const MarketplaceSidebar: React.FC<MarketplaceSidebarProps> = (props) => {
   const { t, language } = useLanguage();
-  const aiMode = useSqliteQuery(() => getAiExecutionMode(), [], "cloud");
+  const dbAiMode = useSqliteQuery(() => getAiExecutionMode(), [], 'cloud', ['settings']);
+  const [liveAiMode, setLiveAiMode] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('stock_ai_execution_mode');
+    } catch {
+      return null;
+    }
+  });
+
+  React.useEffect(() => {
+    const handleModeEvent = (e: Event) => {
+      const custom = e as CustomEvent<string | { mode?: string }>;
+      const next = typeof custom.detail === 'string' ? custom.detail : custom.detail?.mode;
+      if (next === 'local' || next === 'cloud') {
+        setLiveAiMode(next);
+      }
+    };
+    window.addEventListener('stockflow:ai-mode-changed', handleModeEvent);
+    return () => window.removeEventListener('stockflow:ai-mode-changed', handleModeEvent);
+  }, []);
+
+  const aiMode = liveAiMode || dbAiMode || 'cloud';
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [isDesktopCollapsed, setIsDesktopCollapsed] = useState<boolean>(() => {
     return localStorage.getItem('stock_studio_inspector_collapsed') === 'true';

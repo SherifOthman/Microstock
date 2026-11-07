@@ -27,6 +27,7 @@ import { getPlatformLogo } from '../../components/icons/StockLogos';
 import {
   AlertTriangle,
   CheckCircle2,
+  CloudUpload,
   Coffee,
   Eye,
   EyeOff,
@@ -46,11 +47,11 @@ import {
   Server,
   Settings,
   Trash2,
-  UploadCloud,
   XCircle,
 } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
 import { OneTwoThreeRfFtpUploaderView } from './OneTwoThreeRfFtpUploaderView';
+import { FtpSupportedAgencyId } from '../../services/ftp/oneTwoThreeRfFtpRouter';
 
 type QueueSubTab = 'all' | 'succeeded' | 'failed' | 'skipped';
 
@@ -294,15 +295,15 @@ export const FtpUploaderView: React.FC = () => {
   const { language } = useLanguage();
   const isAr = language === 'ar';
 
-  const [selectedAgency, setSelectedAgency] = useState<'dreamstime' | '123rf'>(() => {
+  const [selectedAgency, setSelectedAgency] = useState<FtpSupportedAgencyId>(() => {
     try {
-      return (localStorage.getItem('stock_ftp_agency') as any) || 'dreamstime';
+      return (localStorage.getItem('stock_ftp_agency') as FtpSupportedAgencyId) || 'dreamstime';
     } catch {
       return 'dreamstime';
     }
   });
 
-  const handleAgencyChange = (agency: 'dreamstime' | '123rf') => {
+  const handleAgencyChange = (agency: FtpSupportedAgencyId) => {
     setSelectedAgency(agency);
     try {
       localStorage.setItem('stock_ftp_agency', agency);
@@ -526,8 +527,13 @@ export const FtpUploaderView: React.FC = () => {
       ? skippedItems
       : queue;
 
-  if (selectedAgency === '123rf') {
-    return <OneTwoThreeRfFtpUploaderView onSwitchAgency={handleAgencyChange} />;
+  if (selectedAgency !== 'dreamstime') {
+    return (
+      <OneTwoThreeRfFtpUploaderView
+        selectedAgency={selectedAgency}
+        onSwitchAgency={handleAgencyChange}
+      />
+    );
   }
 
   return (
@@ -569,22 +575,33 @@ export const FtpUploaderView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <div className="flex items-center p-0.5 rounded-lg bg-slate-100 dark:bg-secondary border border-slate-200 dark:border-border text-xs mr-1 rtl:mr-0 rtl:ml-1">
-            <button
-              type="button"
-              className="px-2.5 py-1 rounded-md font-bold bg-white dark:bg-card text-foreground shadow-xs cursor-default flex items-center gap-1.5 border border-slate-200 dark:border-transparent"
-            >
-              {getPlatformLogo('dreamstime', 14)}
-              <span>Dreamstime</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleAgencyChange('123rf')}
-              className="px-2.5 py-1 rounded-md text-muted-foreground hover:text-foreground transition cursor-pointer flex items-center gap-1.5 font-medium"
-            >
-              {getPlatformLogo('123rf', 14)}
-              <span>123RF</span>
-            </button>
+          <div className="flex items-center p-0.5 rounded-lg bg-secondary border border-border text-xs mr-1 rtl:mr-0 rtl:ml-1">
+            {(
+              [
+                { id: 'dreamstime', label: 'Dreamstime' },
+                { id: '123rf', label: '123RF' },
+                { id: 'vecteezy', label: 'Vecteezy' },
+                { id: 'shutterstock', label: 'Shutterstock' },
+                { id: 'adobe', label: 'Adobe Stock' },
+              ] as const
+            ).map((agency) => {
+              const isActive = agency.id === 'dreamstime';
+              return (
+                <button
+                  key={agency.id}
+                  type="button"
+                  onClick={() => handleAgencyChange(agency.id)}
+                  className={`px-2 py-1 rounded-md transition flex items-center gap-1.5 ${
+                    isActive
+                      ? 'font-bold bg-card text-foreground shadow-xs cursor-default'
+                      : 'text-muted-foreground hover:text-foreground cursor-pointer font-medium'
+                  }`}
+                >
+                  {getPlatformLogo(agency.id, 13)}
+                  <span className="hidden md:inline">{agency.label}</span>
+                </button>
+              );
+            })}
           </div>
           {/* Subtle Keep Awake ☕ Icon (Only appears when actively uploading) */}
           {telemetry.isRunning && (
@@ -1007,56 +1024,58 @@ export const FtpUploaderView: React.FC = () => {
 
           <div className="flex-1 min-h-0 overflow-y-auto">
             {visibleQueue.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center p-8 text-center gap-4">
-                <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
-                  <UploadCloud className="w-8 h-8 text-primary opacity-90" />
-                </div>
-                <div className="space-y-1.5">
-                  <h3 className="text-sm sm:text-base font-semibold text-foreground">
-                    {queue.length === 0
-                      ? isAr
-                        ? 'اسحب الملفات أو المجلدات هنا لرفعها إلى Dreamstime'
-                        : 'Drop Files or Shoot Folders Here'
-                      : isAr
-                      ? 'لا توجد ملفات في هذا التبويب'
-                      : 'No files in this tab'}
-                  </h3>
+              <div className="h-full flex flex-col items-center justify-center p-4">
+                <div className="w-full border-2 border-dashed border-border hover:border-primary/50 bg-card rounded-xl p-10 text-center transition space-y-3">
+                  <div className="w-11 h-11 rounded-xl bg-secondary text-primary flex items-center justify-center mx-auto border border-border">
+                    <CloudUpload className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-semibold text-foreground">
+                      {queue.length === 0
+                        ? isAr
+                          ? 'اسحب الملفات أو المجلدات هنا لرفعها إلى Dreamstime'
+                          : 'Drop Files or Shoot Folders Here'
+                        : isAr
+                        ? 'لا توجد ملفات في هذا التبويب'
+                        : 'No files in this tab'}
+                    </h3>
+                    {queue.length === 0 && (
+                      <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                        {isAr
+                          ? 'يتم تلقائياً ربط أزواج الفيكتور (JPG + EPS) وترتيب الصور ثم الفيكتور ثم الفيديو'
+                          : 'Automatically pairs JPG + EPS Vector Bundles and sorts Photos → Vectors → Videos'}
+                      </p>
+                    )}
+                  </div>
+
                   {queue.length === 0 && (
-                    <p className="text-xs text-muted-foreground max-w-md">
-                      {isAr
-                        ? 'يتم تلقائياً ربط أزواج الفيكتور (JPG + EPS) وترتيب الصور ثم الفيكتور ثم الفيديو'
-                        : 'Automatically pairs JPG + EPS Vector Bundles and sorts Photos → Vectors → Videos'}
-                    </p>
+                    <div className="flex items-center justify-center gap-2 pt-1">
+                      <Button
+                        type="button"
+                        variant="default"
+                        size="sm"
+                        data-testid="ftp-add-files-btn"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="h-8 px-3 text-xs gap-1.5 cursor-pointer font-semibold"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>{isAr ? 'إضافة ملفات' : 'Add Files'}</span>
+                      </Button>
+
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        data-testid="ftp-add-folder-btn"
+                        onClick={handleAddFolderClick}
+                        className="h-8 px-3 text-xs gap-1.5 cursor-pointer font-semibold"
+                      >
+                        <FolderPlus className="w-3.5 h-3.5 text-primary" />
+                        <span>{isAr ? 'إضافة مجلد' : 'Add Folder'}</span>
+                      </Button>
+                    </div>
                   )}
                 </div>
-
-                {queue.length === 0 && (
-                  <div className="flex items-center gap-2.5 pt-1">
-                    <Button
-                      type="button"
-                      variant="default"
-                      size="sm"
-                      data-testid="ftp-add-files-btn"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="h-9 px-4 text-xs gap-1.5 cursor-pointer font-semibold"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>{isAr ? 'إضافة ملفات' : 'Add Files'}</span>
-                    </Button>
-
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      data-testid="ftp-add-folder-btn"
-                      onClick={handleAddFolderClick}
-                      className="h-9 px-4 text-xs gap-1.5 cursor-pointer font-semibold"
-                    >
-                      <FolderPlus className="w-4 h-4 text-primary" />
-                      <span>{isAr ? 'إضافة مجلد' : 'Add Folder'}</span>
-                    </Button>
-                  </div>
-                )}
               </div>
             ) : (
               <table

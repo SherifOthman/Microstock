@@ -15,6 +15,74 @@ export const ONE_TWO_THREE_RF_FTP_PORT = 21;
 export const ONE_TWO_THREE_RF_SFTP_HOST = 'footage.ftp.123rf.com';
 export const ONE_TWO_THREE_RF_SFTP_PORT = 2022;
 
+export const VECTEEZY_SFTP_HOST = 'content-ftp.eezy.com';
+export const VECTEEZY_SFTP_PORT = 22;
+
+export const SHUTTERSTOCK_FTPS_HOST = 'ftps.shutterstock.com';
+export const SHUTTERSTOCK_FTPS_PORT = 21;
+
+export const ADOBE_STOCK_SFTP_HOST = 'sftp.contributor.adobestock.com';
+export const ADOBE_STOCK_SFTP_PORT = 22;
+
+export const DREAMSTIME_FTP_HOST = 'ftp.dreamstime.com';
+export const DREAMSTIME_FTP_PORT = 21;
+
+export type FtpSupportedAgencyId = 'dreamstime' | '123rf' | 'vecteezy' | 'shutterstock' | 'adobe';
+
+export interface AgencyFtpServerSpec {
+  agencyId: FtpSupportedAgencyId;
+  name: string;
+  protocol: FtpProtocolType;
+  host: string;
+  port: number;
+  explicitTls?: boolean;
+  rootFolder: string;
+}
+
+export const AGENCY_FTP_SERVER_SPECS: Record<FtpSupportedAgencyId, AgencyFtpServerSpec> = {
+  dreamstime: {
+    agencyId: 'dreamstime',
+    name: 'Dreamstime',
+    protocol: 'ftp',
+    host: DREAMSTIME_FTP_HOST,
+    port: DREAMSTIME_FTP_PORT,
+    rootFolder: '/',
+  },
+  '123rf': {
+    agencyId: '123rf',
+    name: '123RF',
+    protocol: 'ftp',
+    host: ONE_TWO_THREE_RF_FTP_HOST,
+    port: ONE_TWO_THREE_RF_FTP_PORT,
+    rootFolder: '/',
+  },
+  vecteezy: {
+    agencyId: 'vecteezy',
+    name: 'Vecteezy',
+    protocol: 'sftp',
+    host: VECTEEZY_SFTP_HOST,
+    port: VECTEEZY_SFTP_PORT,
+    rootFolder: '/',
+  },
+  shutterstock: {
+    agencyId: 'shutterstock',
+    name: 'Shutterstock',
+    protocol: 'ftps',
+    host: SHUTTERSTOCK_FTPS_HOST,
+    port: SHUTTERSTOCK_FTPS_PORT,
+    explicitTls: true,
+    rootFolder: '/',
+  },
+  adobe: {
+    agencyId: 'adobe',
+    name: 'Adobe Stock',
+    protocol: 'sftp',
+    host: ADOBE_STOCK_SFTP_HOST,
+    port: ADOBE_STOCK_SFTP_PORT,
+    rootFolder: '/',
+  },
+};
+
 export const ONE_TWO_THREE_RF_MAX_RETRIES = 5;
 export const ONE_TWO_THREE_RF_BACKOFF_SCHEDULE_MS = [2000, 5000, 10000, 30000, 60000] as const;
 
@@ -31,13 +99,14 @@ export interface OneTwoThreeRfBundlePart {
 
 export interface OneTwoThreeRfQueueItem {
   id: string;
+  agencyId?: FtpSupportedAgencyId;
   filename: string;
   stemName: string;
   mediaType: MediaType;
   isVectorBundle: boolean;
   isAiGenerated: boolean;
   isAiIgnored: boolean; // TRUE for vectors because AI vectors are strictly forbidden on 123RF
-  protocol: 'ftp' | 'sftp';
+  protocol: FtpProtocolType;
   host: string;
   port: number;
   remoteFolder: OneTwoThreeRfRemoteFolder;
@@ -70,7 +139,7 @@ export interface OneTwoThreeRfTelemetryFrame {
   currentFileIndex: number;
   currentItemId: string | null;
   currentFilename: string;
-  currentProtocol: 'ftp' | 'sftp';
+  currentProtocol: FtpProtocolType;
   currentHost: string;
   currentRemoteFolder: OneTwoThreeRfRemoteFolder;
   currentFileBytesTransferred: number;
@@ -103,11 +172,12 @@ export function detect123RfMediaType(filename: string): MediaType {
 }
 
 export interface RouteResolution {
-  protocol: 'ftp' | 'sftp';
+  protocol: FtpProtocolType;
   host: string;
   port: number;
   remoteFolder: OneTwoThreeRfRemoteFolder;
   isAiIgnored: boolean;
+  explicitTls?: boolean;
 }
 
 /**
@@ -153,6 +223,32 @@ export function resolve123RfRoute(
   };
 }
 
+/**
+ * Multi-Agency Route Resolver for 123RF, Vecteezy, Shutterstock, Adobe Stock, and Dreamstime:
+ * - 123RF: Dynamic FTP (Port 21) / SFTP (Port 2022) & AI folder routing (/ai_image, /vector, /ai_video, /)
+ * - Vecteezy: SFTP (Port 22, content-ftp.eezy.com) -> /
+ * - Shutterstock: FTPS Explicit TLS (Port 21, ftps.shutterstock.com) -> /
+ * - Adobe Stock: SFTP (Port 22, sftp.contributor.adobestock.com) -> /
+ */
+export function resolveMultiAgencyRoute(
+  agencyId: FtpSupportedAgencyId,
+  mediaType: MediaType,
+  isAiGenerated: boolean
+): RouteResolution {
+  if (agencyId === '123rf') {
+    return resolve123RfRoute(mediaType, isAiGenerated);
+  }
+  const spec = AGENCY_FTP_SERVER_SPECS[agencyId] || AGENCY_FTP_SERVER_SPECS['123rf'];
+  return {
+    protocol: spec.protocol,
+    host: spec.host,
+    port: spec.port,
+    remoteFolder: '/',
+    isAiIgnored: true,
+    explicitTls: spec.explicitTls,
+  };
+}
+
 export interface RawInputMediaFile {
   name: string;
   size: number;
@@ -168,7 +264,8 @@ export interface RawInputMediaFile {
  */
 export function bundleAndRoute123RfQueue(
   rawFiles: RawInputMediaFile[],
-  batchIsAiGenerated: boolean
+  batchIsAiGenerated: boolean,
+  agencyId: FtpSupportedAgencyId = '123rf'
 ): OneTwoThreeRfQueueItem[] {
   const epsMap = new Map<string, RawInputMediaFile>();
   const jpgMap = new Map<string, RawInputMediaFile>();
@@ -192,23 +289,27 @@ export function bundleAndRoute123RfQueue(
   // 1. Process Vector Pairs (.eps + companion .jpg)
   for (const [stem, epsFile] of epsMap.entries()) {
     const matchingJpg = jpgMap.get(stem);
+    const vecRoute = resolveMultiAgencyRoute(agencyId, 'vector', batchIsAiGenerated);
+    const vecFolder = (agencyId === '123rf' ? '/vector' : '/') as any;
+
     if (matchingJpg) {
       processedJpgStems.add(stem);
       const totalSize = (matchingJpg.size || 0) + (epsFile.size || 0);
-      const id = `123rf-vec-${stem}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const id = `${agencyId}-vec-${stem}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
       items.push({
         id,
+        agencyId,
         filename: `${stem}.(jpg+eps)`,
         stemName: stem,
         mediaType: 'vector',
         isVectorBundle: true,
         isAiGenerated: false, // Vectors cannot be AI-generated on 123RF
         isAiIgnored: true,
-        protocol: 'ftp',
-        host: ONE_TWO_THREE_RF_FTP_HOST,
-        port: ONE_TWO_THREE_RF_FTP_PORT,
-        remoteFolder: '/vector',
+        protocol: vecRoute.protocol,
+        host: vecRoute.host,
+        port: vecRoute.port,
+        remoteFolder: vecFolder,
         status: 'queued',
         fileSize: totalSize,
         bytesTransferred: 0,
@@ -219,8 +320,8 @@ export function bundleAndRoute123RfQueue(
           filename: matchingJpg.name,
           localPath: matchingJpg.path,
           fileSize: matchingJpg.size || 0,
-          remoteFolder: '/vector',
-          remotePath: `/vector/${matchingJpg.name}`,
+          remoteFolder: vecFolder,
+          remotePath: vecFolder === '/' ? `/${matchingJpg.name}` : `${vecFolder}/${matchingJpg.name}`,
           fileObject: matchingJpg.file,
           uploaded: false,
           order: 1, // Preview first!
@@ -229,8 +330,8 @@ export function bundleAndRoute123RfQueue(
           filename: epsFile.name,
           localPath: epsFile.path,
           fileSize: epsFile.size || 0,
-          remoteFolder: '/vector',
-          remotePath: `/vector/${epsFile.name}`,
+          remoteFolder: vecFolder,
+          remotePath: vecFolder === '/' ? `/${epsFile.name}` : `${vecFolder}/${epsFile.name}`,
           fileObject: epsFile.file,
           uploaded: false,
           order: 2, // Companion EPS second!
@@ -240,19 +341,20 @@ export function bundleAndRoute123RfQueue(
       });
     } else {
       // Standalone .eps without .jpg
-      const id = `123rf-eps-${stem}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const id = `${agencyId}-eps-${stem}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       items.push({
         id,
+        agencyId,
         filename: epsFile.name,
         stemName: stem,
         mediaType: 'vector',
         isVectorBundle: false,
         isAiGenerated: false,
         isAiIgnored: true,
-        protocol: 'ftp',
-        host: ONE_TWO_THREE_RF_FTP_HOST,
-        port: ONE_TWO_THREE_RF_FTP_PORT,
-        remoteFolder: '/vector',
+        protocol: vecRoute.protocol,
+        host: vecRoute.host,
+        port: vecRoute.port,
+        remoteFolder: vecFolder,
         status: 'queued',
         fileSize: epsFile.size || 0,
         bytesTransferred: 0,
@@ -268,17 +370,18 @@ export function bundleAndRoute123RfQueue(
   // 2. Process Unpaired JPGs (Standalone Photos)
   for (const [stem, jpgFile] of jpgMap.entries()) {
     if (processedJpgStems.has(stem)) continue;
-    const route = resolve123RfRoute('image', batchIsAiGenerated);
-    const id = `123rf-img-${stem}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const route = resolveMultiAgencyRoute(agencyId, 'image', batchIsAiGenerated);
+    const id = `${agencyId}-img-${stem}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
     items.push({
       id,
+      agencyId,
       filename: jpgFile.name,
       stemName: stem,
       mediaType: 'image',
       isVectorBundle: false,
-      isAiGenerated: batchIsAiGenerated,
-      isAiIgnored: false,
+      isAiGenerated: agencyId === '123rf' ? batchIsAiGenerated : false,
+      isAiIgnored: agencyId !== '123rf',
       protocol: route.protocol,
       host: route.host,
       port: route.port,
@@ -298,17 +401,18 @@ export function bundleAndRoute123RfQueue(
   for (const f of otherFiles) {
     const stem = getFilenameStem(f.name);
     const mediaType = detect123RfMediaType(f.name);
-    const route = resolve123RfRoute(mediaType, batchIsAiGenerated);
-    const id = `123rf-${mediaType}-${stem}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const route = resolveMultiAgencyRoute(agencyId, mediaType, batchIsAiGenerated);
+    const id = `${agencyId}-${mediaType}-${stem}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
     items.push({
       id,
+      agencyId,
       filename: f.name,
       stemName: stem,
       mediaType,
       isVectorBundle: false,
-      isAiGenerated: mediaType === 'vector' ? false : batchIsAiGenerated,
-      isAiIgnored: mediaType === 'vector',
+      isAiGenerated: agencyId === '123rf' && mediaType !== 'vector' ? batchIsAiGenerated : false,
+      isAiIgnored: agencyId !== '123rf' || mediaType === 'vector',
       protocol: route.protocol,
       host: route.host,
       port: route.port,

@@ -789,13 +789,24 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
       return;
     case 'getFtpProfile': {
       const agencyId = args[0] || 'dreamstime';
+      const defaultSpec =
+        agencyId === '123rf'
+          ? { protocol: 'ftp' as const, host: 'ftp.123rf.com', port: 21 }
+          : agencyId === 'vecteezy'
+          ? { protocol: 'sftp' as const, host: 'content-ftp.eezy.com', port: 22 }
+          : agencyId === 'shutterstock'
+          ? { protocol: 'ftps' as const, host: 'ftps.shutterstock.com', port: 21 }
+          : agencyId === 'adobe'
+          ? { protocol: 'sftp' as const, host: 'sftp.contributor.adobestock.com', port: 22 }
+          : { protocol: 'ftp' as const, host: 'ftp.dreamstime.com', port: 21 };
+
       let p = testMemoryStore.ftpProfiles.get(agencyId);
       if (!p) {
         p = {
           agencyId,
-          protocol: 'ftp',
-          host: agencyId === 'dreamstime' ? 'ftp.dreamstime.com' : '',
-          port: 21,
+          protocol: defaultSpec.protocol,
+          host: defaultSpec.host,
+          port: defaultSpec.port,
           username: '',
           encryptedPassword: '',
           hasSavedPassword: false,
@@ -806,14 +817,26 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
       }
       return {
         ...p,
-        protocol: 'ftp',
-        port: 21,
+        protocol: p.protocol || defaultSpec.protocol,
+        host: p.host || defaultSpec.host,
+        port: p.port || defaultSpec.port,
         hasSavedPassword: Boolean(p.encryptedPassword),
       };
     }
     case 'saveFtpProfile': {
       const payload = args[0] || {};
       const agencyId = payload.agencyId || 'dreamstime';
+      const defaultSpec =
+        agencyId === '123rf'
+          ? { protocol: 'ftp' as const, host: 'ftp.123rf.com', port: 21 }
+          : agencyId === 'vecteezy'
+          ? { protocol: 'sftp' as const, host: 'content-ftp.eezy.com', port: 22 }
+          : agencyId === 'shutterstock'
+          ? { protocol: 'ftps' as const, host: 'ftps.shutterstock.com', port: 21 }
+          : agencyId === 'adobe'
+          ? { protocol: 'sftp' as const, host: 'sftp.contributor.adobestock.com', port: 22 }
+          : { protocol: 'ftp' as const, host: 'ftp.dreamstime.com', port: 21 };
+
       const existing = testMemoryStore.ftpProfiles.get(agencyId);
       const now = Date.now();
       const nextEncrypted =
@@ -822,9 +845,9 @@ export async function invokeFallbackDbRpc(method: string, ...args: any[]): Promi
           : existing?.encryptedPassword || '';
       const updated: FtpCredentialProfile = {
         agencyId,
-        protocol: 'ftp',
-        host: (payload.host ?? existing?.host ?? 'ftp.dreamstime.com').trim(),
-        port: 21,
+        protocol: payload.protocol || existing?.protocol || defaultSpec.protocol,
+        host: (payload.host ?? existing?.host ?? defaultSpec.host).trim(),
+        port: Number(payload.port || existing?.port || defaultSpec.port),
         username: (payload.username ?? existing?.username ?? '').trim(),
         encryptedPassword: nextEncrypted,
         hasSavedPassword: Boolean(nextEncrypted),

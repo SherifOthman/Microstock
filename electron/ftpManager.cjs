@@ -58,10 +58,12 @@ class PlainFtpAdapter {
     return Boolean(this.client && !this.client.closed);
   }
 
-  async ensureConnected({ host, username, password, timeoutMs = 30000 }) {
+  async ensureConnected({ host, port = 21, username, password, secure = false, timeoutMs = 30000 }) {
     const cleanHost = (host || 'ftp.dreamstime.com').trim();
     const cleanUser = (username || '').trim();
-    const configKey = `${cleanHost}:21:${cleanUser}`;
+    const ftpPort = Number(port) || 21;
+    const isSecure = Boolean(secure);
+    const configKey = `${cleanHost}:${ftpPort}:${isSecure ? 'ftps' : 'ftp'}:${cleanUser}`;
 
     if (this.isConnected() && this.connectedConfigKey === configKey) {
       return;
@@ -72,10 +74,11 @@ class PlainFtpAdapter {
     client.ftp.verbose = false;
     await client.access({
       host: cleanHost,
-      port: 21,
+      port: ftpPort,
       user: cleanUser,
       password: password || '',
-      secure: false,
+      secure: isSecure,
+      secureOptions: isSecure ? { rejectUnauthorized: false } : undefined,
     });
     this.client = client;
     this.connectedConfigKey = configKey;
@@ -572,17 +575,34 @@ class ElectronFtpManager {
     }
   }
 
+  resolveAgencyDefaults(agencyId = 'dreamstime') {
+    switch (agencyId) {
+      case '123rf':
+        return { protocol: 'ftp', host: 'ftp.123rf.com', port: 21 };
+      case 'vecteezy':
+        return { protocol: 'sftp', host: 'content-ftp.eezy.com', port: 22 };
+      case 'shutterstock':
+        return { protocol: 'ftps', host: 'ftps.shutterstock.com', port: 21 };
+      case 'adobe':
+        return { protocol: 'sftp', host: 'sftp.contributor.adobestock.com', port: 22 };
+      case 'dreamstime':
+      default:
+        return { protocol: 'ftp', host: 'ftp.dreamstime.com', port: 21 };
+    }
+  }
+
   saveCredentials(payload = {}) {
     const agencyId = payload.agencyId || 'dreamstime';
+    const defaults = this.resolveAgencyDefaults(agencyId);
     let encryptedPassword = undefined;
     if (typeof payload.password === 'string' && payload.password.length > 0) {
       encryptedPassword = this.encryptPassword(payload.password);
     }
     return this.sqliteDb.saveFtpProfile({
       agencyId,
-      protocol: 'ftp',
-      host: (payload.host || (agencyId === '123rf' ? 'ftp.123rf.com' : 'ftp.dreamstime.com')).trim(),
-      port: 21,
+      protocol: payload.protocol || defaults.protocol,
+      host: (payload.host || defaults.host).trim(),
+      port: Number(payload.port || defaults.port),
       username: (payload.username || '').trim(),
       encryptedPassword,
       passiveMode: true,
@@ -592,8 +612,11 @@ class ElectronFtpManager {
 
   async testConnection(payload = {}) {
     const agencyId = payload.agencyId || 'dreamstime';
+    const defaults = this.resolveAgencyDefaults(agencyId);
     const profileWithSecret = this.sqliteDb.getFtpProfileWithSecret(agencyId);
-    const host = (payload.host || profileWithSecret?.host || 'ftp.dreamstime.com').trim();
+    const protocol = payload.protocol || profileWithSecret?.protocol || defaults.protocol;
+    const host = (payload.host || profileWithSecret?.host || defaults.host).trim();
+    const port = Number(payload.port || profileWithSecret?.port || defaults.port);
     const username = (payload.username ?? profileWithSecret?.username ?? '').trim();
     const password =
       typeof payload.password === 'string' && payload.password.length > 0
@@ -603,26 +626,72 @@ class ElectronFtpManager {
     if (!host || !username || !password) {
       return {
         success: false,
-        error: 'Host, Username, and Password are required to connect to Dreamstime FTP.',
+        error: 'Host, Username, and Password are required to connect.',
       };
     }
 
     const startMs = Date.now();
+    if (protocol === 'sftp') {
+      const testSftp = new SftpAdapter();
+      try {
+        await testSftp.ensureConnected({
+          host,
+          port,
+          username,
+          password,
+          timeoutMs: 15000,
+        });
+        const latencyMs = Date.now() - startMs;
+        const now = Date.now();
+        this.sqliteDb.saveFtpProfile({
+          agencyId,
+          protocol,
+          host,
+          port,
+          username,
+          encryptedPassword:
+            typeof payload.password === 'string' && payload.password.length > 0
+              ? this.encryptPassword(payload.password)
+              : profileWithSecret?.encryptedPassword,
+          passiveMode: true,
+          lastVerifiedAt: now,
+        });
+        return {
+          success: true,
+          latencyMs,
+          protocol,
+          host,
+          port,
+          verifiedAt: now,
+        };
+      } catch (err) {
+        return {
+          success: false,
+          errorCode: String(err.code || 'SFTP_AUTH_ERROR'),
+          error: err.message || `Failed to connect to ${host}:${port} via SFTP.`,
+        };
+      } finally {
+        await testSftp.disconnect();
+      }
+    }
+
     const testAdapter = new PlainFtpAdapter();
     try {
       await testAdapter.ensureConnected({
         host,
+        port,
         username,
         password,
+        secure: protocol === 'ftps',
         timeoutMs: 15000,
       });
       const latencyMs = Date.now() - startMs;
       const now = Date.now();
       this.sqliteDb.saveFtpProfile({
         agencyId,
-        protocol: 'ftp',
+        protocol,
         host,
-        port: 21,
+        port,
         username,
         encryptedPassword:
           typeof payload.password === 'string' && payload.password.length > 0
@@ -634,16 +703,16 @@ class ElectronFtpManager {
       return {
         success: true,
         latencyMs,
-        protocol: 'ftp',
+        protocol,
         host,
-        port: 21,
+        port,
         verifiedAt: now,
       };
     } catch (err) {
       return {
         success: false,
         errorCode: String(err.code || 'FTP_AUTH_ERROR'),
-        error: err.message || 'Failed to connect to Dreamstime FTP server.',
+        error: err.message || `Failed to connect to ${host}:${port}.`,
       };
     } finally {
       testAdapter.disconnect();
@@ -691,7 +760,7 @@ class ElectronFtpManager {
   }
 
   /**
-   * Strictly serialized single-file upload over the persistent Plain FTP session.
+   * Strictly serialized single-file upload over persistent FTP / FTPS / SFTP sessions.
    * Uses an internal mutex so two transfers can NEVER overlap on the socket even if invoked concurrently.
    */
   uploadSingleNativeFile(payload = {}) {
@@ -710,12 +779,31 @@ class ElectronFtpManager {
         byteOffset = 0,
       } = payload;
 
+      const defaults = this.resolveAgencyDefaults(agencyId);
       const profileWithSecret = this.sqliteDb.getFtpProfileWithSecret(agencyId);
-      const isVideoMedia = mediaType === 'video' || (filename && /\.(mp4|mov|m4v|webm|avi|mkv)$/i.test(filename)) || remoteFolder === '/ai_video';
-      const protocol = explicitProtocol || (agencyId === '123rf' && isVideoMedia ? 'sftp' : 'ftp');
-      const sftpPort = explicitPort || (agencyId === '123rf' ? 2022 : 22);
-      const defaultHost = agencyId === '123rf' ? (protocol === 'sftp' ? 'footage.ftp.123rf.com' : 'ftp.123rf.com') : 'ftp.dreamstime.com';
-      const host = (hostOverride || (protocol === 'sftp' ? 'footage.ftp.123rf.com' : profileWithSecret?.host) || defaultHost).trim();
+      const isVideoMedia =
+        mediaType === 'video' ||
+        (filename && /\.(mp4|mov|m4v|webm|avi|mkv)$/i.test(filename)) ||
+        remoteFolder === '/ai_video';
+
+      const protocol =
+        explicitProtocol ||
+        (agencyId === '123rf' && isVideoMedia ? 'sftp' : profileWithSecret?.protocol || defaults.protocol);
+
+      const targetPort = Number(
+        explicitPort ||
+          (agencyId === '123rf' && protocol === 'sftp'
+            ? 2022
+            : profileWithSecret?.port || defaults.port)
+      );
+
+      const host = (
+        hostOverride ||
+        (agencyId === '123rf' && protocol === 'sftp'
+          ? 'footage.ftp.123rf.com'
+          : profileWithSecret?.host || defaults.host)
+      ).trim();
+
       const username = (profileWithSecret?.username || '').trim();
       const password = this.decryptPassword(profileWithSecret?.encryptedPassword || '');
 
@@ -723,8 +811,7 @@ class ElectronFtpManager {
         return {
           success: false,
           errorCode: 'NO_CREDENTIALS',
-          errorMessage:
-            `${agencyId === '123rf' ? '123RF' : 'Dreamstime'} FTP credentials are not configured. Open Site Settings to save your login.`,
+          errorMessage: `${agencyId.toUpperCase()} FTP/SFTP credentials are not configured. Open Site Settings to save your login.`,
         };
       }
 
@@ -734,7 +821,7 @@ class ElectronFtpManager {
         try {
           await this.sftpAdapter.ensureConnected({
             host,
-            port: sftpPort,
+            port: targetPort,
             username,
             password,
             timeoutMs: 30000,
@@ -773,8 +860,10 @@ class ElectronFtpManager {
       try {
         await this.persistentAdapter.ensureConnected({
           host,
+          port: targetPort,
           username,
           password,
+          secure: protocol === 'ftps',
           timeoutMs: 30000,
         });
 
@@ -823,5 +912,6 @@ class ElectronFtpManager {
 module.exports = {
   ElectronFtpManager,
   PlainFtpAdapter,
+  SftpAdapter,
   FtpFtpsAdapter: PlainFtpAdapter,
 };

@@ -2494,13 +2494,30 @@ class SqliteDatabaseManager {
     };
   }
 
+  getDefaultFtpAgencySpec(agencyId = 'dreamstime') {
+    switch (agencyId) {
+      case '123rf':
+        return { protocol: 'ftp', host: 'ftp.123rf.com', port: 21 };
+      case 'vecteezy':
+        return { protocol: 'sftp', host: 'content-ftp.eezy.com', port: 22 };
+      case 'shutterstock':
+        return { protocol: 'ftps', host: 'ftps.shutterstock.com', port: 21 };
+      case 'adobe':
+        return { protocol: 'sftp', host: 'sftp.contributor.adobestock.com', port: 22 };
+      case 'dreamstime':
+      default:
+        return { protocol: 'ftp', host: 'ftp.dreamstime.com', port: 21 };
+    }
+  }
+
   getFtpProfileWithSecret(agencyId = 'dreamstime') {
     const now = Date.now();
+    const spec = this.getDefaultFtpAgencySpec(agencyId);
     const defaultProfile = {
       agencyId,
-      protocol: 'ftp',
-      host: agencyId === '123rf' ? 'ftp.123rf.com' : agencyId === 'dreamstime' ? 'ftp.dreamstime.com' : '',
-      port: 21,
+      protocol: spec.protocol,
+      host: spec.host,
+      port: spec.port,
       username: '',
       encryptedPassword: '',
       hasSavedPassword: false,
@@ -2510,7 +2527,14 @@ class SqliteDatabaseManager {
 
     if (!this.isNativeSqlite) {
       const existing = this.memoryFallback.ftpProfiles.get(agencyId);
-      return existing ? { ...existing, protocol: 'ftp', port: 21 } : defaultProfile;
+      return existing
+        ? {
+            ...existing,
+            protocol: existing.protocol || spec.protocol,
+            host: existing.host || spec.host,
+            port: existing.port || spec.port,
+          }
+        : defaultProfile;
     }
 
     const row = this.db
@@ -2520,9 +2544,9 @@ class SqliteDatabaseManager {
 
     return {
       agencyId: row.agency_id,
-      protocol: 'ftp',
-      host: row.host || (agencyId === '123rf' ? 'ftp.123rf.com' : 'ftp.dreamstime.com'),
-      port: 21,
+      protocol: row.protocol || spec.protocol,
+      host: row.host || spec.host,
+      port: Number(row.port) || spec.port,
       username: row.username || '',
       encryptedPassword: row.encrypted_password || '',
       hasSavedPassword: Boolean(row.encrypted_password && row.encrypted_password.length > 0),
@@ -2535,6 +2559,7 @@ class SqliteDatabaseManager {
   saveFtpProfile(payload = {}) {
     this.markDirty();
     const agencyId = payload.agencyId || 'dreamstime';
+    const spec = this.getDefaultFtpAgencySpec(agencyId);
     const existing = this.getFtpProfileWithSecret(agencyId);
     const now = Date.now();
 
@@ -2547,9 +2572,9 @@ class SqliteDatabaseManager {
 
     const updated = {
       agencyId,
-      protocol: 'ftp',
-      host: (payload.host ?? existing.host ?? 'ftp.dreamstime.com').trim(),
-      port: 21,
+      protocol: payload.protocol || existing.protocol || spec.protocol,
+      host: (payload.host ?? existing.host ?? spec.host).trim(),
+      port: Number(payload.port || existing.port || spec.port),
       username: (payload.username ?? existing.username ?? '').trim(),
       encryptedPassword,
       hasSavedPassword: Boolean(encryptedPassword && encryptedPassword.length > 0),
