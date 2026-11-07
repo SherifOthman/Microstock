@@ -1,0 +1,6 @@
+{
+  "summary":  "Architectural blueprint and implementation plan for isolating per-agency FTP queues in SQLite and React state, enforcing agency-specific EPS pairing vs. standalone EPS ingestion rules, standardizing 4-tier media queue sorting, resolving sibling JPG thumbnails for EPS vectors, purging the legacy Freepik FTP tab in favor of Magnific SFTP (Port 60022), and isolating the 123RF AI-Generated Batch toggle.",
+  "updatedAt":  "2026-11-07T16:02:45.938838956Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

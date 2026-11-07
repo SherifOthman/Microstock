@@ -1270,11 +1270,11 @@ export class StockFlowSqliteDB {
   };
 
   ftp = {
-    getProfile: async (agencyId: SupportedPlatform = 'dreamstime'): Promise<FtpCredentialProfile> => {
+    getProfile: async (agencyId: SupportedPlatform | string = 'dreamstime'): Promise<FtpCredentialProfile> => {
       return await invokeDbRpc('getFtpProfile', agencyId);
     },
     saveProfile: async (payload: {
-      agencyId?: SupportedPlatform;
+      agencyId?: SupportedPlatform | string;
       protocol?: 'ftp' | 'ftps' | 'sftp';
       host?: string;
       port?: number;
@@ -1289,7 +1289,7 @@ export class StockFlowSqliteDB {
     },
     createSession: async (payload: {
       id?: string;
-      agencyId?: SupportedPlatform;
+      agencyId?: SupportedPlatform | string;
       mode?: 'live' | 'dry_run';
       totalFiles: number;
       totalBytes: number;
@@ -1306,7 +1306,7 @@ export class StockFlowSqliteDB {
       notifyDbChanged(false, 'ftp');
       return res;
     },
-    getSessions: async (agencyId?: SupportedPlatform, limit = 20): Promise<FtpSessionRecord[]> => {
+    getSessions: async (agencyId?: SupportedPlatform | string, limit = 20): Promise<FtpSessionRecord[]> => {
       return (await invokeDbRpc('getFtpSessions', agencyId, limit)) || [];
     },
     logTransfer: async (payload: Omit<FtpTransferLogRecord, 'id' | 'completedAt'> & { id?: string; completedAt?: number }): Promise<FtpTransferLogRecord> => {
@@ -1315,13 +1315,13 @@ export class StockFlowSqliteDB {
       return res;
     },
     getTransferLogs: async (options?: {
-      agencyId?: SupportedPlatform;
+      agencyId?: SupportedPlatform | string;
       sessionId?: string;
       limit?: number;
     }): Promise<FtpTransferLogRecord[]> => {
       return (await invokeDbRpc('getFtpTransferLogs', options || {})) || [];
     },
-    clearLogs: async (agencyId?: SupportedPlatform): Promise<{ cleared: boolean }> => {
+    clearLogs: async (agencyId?: SupportedPlatform | string): Promise<{ cleared: boolean }> => {
       const res = await invokeDbRpc('clearFtpLogs', agencyId);
       notifyDbChanged(true, 'ftp');
       return res;
@@ -1330,10 +1330,10 @@ export class StockFlowSqliteDB {
 
   queues = {
     saveSnapshot: async <TItem = any, TTelemetry = Record<string, any>>(payload: {
-      moduleId: 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio' | 'tracker';
+      moduleId: string;
       sessionId?: string;
       batchStatus: 'idle' | 'running' | 'paused' | 'completed';
-      agencyId?: SupportedPlatform;
+      agencyId?: SupportedPlatform | string;
       queue: TItem[];
       telemetry?: TTelemetry;
       updatedAt?: number;
@@ -1360,12 +1360,12 @@ export class StockFlowSqliteDB {
       return await invokeDbRpc('saveQueueSnapshot', payload);
     },
     getSnapshot: async <TItem = any, TTelemetry = Record<string, any>>(
-      moduleId: 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio' | 'tracker' = 'ftp'
+      moduleId: string = 'ftp'
     ): Promise<{
       moduleId: string;
       sessionId?: string;
       batchStatus: 'idle' | 'running' | 'paused' | 'completed';
-      agencyId: SupportedPlatform;
+      agencyId: SupportedPlatform | string;
       queue: TItem[];
       telemetry: TTelemetry;
       updatedAt: number;
@@ -1390,7 +1390,7 @@ export class StockFlowSqliteDB {
       return rpcSnap || null;
     },
     clearSnapshot: async (
-      moduleId: 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio' | 'tracker' = 'ftp'
+      moduleId: string = 'ftp'
     ): Promise<{ cleared: boolean; moduleId: string }> => {
       try {
         if (typeof window !== 'undefined' && window.localStorage) {

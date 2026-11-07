@@ -2532,8 +2532,6 @@ class SqliteDatabaseManager {
         return { protocol: 'ftps', host: 'ftps.shutterstock.com', port: 21 };
       case 'adobe':
         return { protocol: 'sftp', host: 'sftp.contributor.adobestock.com', port: 22 };
-      case 'freepik':
-        return { protocol: 'sftp', host: 'ftp.freepik.com', port: 22 };
       case 'magnific':
         return { protocol: 'sftp', host: 'contributor-ftp.magnific.com', port: 60022 };
       case 'dreamstime':

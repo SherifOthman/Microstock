@@ -50,7 +50,6 @@ export type QueueSubTab = 'all' | 'succeeded' | 'failed' | 'skipped';
 export const SUPPORTED_FTP_AGENCIES: { id: FtpSupportedAgencyId; label: string }[] = [
   { id: 'dreamstime', label: 'Dreamstime' },
   { id: '123rf', label: '123RF' },
-  { id: 'freepik', label: 'Freepik' },
   { id: 'magnific', label: 'Magnific' },
   { id: 'vecteezy', label: 'Vecteezy' },
   { id: 'shutterstock', label: 'Shutterstock' },
@@ -61,8 +60,10 @@ export interface UnifiedFtpItemView {
   id: string;
   filename: string;
   displayName?: string;
+  stemName?: string;
   mediaType: 'image' | 'vector' | 'video';
   isVectorBundle?: boolean;
+  isCsv?: boolean;
   isAiGenerated?: boolean;
   isAiIgnored?: boolean;
   remoteFolder: string;
@@ -75,14 +76,17 @@ export interface UnifiedFtpItemView {
   maxRetries: number;
   errorMessage?: string;
   localPath?: string;
+  previewLocalPath?: string;
   previewUrl?: string;
   jpgPart?: {
     filename: string;
     remoteFolder: string;
+    localPath?: string;
   };
   epsPart?: {
     filename: string;
     remoteFolder: string;
+    localPath?: string;
   };
 }
 
@@ -101,6 +105,73 @@ export interface UnifiedFtpTelemetry {
   speedBytesPerSec: number;
   etaSeconds: number | null;
   totalDurationSeconds?: number;
+}
+
+export function resolveEffectiveFtpPreviewUrl(
+  item: UnifiedFtpItemView,
+  allItems?: UnifiedFtpItemView[]
+): string | undefined {
+  if (item.isCsv || item.filename.toLowerCase().endsWith('.csv')) {
+    return undefined;
+  }
+
+  const normalizePreviewCandidate = (url?: string): string | undefined => {
+    if (!url) return undefined;
+    if (url.startsWith('stockflow://local?path=')) {
+      const encoded = url.slice('stockflow://local?path='.length);
+      try {
+        const decoded = decodeURIComponent(encoded);
+        if (/\.(eps|ai|cdr)$/i.test(decoded)) {
+          const jpgSibling = decoded.replace(/\.(eps|ai|cdr)$/i, '.jpg');
+          return `stockflow://local?path=${encodeURIComponent(jpgSibling)}`;
+        }
+      } catch {
+        // ignore decode error
+      }
+      return url;
+    }
+    if (/\.(eps|ai|cdr)(\?.*)?$/i.test(url)) {
+      return undefined;
+    }
+    return url;
+  };
+
+  // 1. Direct previewUrl (already resolved from companion JPG or raster File)
+  const direct = normalizePreviewCandidate(item.previewUrl);
+  if (direct) return direct;
+
+  // 2. Companion JPG path from Vector Pair or standalone EPS sibling metadata
+  const companionPath = item.previewLocalPath || item.jpgPart?.localPath;
+  if (companionPath && !companionPath.startsWith('/StockFlow/Master_Vault/')) {
+    const rasterPath = companionPath.replace(/\.(eps|ai|cdr)$/i, '.jpg');
+    return `stockflow://local?path=${encodeURIComponent(rasterPath)}`;
+  }
+
+  // 3. Sibling item in the queue with matching base stem
+  if (allItems && (item.isVectorBundle || item.mediaType === 'vector')) {
+    const stem = (
+      item.stemName ||
+      item.filename.replace(/\.\(jpg\+eps\)$/i, '').replace(/\.[^.]+$/, '')
+    ).toLowerCase();
+    const siblingJpg = allItems.find((other) => {
+      if (other.id === item.id || other.mediaType !== 'image') return false;
+      const otherStem = (
+        other.stemName || other.filename.replace(/\.[^.]+$/, '')
+      ).toLowerCase();
+      return otherStem === stem && Boolean(other.previewUrl);
+    });
+    if (siblingJpg?.previewUrl) {
+      return siblingJpg.previewUrl;
+    }
+  }
+
+  // 4. Derive sibling .jpg from localPath on disk
+  if (item.localPath && !item.localPath.startsWith('/StockFlow/Master_Vault/')) {
+    const siblingDiskPath = item.localPath.replace(/\.(eps|ai|cdr)$/i, '.jpg');
+    return `stockflow://local?path=${encodeURIComponent(siblingDiskPath)}`;
+  }
+
+  return undefined;
 }
 
 export function getRemoteFolderBadgeStyle(
@@ -126,7 +197,7 @@ export function getRemoteFolderBadgeStyle(
 }
 
 export function getMediaIcon(item: UnifiedFtpItemView) {
-  if (item.filename.toLowerCase().endsWith('.csv')) {
+  if (item.isCsv || item.filename.toLowerCase().endsWith('.csv')) {
     return <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400 shrink-0" />;
   }
   if (item.isVectorBundle || item.mediaType === 'vector') {
@@ -139,24 +210,34 @@ export function getMediaIcon(item: UnifiedFtpItemView) {
 }
 
 export function getMediaTypeLabel(item: UnifiedFtpItemView, language: string): string {
-  if (item.filename.toLowerCase().endsWith('.csv')) {
+  if (item.isCsv || item.filename.toLowerCase().endsWith('.csv')) {
     return 'CSV';
   }
   if (item.isVectorBundle) {
     return language === 'ar' ? 'حزمة فيكتور (JPG+EPS)' : 'Vector Pair (JPG+EPS)';
   }
-  if (item.mediaType === 'vector') return language === 'ar' ? 'فيكتور' : 'Vector';
+  if (item.mediaType === 'vector') return language === 'ar' ? 'فيكتور (EPS)' : 'Vector (EPS)';
   if (item.mediaType === 'video') return language === 'ar' ? 'فيديو' : 'Video';
   return language === 'ar' ? 'صورة' : 'Photo';
 }
 
-export function renderMediaPreviewContent(item: UnifiedFtpItemView, size: 'hover' | 'modal') {
+const FtpPreviewMediaBox: React.FC<{
+  item: UnifiedFtpItemView;
+  size: 'hover' | 'modal';
+}> = ({ item, size }) => {
+  const src = resolveEffectiveFtpPreviewUrl(item);
+  const [imgFailed, setImgFailed] = useState(false);
+
+  useEffect(() => {
+    setImgFailed(false);
+  }, [src, item.id]);
+
   const boxClass =
     size === 'modal'
       ? 'w-full max-h-[75vh] h-auto rounded-lg border border-border bg-black/70 object-contain shadow-md'
       : 'w-full max-h-72 h-auto rounded-lg border border-border bg-black/60 object-contain shadow-inner';
 
-  if (item.filename.toLowerCase().endsWith('.csv')) {
+  if (item.isCsv || item.filename.toLowerCase().endsWith('.csv')) {
     return (
       <div
         className={`${
@@ -169,8 +250,7 @@ export function renderMediaPreviewContent(item: UnifiedFtpItemView, size: 'hover
     );
   }
 
-  const src = item.previewUrl;
-  if (!src) {
+  if (!src || imgFailed) {
     return (
       <div
         className={`${
@@ -202,6 +282,7 @@ export function renderMediaPreviewContent(item: UnifiedFtpItemView, size: 'hover
         loop
         playsInline
         controls={size === 'modal'}
+        onError={() => setImgFailed(true)}
         className={boxClass}
       />
     );
@@ -211,9 +292,14 @@ export function renderMediaPreviewContent(item: UnifiedFtpItemView, size: 'hover
     <img
       src={src}
       alt={item.displayName || item.filename}
+      onError={() => setImgFailed(true)}
       className={boxClass}
     />
   );
+};
+
+export function renderMediaPreviewContent(item: UnifiedFtpItemView, size: 'hover' | 'modal') {
+  return <FtpPreviewMediaBox item={item} size={size} />;
 }
 
 export async function extractFilesFromDataTransfer(dataTransfer: DataTransfer): Promise<File[]> {

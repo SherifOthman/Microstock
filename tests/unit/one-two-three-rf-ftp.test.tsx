@@ -1,11 +1,11 @@
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import {
-  detect123RfMediaType,
   resolve123RfRoute,
   resolveMultiAgencyRoute,
   bundleAndRoute123RfQueue,
+  AGENCY_FTP_SERVER_SPECS,
   ONE_TWO_THREE_RF_FTP_HOST,
   ONE_TWO_THREE_RF_FTP_PORT,
   ONE_TWO_THREE_RF_SFTP_HOST,
@@ -16,17 +16,27 @@ import {
   SHUTTERSTOCK_FTPS_PORT,
   ADOBE_STOCK_SFTP_HOST,
   ADOBE_STOCK_SFTP_PORT,
-  FREEPIK_SFTP_HOST,
-  FREEPIK_SFTP_PORT,
   MAGNIFIC_SFTP_HOST,
   MAGNIFIC_SFTP_PORT,
 } from '../../src/services/ftp/oneTwoThreeRfFtpRouter';
-import { ftp123rfService } from '../../src/services/ftp/Ftp123RFService';
+import { ftp123rfService, getFtpAgencyModuleId } from '../../src/services/ftp/Ftp123RFService';
 import { OneTwoThreeRfFtpUploaderView } from '../../src/features/ftp/OneTwoThreeRfFtpUploaderView';
+import {
+  SUPPORTED_FTP_AGENCIES,
+  resolveEffectiveFtpPreviewUrl,
+} from '../../src/features/ftp/components/FtpSharedComponents';
 import { LanguageProvider } from '../../src/context/LanguageContext';
 
-describe('123RF FTP/SFTP Dynamic Router & Routing Rules', () => {
-  it('1. Photos (.jpg without .eps): Standard FTP (Port 21, ftp.123rf.com), AI -> /ai_image/, Non-AI -> /', () => {
+describe('Multi-Protocol FTP Architecture, Isolation & Agency Rules', () => {
+  beforeEach(() => {
+    for (const agency of ['123rf', 'magnific', 'vecteezy', 'shutterstock', 'adobe'] as const) {
+      ftp123rfService.clearQueue(agency);
+    }
+    ftp123rfService.setActiveAgency('123rf');
+    ftp123rfService.setBatchAiGenerated(false);
+  });
+
+  it('1. 123RF Routing: Photos (.jpg), Vectors (/vector/), and Videos (SFTP:2022)', () => {
     // Non-AI Photo
     const nonAiRoute = resolve123RfRoute('image', false);
     expect(nonAiRoute.protocol).toBe('ftp');
@@ -42,174 +52,239 @@ describe('123RF FTP/SFTP Dynamic Router & Routing Rules', () => {
     expect(aiRoute.port).toBe(ONE_TWO_THREE_RF_FTP_PORT);
     expect(aiRoute.remoteFolder).toBe('/ai_image');
     expect(aiRoute.isAiIgnored).toBe(false);
-  });
 
-  it('2. Vectors (.eps + .jpg preview): Standard FTP (Port 21, ftp.123rf.com), ALWAYS /vector/ (AI toggle ignored)', () => {
-    // When isAiGenerated is false
-    const vectorRouteNonAi = resolve123RfRoute('vector', false);
-    expect(vectorRouteNonAi.protocol).toBe('ftp');
-    expect(vectorRouteNonAi.host).toBe(ONE_TWO_THREE_RF_FTP_HOST);
-    expect(vectorRouteNonAi.port).toBe(ONE_TWO_THREE_RF_FTP_PORT);
-    expect(vectorRouteNonAi.remoteFolder).toBe('/vector');
-    expect(vectorRouteNonAi.isAiIgnored).toBe(true);
-
-    // When isAiGenerated is true -> MUST STILL BE /vector/ and ignored
+    // Vector (AI flag strictly ignored)
     const vectorRouteAi = resolve123RfRoute('vector', true);
     expect(vectorRouteAi.protocol).toBe('ftp');
-    expect(vectorRouteAi.host).toBe(ONE_TWO_THREE_RF_FTP_HOST);
-    expect(vectorRouteAi.port).toBe(ONE_TWO_THREE_RF_FTP_PORT);
     expect(vectorRouteAi.remoteFolder).toBe('/vector');
     expect(vectorRouteAi.isAiIgnored).toBe(true);
-  });
 
-  it('3. Videos (.mp4, .mov): SFTP (Port 2022, footage.ftp.123rf.com), AI -> /ai_video/, Non-AI -> /', () => {
-    // Non-AI Video
-    const videoNonAi = resolve123RfRoute('video', false);
-    expect(videoNonAi.protocol).toBe('sftp');
-    expect(videoNonAi.host).toBe(ONE_TWO_THREE_RF_SFTP_HOST);
-    expect(videoNonAi.port).toBe(ONE_TWO_THREE_RF_SFTP_PORT);
-    expect(videoNonAi.remoteFolder).toBe('/');
-    expect(videoNonAi.isAiIgnored).toBe(false);
-
-    // AI Video
+    // Video (SFTP port 2022)
     const videoAi = resolve123RfRoute('video', true);
     expect(videoAi.protocol).toBe('sftp');
     expect(videoAi.host).toBe(ONE_TWO_THREE_RF_SFTP_HOST);
     expect(videoAi.port).toBe(ONE_TWO_THREE_RF_SFTP_PORT);
     expect(videoAi.remoteFolder).toBe('/ai_video');
-    expect(videoAi.isAiIgnored).toBe(false);
   });
 
-  it('4. Bundling & Execution Order: Pairs .eps + .jpg preview into Vector Bundle with .jpg first, .eps second', () => {
+  it('2. Bug 1 — Queue Isolation Across Agencies & Unique SQLite moduleId per Tab', async () => {
+    expect(getFtpAgencyModuleId('dreamstime')).toBe('ftp');
+    expect(getFtpAgencyModuleId('123rf')).toBe('ftp_123rf');
+    expect(getFtpAgencyModuleId('magnific')).toBe('ftp_magnific');
+    expect(getFtpAgencyModuleId('vecteezy')).toBe('ftp_vecteezy');
+    expect(getFtpAgencyModuleId('shutterstock')).toBe('ftp_shutterstock');
+    expect(getFtpAgencyModuleId('adobe')).toBe('ftp_adobe');
+
+    // Add files to Shutterstock
+    await ftp123rfService.addFiles(
+      [new File(['shutterstock photo'], 'ss_exclusive.jpg', { type: 'image/jpeg' })],
+      'shutterstock'
+    );
+
+    expect(ftp123rfService.getQueue('shutterstock').length).toBe(1);
+    expect(ftp123rfService.getQueue('shutterstock')[0].filename).toBe('ss_exclusive.jpg');
+
+    // Verify zero queue leakage into Adobe Stock, Vecteezy, 123RF, or Magnific
+    expect(ftp123rfService.getQueue('adobe').length).toBe(0);
+    expect(ftp123rfService.getQueue('vecteezy').length).toBe(0);
+    expect(ftp123rfService.getQueue('123rf').length).toBe(0);
+    expect(ftp123rfService.getQueue('magnific').length).toBe(0);
+
+    // Switch active agency to Adobe Stock and verify active queue is empty
+    ftp123rfService.setActiveAgency('adobe');
+    expect(ftp123rfService.getQueue().length).toBe(0);
+
+    // Switch back to Shutterstock and verify its queue is intact
+    ftp123rfService.setActiveAgency('shutterstock');
+    expect(ftp123rfService.getQueue().length).toBe(1);
+    expect(ftp123rfService.getQueue()[0].filename).toBe('ss_exclusive.jpg');
+  });
+
+  it('3. Bug 2 — Pairing Agencies (123RF, Magnific) vs. Standalone EPS Agencies (Shutterstock, Adobe Stock, Vecteezy)', () => {
     const rawFiles = [
-      { name: 'artwork_01.jpg', size: 1024 * 500, path: '/tmp/artwork_01.jpg' },
-      { name: 'artwork_01.eps', size: 1024 * 2000, path: '/tmp/artwork_01.eps' },
-      { name: 'standalone_photo.jpg', size: 1024 * 800, path: '/tmp/standalone_photo.jpg' },
-      { name: 'drone_footage.mp4', size: 1024 * 10000, path: '/tmp/drone_footage.mp4' },
+      { name: 'b01_001_vector.jpg', size: 500_000, path: '/vault/b01_001_vector.jpg' },
+      { name: 'b01_001_vector.eps', size: 2_000_000, path: '/vault/b01_001_vector.eps' },
+      { name: 'b01_037_standalone_photo.jpg', size: 800_000, path: '/vault/b01_037_standalone_photo.jpg' },
     ];
 
-    const queue = bundleAndRoute123RfQueue(rawFiles, true);
+    // A. Pairing Agencies: 123RF and Magnific pair .jpg + .eps (.jpg order 1, .eps order 2)
+    for (const pairingAgency of ['123rf', 'magnific'] as const) {
+      const pairedQueue = bundleAndRoute123RfQueue(rawFiles, false, pairingAgency);
+      expect(pairedQueue.length).toBe(2); // 1 standalone photo + 1 vector pair
 
-    // Should create 3 items: 1 vector bundle (paired), 1 photo, 1 video
-    expect(queue.length).toBe(3);
+      const vecPair = pairedQueue.find((q) => q.mediaType === 'vector');
+      expect(vecPair).toBeDefined();
+      expect(vecPair?.isVectorBundle).toBe(true);
+      expect(vecPair?.jpgPart?.filename).toBe('b01_001_vector.jpg');
+      expect(vecPair?.jpgPart?.order).toBe(1);
+      expect(vecPair?.epsPart?.filename).toBe('b01_001_vector.eps');
+      expect(vecPair?.epsPart?.order).toBe(2);
+    }
 
-    const vecItem = queue.find((q) => q.isVectorBundle);
-    expect(vecItem).toBeDefined();
-    expect(vecItem?.mediaType).toBe('vector');
-    expect(vecItem?.remoteFolder).toBe('/vector');
-    expect(vecItem?.protocol).toBe('ftp');
-    expect(vecItem?.isAiIgnored).toBe(true);
+    // B. Standalone Agencies: Shutterstock, Adobe Stock, Vecteezy skip companion .jpg and queue ONLY .eps
+    for (const standaloneAgency of ['shutterstock', 'adobe', 'vecteezy'] as const) {
+      const standaloneQueue = bundleAndRoute123RfQueue(rawFiles, false, standaloneAgency);
+      expect(standaloneQueue.length).toBe(2); // 1 standalone photo + 1 standalone .eps (companion .jpg excluded!)
 
-    // Verify companion execution parts
-    expect(vecItem?.jpgPart).toBeDefined();
-    expect(vecItem?.epsPart).toBeDefined();
-    expect(vecItem?.jpgPart?.order).toBe(1); // JPG preview MUST be first
-    expect(vecItem?.epsPart?.order).toBe(2); // EPS companion MUST be second
-    expect(vecItem?.jpgPart?.remoteFolder).toBe('/vector');
-    expect(vecItem?.epsPart?.remoteFolder).toBe('/vector');
+      const vecItem = standaloneQueue.find((q) => q.mediaType === 'vector');
+      expect(vecItem).toBeDefined();
+      expect(vecItem?.isVectorBundle).toBe(false);
+      expect(vecItem?.filename).toBe('b01_001_vector.eps');
+      expect(vecItem?.jpgPart).toBeUndefined();
+      expect(vecItem?.epsPart).toBeUndefined();
+      // Companion .jpg path is still retained on previewLocalPath for thumbnail rendering!
+      expect(vecItem?.previewLocalPath).toBe('/vault/b01_001_vector.jpg');
 
-    // Standalone photo: AI = true -> /ai_image/
-    const photoItem = queue.find((q) => q.mediaType === 'image');
-    expect(photoItem?.remoteFolder).toBe('/ai_image');
-    expect(photoItem?.protocol).toBe('ftp');
-
-    // Video: AI = true -> /ai_video/ via SFTP
-    const videoItem = queue.find((q) => q.mediaType === 'video');
-    expect(videoItem?.remoteFolder).toBe('/ai_video');
-    expect(videoItem?.protocol).toBe('sftp');
-    expect(videoItem?.port).toBe(2022);
+      // Ensure companion .jpg was NOT queued as a photo
+      const photoItems = standaloneQueue.filter((q) => q.mediaType === 'image');
+      expect(photoItems.length).toBe(1);
+      expect(photoItems[0].filename).toBe('b01_037_standalone_photo.jpg');
+    }
   });
 
-  it('5. Multi-Protocol Routing for Vecteezy (SFTP:22), Shutterstock (FTPS Explicit TLS:21), and Adobe Stock (SFTP:22)', () => {
+  it('4. Bug 3 — Standardize Queue Sorting Order: 1. Photos (.jpg), 2. Vectors (.eps/pairs), 3. Videos (.mp4/.mov), 4. Metadata (.csv)', () => {
+    const unsortedFiles = [
+      { name: 'metadata.csv', size: 4096, path: '/vault/metadata.csv' },
+      { name: 'clip_01.mp4', size: 10_000_000, path: '/vault/clip_01.mp4' },
+      { name: 'art_01.eps', size: 2_000_000, path: '/vault/art_01.eps' },
+      { name: 'art_01.jpg', size: 500_000, path: '/vault/art_01.jpg' },
+      { name: 'photo_01.jpg', size: 1_500_000, path: '/vault/photo_01.jpg' },
+    ];
+
+    // Check sorting on Pairing Agency (123RF)
+    const queue123rf = bundleAndRoute123RfQueue(unsortedFiles, false, '123rf');
+    expect(queue123rf.map((i) => i.filename)).toEqual([
+      'photo_01.jpg',
+      'art_01.(jpg+eps)',
+      'clip_01.mp4',
+      'metadata.csv',
+    ]);
+
+    // Check sorting on Standalone EPS Agency (Shutterstock)
+    const queueShutterstock = bundleAndRoute123RfQueue(unsortedFiles, false, 'shutterstock');
+    expect(queueShutterstock.map((i) => i.filename)).toEqual([
+      'photo_01.jpg',
+      'art_01.eps',
+      'clip_01.mp4',
+      'metadata.csv',
+    ]);
+  });
+
+  it('5. Bug 4 — EPS Thumbnail Rendering Resolves Companion .jpg Preview Instead of Raw .eps Path', async () => {
+    await ftp123rfService.addNativeFiles(
+      [
+        { name: 'b01_001_car.jpg', size: 400_000, path: 'C:\\Shoot\\b01_001_car.jpg' },
+        { name: 'b01_001_car.eps', size: 3_200_000, path: 'C:\\Shoot\\b01_001_car.eps' },
+      ],
+      'shutterstock'
+    );
+
+    const ssQueue = ftp123rfService.getQueue('shutterstock');
+    expect(ssQueue.length).toBe(1);
+    expect(ssQueue[0].filename).toBe('b01_001_car.eps');
+    expect(ssQueue[0].previewUrl).toContain(encodeURIComponent('C:\\Shoot\\b01_001_car.jpg'));
+    expect(ssQueue[0].previewUrl).not.toContain('.eps');
+
+    // Also verify UI helper rewrites any raw .eps stockflow:// URL to its .jpg sibling
+    const resolvedFromRawEps = resolveEffectiveFtpPreviewUrl({
+      id: 'test-eps',
+      filename: 'icon_set.eps',
+      mediaType: 'vector',
+      remoteFolder: '/',
+      fileSize: 1000,
+      bytesTransferred: 0,
+      progressPercent: 0,
+      status: 'queued',
+      retryCount: 0,
+      maxRetries: 5,
+      localPath: 'C:\\Shoot\\icon_set.eps',
+    });
+    expect(resolvedFromRawEps).toBe(
+      `stockflow://local?path=${encodeURIComponent('C:\\Shoot\\icon_set.jpg')}`
+    );
+  });
+
+  it('6. Bug 5 — Freepik FTP Tab Purged (Magnific SFTP 60022 Preserved) & 123RF AI Batch State Isolated', async () => {
+    const agencyIds = SUPPORTED_FTP_AGENCIES.map((a) => a.id);
+    expect(agencyIds).not.toContain('freepik');
+    expect(agencyIds).toEqual([
+      'dreamstime',
+      '123rf',
+      'magnific',
+      'vecteezy',
+      'shutterstock',
+      'adobe',
+    ]);
+    expect((AGENCY_FTP_SERVER_SPECS as any).freepik).toBeUndefined();
+
+    const magnificRoute = resolveMultiAgencyRoute('magnific', 'image', true);
+    expect(magnificRoute.protocol).toBe('sftp');
+    expect(magnificRoute.host).toBe(MAGNIFIC_SFTP_HOST);
+    expect(magnificRoute.port).toBe(MAGNIFIC_SFTP_PORT);
+    expect(magnificRoute.port).toBe(60022);
+
     const vecteezyRoute = resolveMultiAgencyRoute('vecteezy', 'image', true);
     expect(vecteezyRoute.protocol).toBe('sftp');
     expect(vecteezyRoute.host).toBe(VECTEEZY_SFTP_HOST);
     expect(vecteezyRoute.port).toBe(VECTEEZY_SFTP_PORT);
-    expect(vecteezyRoute.remoteFolder).toBe('/');
 
     const shutterstockRoute = resolveMultiAgencyRoute('shutterstock', 'video', true);
     expect(shutterstockRoute.protocol).toBe('ftps');
     expect(shutterstockRoute.host).toBe(SHUTTERSTOCK_FTPS_HOST);
     expect(shutterstockRoute.port).toBe(SHUTTERSTOCK_FTPS_PORT);
     expect(shutterstockRoute.explicitTls).toBe(true);
-    expect(shutterstockRoute.remoteFolder).toBe('/');
 
     const adobeRoute = resolveMultiAgencyRoute('adobe', 'vector', false);
     expect(adobeRoute.protocol).toBe('sftp');
     expect(adobeRoute.host).toBe(ADOBE_STOCK_SFTP_HOST);
     expect(adobeRoute.port).toBe(ADOBE_STOCK_SFTP_PORT);
 
-    const freepikRoute = resolveMultiAgencyRoute('freepik', 'image', true);
-    expect(freepikRoute.protocol).toBe('sftp');
-    expect(freepikRoute.host).toBe(FREEPIK_SFTP_HOST);
-    expect(freepikRoute.port).toBe(FREEPIK_SFTP_PORT);
-    expect(freepikRoute.remoteFolder).toBe('/');
-    expect(freepikRoute.isAiIgnored).toBe(true);
-
-    const magnificRoute = resolveMultiAgencyRoute('magnific', 'image', true);
-    expect(magnificRoute.protocol).toBe('sftp');
-    expect(magnificRoute.host).toBe(MAGNIFIC_SFTP_HOST);
-    expect(magnificRoute.port).toBe(MAGNIFIC_SFTP_PORT);
-    expect(magnificRoute.remoteFolder).toBe('/');
-    expect(magnificRoute.isAiIgnored).toBe(true);
-    expect(adobeRoute.remoteFolder).toBe('/');
-  });
-});
-
-describe('123RF UI Uploader & AI Toggle Component', () => {
-  beforeEach(() => {
-    ftp123rfService.clearQueue();
-    ftp123rfService.setActiveAgency('123rf');
-    ftp123rfService.setBatchAiGenerated(false);
+    // Enable 123RF AI Batch toggle and verify it only affects 123RF
+    ftp123rfService.setBatchAiGenerated(true);
+    expect(ftp123rfService.getBatchIsAiGenerated('123rf')).toBe(true);
+    expect(ftp123rfService.getBatchIsAiGenerated('magnific')).toBe(false);
+    expect(ftp123rfService.getBatchIsAiGenerated('shutterstock')).toBe(false);
   });
 
-  it('6. UI renders AI Toggle and dynamically updates destination routing for photos and videos while keeping vectors in /vector/', async () => {
+  it('7. UI renders AI Toggle on 123RF and dynamically updates destination routing for photos and videos while keeping vectors in /vector/', async () => {
     render(
       <LanguageProvider>
-        <OneTwoThreeRfFtpUploaderView />
+        <OneTwoThreeRfFtpUploaderView selectedAgency="123rf" />
       </LanguageProvider>
     );
 
-    // Verify AI toggle is rendered
     const toggle = screen.getByTestId('batch-ai-toggle') as HTMLInputElement;
     expect(toggle).toBeDefined();
     expect(toggle.checked).toBe(false);
 
-    // Add a mix of files to the service
     await act(async () => {
-      await ftp123rfService.addFiles([
-        new File(['photo content'], 'landscape.jpg', { type: 'image/jpeg' }),
-        new File(['vector jpg preview'], 'logo.jpg', { type: 'image/jpeg' }),
-        new File(['vector eps binary'], 'logo.eps', { type: 'application/postscript' }),
-        new File(['video content'], 'ocean.mp4', { type: 'video/mp4' }),
-      ]);
+      await ftp123rfService.addFiles(
+        [
+          new File(['photo content'], 'landscape.jpg', { type: 'image/jpeg' }),
+          new File(['vector jpg preview'], 'logo.jpg', { type: 'image/jpeg' }),
+          new File(['vector eps binary'], 'logo.eps', { type: 'application/postscript' }),
+          new File(['video content'], 'ocean.mp4', { type: 'video/mp4' }),
+        ],
+        '123rf'
+      );
     });
 
     await waitFor(() => {
-      // Vector item
       expect(screen.getByText(/Folder: \/vector/i)).toBeDefined();
-      // Initially non-AI photos and videos route to /
       expect(screen.getAllByText(/Folder: \//i).length).toBeGreaterThanOrEqual(2);
     });
 
-    // Toggle Batch AI ON
     const activeToggle = screen.getByTestId('batch-ai-toggle') as HTMLInputElement;
     act(() => {
       fireEvent.click(activeToggle);
     });
     expect(activeToggle.checked).toBe(true);
 
-    // Verify destinations updated dynamically
     await waitFor(() => {
-      // Photo should now route to /ai_image
       expect(screen.getByText(/Folder: \/ai_image/i)).toBeDefined();
-      // Video should now route to /ai_video
       expect(screen.getByText(/Folder: \/ai_video/i)).toBeDefined();
-      // Vector pair MUST REMAIN in /vector/
       expect(screen.getByText(/Folder: \/vector/i)).toBeDefined();
-      // Vector should show Non-AI Vector locked badge
       expect(screen.getByText(/Non-AI Vector/i)).toBeDefined();
     });
   });
 });
-

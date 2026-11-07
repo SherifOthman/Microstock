@@ -61,7 +61,15 @@ const INITIAL_TELEMETRY: FtpTelemetryFrame = {
 };
 
 function buildPreviewUrl(fileObject?: File, localPath?: string): string | undefined {
-  if (fileObject && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+  const isRawVectorFile = (nameOrPath?: string) =>
+    Boolean(nameOrPath && /\.(eps|ai|cdr)$/i.test(nameOrPath.trim()));
+
+  if (
+    fileObject &&
+    !isRawVectorFile(fileObject.name) &&
+    typeof URL !== 'undefined' &&
+    typeof URL.createObjectURL === 'function'
+  ) {
     try {
       return URL.createObjectURL(fileObject);
     } catch {
@@ -69,7 +77,12 @@ function buildPreviewUrl(fileObject?: File, localPath?: string): string | undefi
     }
   }
   if (localPath) {
-    return `stockflow://local?path=${encodeURIComponent(localPath)}`;
+    const resolvedPath = isRawVectorFile(localPath)
+      ? localPath.replace(/\.(eps|ai|cdr)$/i, '.jpg')
+      : localPath;
+    if (!resolvedPath.startsWith('/StockFlow/Master_Vault/')) {
+      return `stockflow://local?path=${encodeURIComponent(resolvedPath)}`;
+    }
   }
   return undefined;
 }

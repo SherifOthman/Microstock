@@ -1,14 +1,29 @@
 import { db } from '../../db';
 import { SupportedPlatform } from '../../types';
 
-export type PersistentTaskModuleId = 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio' | 'tracker';
+export type FtpAgencyPersistenceModuleId =
+  | 'ftp'
+  | 'ftp_dreamstime'
+  | 'ftp_123rf'
+  | 'ftp_magnific'
+  | 'ftp_vecteezy'
+  | 'ftp_shutterstock'
+  | 'ftp_adobe';
+
+export type PersistentTaskModuleId =
+  | FtpAgencyPersistenceModuleId
+  | 'studio'
+  | 'eps'
+  | 'cleaner'
+  | 'audio'
+  | 'tracker';
 export type PersistentBatchStatus = 'idle' | 'running' | 'paused' | 'completed';
 
 export interface PersistentQueueSnapshot<TItem = any, TTelemetry = Record<string, any>> {
   moduleId: PersistentTaskModuleId;
   sessionId?: string;
   batchStatus: PersistentBatchStatus;
-  agencyId?: SupportedPlatform;
+  agencyId?: SupportedPlatform | string;
   queue: TItem[];
   telemetry?: TTelemetry;
   updatedAt?: number;
@@ -120,6 +135,7 @@ class GlobalQueuePersistenceManager {
 
       delete clone.file;
       delete clone.fileObject;
+      delete clone.previewFileObject;
       delete clone.mutedFile;
       delete clone.mutedBlob;
 
@@ -185,7 +201,7 @@ class GlobalQueuePersistenceManager {
         moduleId: sanitizedSnapshot.moduleId,
         sessionId: sanitizedSnapshot.sessionId,
         batchStatus: sanitizedSnapshot.batchStatus,
-        agencyId: sanitizedSnapshot.agencyId || 'dreamstime',
+        agencyId: (sanitizedSnapshot.agencyId || 'dreamstime') as SupportedPlatform,
         queue: sanitizedSnapshot.queue,
         telemetry: sanitizedSnapshot.telemetry,
         updatedAt: sanitizedSnapshot.updatedAt,
@@ -203,7 +219,7 @@ class GlobalQueuePersistenceManager {
           moduleId: latest.moduleId,
           sessionId: latest.sessionId,
           batchStatus: latest.batchStatus,
-          agencyId: latest.agencyId || 'dreamstime',
+          agencyId: (latest.agencyId || 'dreamstime') as SupportedPlatform,
           queue: latest.queue,
           telemetry: latest.telemetry,
           updatedAt: latest.updatedAt,
@@ -232,7 +248,7 @@ class GlobalQueuePersistenceManager {
         moduleId: pending.moduleId,
         sessionId: pending.sessionId,
         batchStatus: pending.batchStatus,
-        agencyId: pending.agencyId || 'dreamstime',
+        agencyId: (pending.agencyId || 'dreamstime') as SupportedPlatform,
         queue: pending.queue,
         telemetry: pending.telemetry,
         updatedAt: Date.now(),
@@ -268,14 +284,17 @@ class GlobalQueuePersistenceManager {
 
     let wasInterrupted = stored.batchStatus === 'running' || stored.batchStatus === 'paused';
     let recoverablePendingCount = 0;
+    const isFtpModule = moduleId === 'ftp' || moduleId.startsWith('ftp_');
 
     const hydratedQueue: TItem[] = stored.queue.map((rawItem) => {
       const item: Record<string, any> = { ...rawItem };
 
-      // Reconstruct native previewUrl from localPath / nativePath if not a CSV
-      const previewSourcePath = item.jpgPart?.localPath || item.localPath || item.nativePath;
-      if (!item.isCsv && previewSourcePath && !item.previewUrl && moduleId === 'ftp') {
-        item.previewUrl = `stockflow://local?path=${encodeURIComponent(previewSourcePath)}`;
+      // Reconstruct native previewUrl from companion JPG or localPath if not a CSV
+      const rawPreviewPath =
+        item.previewLocalPath || item.jpgPart?.localPath || item.localPath || item.nativePath;
+      if (!item.isCsv && rawPreviewPath && !item.previewUrl && isFtpModule) {
+        const resolvedRasterPath = String(rawPreviewPath).replace(/\.(eps|ai|cdr)$/i, '.jpg');
+        item.previewUrl = `stockflow://local?path=${encodeURIComponent(resolvedRasterPath)}`;
       }
 
       // Sanitize mid-flight items across FTP, Studio, EPS, Audio, Cleaner, Tracker

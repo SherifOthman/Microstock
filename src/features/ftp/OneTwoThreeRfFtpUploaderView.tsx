@@ -7,6 +7,8 @@ import {
   OneTwoThreeRfQueueItem,
   OneTwoThreeRfTelemetryFrame,
 } from '../../services/ftp/oneTwoThreeRfFtpRouter';
+import { Button } from '../../components/ui/button';
+import { Play, RotateCcw } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
 import {
   extractFilesFromDataTransfer,
@@ -32,12 +34,17 @@ export const OneTwoThreeRfFtpUploaderView: React.FC<{
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [queue, setQueue] = useState<OneTwoThreeRfQueueItem[]>(() => ftp123rfService.getQueue());
+  const [queue, setQueue] = useState<OneTwoThreeRfQueueItem[]>(() =>
+    ftp123rfService.getQueue(selectedAgency)
+  );
   const [telemetry, setTelemetry] = useState<OneTwoThreeRfTelemetryFrame>(() =>
-    ftp123rfService.getTelemetry()
+    ftp123rfService.getTelemetry(selectedAgency)
   );
   const [batchIsAi, setBatchIsAi] = useState<boolean>(() =>
-    ftp123rfService.getBatchIsAiGenerated()
+    ftp123rfService.getBatchIsAiGenerated(selectedAgency)
+  );
+  const [hasRecoverableSession, setHasRecoverableSession] = useState<boolean>(() =>
+    ftp123rfService.getHasRecoverableSession(selectedAgency)
   );
   const [activeSubTab, setActiveSubTab] = useState<QueueSubTab>('all');
   const [isDraggingOver, setIsDraggingOver] = useState(false);
@@ -55,10 +62,18 @@ export const OneTwoThreeRfFtpUploaderView: React.FC<{
   const is123Rf = selectedAgency === '123rf';
 
   useEffect(() => {
-    if (ftp123rfService.getActiveAgency() !== selectedAgency) {
-      ftp123rfService.setActiveAgency(selectedAgency);
-    }
+    ftp123rfService.setActiveAgency(selectedAgency);
+    setQueue([...ftp123rfService.getQueue(selectedAgency)]);
+    setTelemetry({ ...ftp123rfService.getTelemetry(selectedAgency) });
+    setBatchIsAi(ftp123rfService.getBatchIsAiGenerated(selectedAgency));
+    setHasRecoverableSession(ftp123rfService.getHasRecoverableSession(selectedAgency));
+    setActiveSubTab('all');
+    setPreviewModalItem(null);
     setVaultStatus({ type: 'idle' });
+
+    if (ftp123rfService.getQueue(selectedAgency).length === 0) {
+      ftp123rfService.hydrateFromDisk(selectedAgency).catch(() => {});
+    }
   }, [selectedAgency]);
 
   // Load saved credentials from SQLite for the active agency
@@ -66,7 +81,7 @@ export const OneTwoThreeRfFtpUploaderView: React.FC<{
     async () => {
       try {
         if (db.ftp?.getProfile) {
-          return await db.ftp.getProfile(selectedAgency as any);
+          return await db.ftp.getProfile(selectedAgency);
         }
       } catch {}
       return null;
@@ -90,18 +105,21 @@ export const OneTwoThreeRfFtpUploaderView: React.FC<{
     }
   }, [storedProfile?.updatedAt, storedProfile?.username, storedProfile?.hasSavedPassword, selectedAgency]);
 
-  // Subscribe to FTP Service updates
+  // Subscribe to FTP Service updates for the currently selected agency
   useEffect(() => {
     const sync = () => {
-      setQueue([...ftp123rfService.getQueue()]);
-      setTelemetry({ ...ftp123rfService.getTelemetry() });
-      setBatchIsAi(ftp123rfService.getBatchIsAiGenerated());
+      setQueue([...ftp123rfService.getQueue(selectedAgency)]);
+      setTelemetry({ ...ftp123rfService.getTelemetry(selectedAgency) });
+      setBatchIsAi(ftp123rfService.getBatchIsAiGenerated(selectedAgency));
+      setHasRecoverableSession(ftp123rfService.getHasRecoverableSession(selectedAgency));
     };
+    sync();
     const unsub = ftp123rfService.subscribe(sync);
     return () => unsub();
-  }, []);
+  }, [selectedAgency]);
 
   const handleBatchAiToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!is123Rf) return;
     const checked = e.target.checked;
     setBatchIsAi(checked);
     ftp123rfService.setBatchAiGenerated(checked);
@@ -109,12 +127,12 @@ export const OneTwoThreeRfFtpUploaderView: React.FC<{
 
   const handleFilesSelected = (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
-    ftp123rfService.addFiles(Array.from(fileList));
+    ftp123rfService.addFiles(Array.from(fileList), selectedAgency);
   };
 
   const handleAddFolderClick = async () => {
     if (telemetry.isRunning) return;
-    const nativeItems = await ftp123rfService.selectAndAddNativeFolder();
+    const nativeItems = await ftp123rfService.selectAndAddNativeFolder(selectedAgency);
     if (nativeItems === null) {
       folderInputRef.current?.click();
     }
@@ -127,14 +145,14 @@ export const OneTwoThreeRfFtpUploaderView: React.FC<{
     if (!e.dataTransfer) return;
     const files = await extractFilesFromDataTransfer(e.dataTransfer);
     if (files.length > 0) {
-      await ftp123rfService.addFiles(files);
+      await ftp123rfService.addFiles(files, selectedAgency);
     }
   };
 
   const handleClearAll = () => {
     setActiveSubTab('all');
     setPreviewModalItem(null);
-    ftp123rfService.clearQueue();
+    ftp123rfService.clearQueue(selectedAgency);
   };
 
   const handleOpenFileLocation = (localPath?: string) => {
@@ -244,9 +262,11 @@ export const OneTwoThreeRfFtpUploaderView: React.FC<{
   const unifiedQueue: UnifiedFtpItemView[] = queue.map((item) => ({
     id: item.id,
     filename: item.filename,
-    displayName: item.filename,
+    displayName: item.displayName || item.filename,
+    stemName: item.stemName,
     mediaType: item.mediaType,
     isVectorBundle: item.isVectorBundle,
+    isCsv: item.isCsv,
     isAiGenerated: item.isAiGenerated,
     isAiIgnored: item.isAiIgnored,
     remoteFolder: item.remoteFolder,
@@ -259,17 +279,20 @@ export const OneTwoThreeRfFtpUploaderView: React.FC<{
     maxRetries: item.maxRetries,
     errorMessage: item.errorMessage,
     localPath: item.localPath,
+    previewLocalPath: item.previewLocalPath || item.jpgPart?.localPath || item.localPath,
     previewUrl: item.previewUrl,
     jpgPart: item.jpgPart
       ? {
           filename: item.jpgPart.filename,
           remoteFolder: item.jpgPart.remoteFolder,
+          localPath: item.jpgPart.localPath,
         }
       : undefined,
     epsPart: item.epsPart
       ? {
           filename: item.epsPart.filename,
           remoteFolder: item.epsPart.remoteFolder,
+          localPath: item.epsPart.localPath,
         }
       : undefined,
   }));
@@ -365,18 +388,46 @@ export const OneTwoThreeRfFtpUploaderView: React.FC<{
             elapsedSeconds={elapsedSeconds}
             isBatchFinished={isBatchFinished}
             hasSavedPassword={storedProfile?.hasSavedPassword}
+            hasRecoverableSession={hasRecoverableSession}
             failedCount={failedItems.length}
             pendingCount={pendingUploadItems.length}
             isAr={isAr}
             extraControls={aiToggleCheckbox}
             onAddFilesClick={() => fileInputRef.current?.click()}
             onAddFolderClick={handleAddFolderClick}
-            onRetryFailedClick={() => ftp123rfService.retryAllFailed()}
-            onPauseClick={() => ftp123rfService.pause()}
-            onResumeClick={() => ftp123rfService.resume()}
-            onStartUploadClick={() => ftp123rfService.startUpload()}
+            onRetryFailedClick={() => ftp123rfService.retryAllFailed(selectedAgency)}
+            onPauseClick={() => ftp123rfService.pause(selectedAgency)}
+            onResumeClick={() => ftp123rfService.resume(selectedAgency)}
+            onStartUploadClick={() => ftp123rfService.startUpload(selectedAgency)}
             onClearAllClick={handleClearAll}
           />
+        )}
+
+        {/* Crash Recovery / Interrupted Session Banner */}
+        {hasRecoverableSession && !telemetry.isRunning && pendingUploadItems.length > 0 && (
+          <div
+            data-testid="ftp-crash-recovery-banner"
+            className="shrink-0 px-4 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-xs text-amber-900 dark:text-amber-200"
+          >
+            <div className="flex items-center gap-2">
+              <RotateCcw className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+              <span className="font-semibold">
+                {isAr
+                  ? `تم استعادة الجلسة المتوقفة في وضع الإيقاف المؤقت — ${pendingUploadItems.length} ملفات جاهزة للاستئناف`
+                  : `Interrupted session restored in Paused state — ${pendingUploadItems.length} file(s) ready to resume`}
+              </span>
+            </div>
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              onClick={() => ftp123rfService.startUpload(selectedAgency)}
+              className="h-7 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-3 cursor-pointer gap-1.5"
+            >
+              <Play className="w-3 h-3" />
+              <span>{isAr ? 'استئناف الآن' : 'Resume Now'}</span>
+            </Button>
+          </div>
         )}
 
         {isBatchFinished && unifiedQueue.length > 0 && (
@@ -424,9 +475,9 @@ export const OneTwoThreeRfFtpUploaderView: React.FC<{
             language={language}
             isAr={isAr}
             onPreviewItem={(item) => setPreviewModalItem(item)}
-            onRetrySingleItem={(id) => ftp123rfService.retrySingleItem(id)}
+            onRetrySingleItem={(id) => ftp123rfService.retrySingleItem(id, selectedAgency)}
             onOpenFileLocation={handleOpenFileLocation}
-            onRemoveItem={(id) => ftp123rfService.removeItem(id)}
+            onRemoveItem={(id) => ftp123rfService.removeItem(id, selectedAgency)}
           />
         )}
       </div>

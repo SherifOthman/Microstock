@@ -182,7 +182,7 @@ interface Window {
     };
     tasks?: {
       updateLifecycleState: (payload: {
-        moduleId: 'ftp' | 'studio' | 'eps' | 'cleaner' | 'audio' | 'tracker';
+        moduleId: string;
         isRunning: boolean;
         isPaused: boolean;
         progressPercent?: number;

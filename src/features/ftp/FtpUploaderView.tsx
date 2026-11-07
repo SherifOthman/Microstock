@@ -33,7 +33,19 @@ export const FtpUploaderView: React.FC = () => {
 
   const [selectedAgency, setSelectedAgency] = useState<FtpSupportedAgencyId>(() => {
     try {
-      return (localStorage.getItem('stock_ftp_agency') as FtpSupportedAgencyId) || 'dreamstime';
+      const raw = localStorage.getItem('stock_ftp_agency');
+      if (raw === 'freepik') return 'magnific';
+      if (
+        raw === 'dreamstime' ||
+        raw === '123rf' ||
+        raw === 'magnific' ||
+        raw === 'vecteezy' ||
+        raw === 'shutterstock' ||
+        raw === 'adobe'
+      ) {
+        return raw;
+      }
+      return 'dreamstime';
     } catch {
       return 'dreamstime';
     }
@@ -251,8 +263,10 @@ export const FtpUploaderView: React.FC = () => {
     id: item.id,
     filename: item.filename,
     displayName: item.displayName || item.filename,
+    stemName: item.stemName,
     mediaType: item.mediaType,
     isVectorBundle: item.isVectorBundle,
+    isCsv: item.isCsv,
     remoteFolder: item.remoteFolder,
     remotePath: item.remotePath,
     fileSize: item.fileSize,
@@ -263,17 +277,20 @@ export const FtpUploaderView: React.FC = () => {
     maxRetries: item.maxRetries,
     errorMessage: item.errorMessage,
     localPath: item.localPath,
+    previewLocalPath: item.jpgPart?.localPath || item.localPath,
     previewUrl: item.previewUrl,
     jpgPart: item.jpgPart
       ? {
           filename: item.jpgPart.filename,
           remoteFolder: item.jpgPart.remoteFolder,
+          localPath: item.jpgPart.localPath,
         }
       : undefined,
     epsPart: item.epsPart
       ? {
           filename: item.epsPart.filename,
           remoteFolder: item.epsPart.remoteFolder,
+          localPath: item.epsPart.localPath,
         }
       : undefined,
   }));
