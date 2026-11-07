@@ -216,7 +216,42 @@ describe('Task 1-4 Overhaul Verification Suite', () => {
     });
   });
 
-  it('Task 2: FTP UI has locked readOnly Host input, no Port/Protocol labels, and unified dropzone', async () => {
+  it('Task 2: FTP UI has locked readOnly Host input, Online/Offline status badge (never raw email), working Add Folder, and green connection status text across all agencies', async () => {
+    await db.ftp.saveProfile({
+      agencyId: 'shutterstock',
+      protocol: 'ftps',
+      host: 'ftps.shutterstock.com',
+      port: 21,
+      username: 'contributor@shutterstock.com',
+      encryptedPassword: 'enc:66616b65',
+      passiveMode: true,
+    });
+
+    const { container: ssContainer, unmount: unmountSs } = render(
+      <LanguageProvider>
+        <OneTwoThreeRfFtpUploaderView selectedAgency="shutterstock" />
+      </LanguageProvider>
+    );
+
+    // Must show "Online" (never the raw email address in the status pill)
+    await waitFor(() => {
+      expect(screen.getByText('Online')).toBeTruthy();
+      expect(ssContainer.textContent).not.toContain('contributor@shutterstock.com');
+    });
+
+    // Open connection modal on Shutterstock and test connection -> green box must show status text next to icon
+    fireEvent.click(screen.getByTestId('123rf-credentials-button'));
+    const ssHostInput = (await screen.findByTestId('123rf-host-readonly-input')) as HTMLInputElement;
+    expect(ssHostInput.readOnly).toBe(true);
+    expect(ssHostInput.disabled).toBe(true);
+    expect(ssHostInput.value).toBe('ftps.shutterstock.com');
+
+    fireEvent.click(screen.getByText('Test Connection'));
+    await waitFor(() => {
+      expect(screen.getByText(/Connected \(\d+ms\)/i)).toBeTruthy();
+    });
+    unmountSs();
+
     const { container, unmount } = render(
       <LanguageProvider>
         <OneTwoThreeRfFtpUploaderView selectedAgency="123rf" />

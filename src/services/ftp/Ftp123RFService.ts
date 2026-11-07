@@ -4,18 +4,11 @@ import { encryptSecret } from '../desktop/secureStorage';
 import {
   AGENCY_FTP_SERVER_SPECS,
   bundleAndRoute123RfQueue,
-  detect123RfMediaType,
-  formatBytes,
-  formatEta,
-  formatSpeed,
   FtpProtocolType,
   FtpSupportedAgencyId,
   ONE_TWO_THREE_RF_BACKOFF_SCHEDULE_MS,
   ONE_TWO_THREE_RF_FTP_HOST,
-  ONE_TWO_THREE_RF_FTP_PORT,
   ONE_TWO_THREE_RF_MAX_RETRIES,
-  ONE_TWO_THREE_RF_SFTP_HOST,
-  ONE_TWO_THREE_RF_SFTP_PORT,
   OneTwoThreeRfQueueItem,
   OneTwoThreeRfRemoteFolder,
   OneTwoThreeRfTelemetryFrame,
@@ -51,6 +44,7 @@ const INITIAL_TELEMETRY: OneTwoThreeRfTelemetryFrame = {
   etaSeconds: null,
   activeRetryAttempt: 0,
   statusMessage: 'Ready',
+  totalDurationSeconds: 0,
 };
 
 function buildPreviewUrl(fileObject?: File, localPath?: string): string | undefined {
@@ -88,6 +82,8 @@ function revokePreviewUrl(url?: string): void {
  * 2. Vecteezy: SFTP (Port 22, content-ftp.eezy.com) -> /
  * 3. Shutterstock: FTPS Explicit TLS (Port 21, ftps.shutterstock.com) -> /
  * 4. Adobe Stock: SFTP (Port 22, sftp.contributor.adobestock.com) -> /
+ * 5. Freepik: SFTP (Port 22, ftp.freepik.com) -> /
+ * 6. Magnific: SFTP (Port 60022, contributor-ftp.magnific.com) -> /
  */
 export class Ftp123RFService {
   private queue: OneTwoThreeRfQueueItem[] = [];
@@ -98,7 +94,6 @@ export class Ftp123RFService {
   private isRunning = false;
   private isPaused = false;
   private aborted = false;
-  private activeUploadPromise: Promise<void> | null = null;
   private cleanupIpcTelemetry?: () => void;
 
   constructor() {
@@ -239,12 +234,18 @@ export class Ftp123RFService {
    */
   public async addFiles(files: File[], agencyOverride?: FtpSupportedAgencyId): Promise<void> {
     const targetAgency = agencyOverride || this.activeAgency;
-    const rawFiles: RawInputMediaFile[] = files.map((f) => ({
-      name: f.name,
-      size: f.size,
-      path: (f as any).path || undefined,
-      file: f,
-    }));
+    const rawFiles: RawInputMediaFile[] = files.map((f) => {
+      const localPath =
+        typeof window !== 'undefined' && f instanceof File && (window as any).electronAPI?.getPathForFile
+          ? (window as any).electronAPI.getPathForFile(f)
+          : (f as any).path || undefined;
+      return {
+        name: f.name,
+        size: f.size,
+        path: localPath,
+        file: f,
+      };
+    });
 
     const newItems = bundleAndRoute123RfQueue(rawFiles, this.batchIsAiGenerated, targetAgency);
     for (const it of newItems) {
@@ -282,6 +283,23 @@ export class Ftp123RFService {
     this.notify();
   }
 
+  /**
+   * Opens native directory dialog in Electron (if available) to scan and add all media files in a folder.
+   * Returns null if running in a browser so the caller can trigger `<input webkitdirectory />`.
+   */
+  public async selectAndAddNativeFolder(): Promise<OneTwoThreeRfQueueItem[] | null> {
+    if (typeof window !== 'undefined' && (window as any).electronAPI?.ftp?.selectFolderFiles) {
+      const res = await (window as any).electronAPI.ftp.selectFolderFiles();
+      if (res.canceled) return [];
+      if (res.files && res.files.length > 0) {
+        await this.addNativeFiles(res.files);
+        return this.getQueue();
+      }
+      return [];
+    }
+    return null;
+  }
+
   public removeItem(id: string): void {
     const found = this.queue.find((q) => q.id === id);
     if (found?.previewUrl) revokePreviewUrl(found.previewUrl);
@@ -300,6 +318,49 @@ export class Ftp123RFService {
     this.queue = [];
     this.telemetry = { ...INITIAL_TELEMETRY };
     this.notify();
+  }
+
+  public async retrySingleItem(itemId: string): Promise<void> {
+    const item = this.queue.find((q) => q.id === itemId);
+    if (!item) return;
+    item.status = 'queued';
+    item.bytesTransferred = 0;
+    item.progressPercent = 0;
+    item.retryCount = 0;
+    item.errorCode = undefined;
+    item.errorMessage = undefined;
+    if (item.isVectorBundle && item.jpgPart && item.epsPart) {
+      if (item.jpgPart.uploaded && !item.epsPart.uploaded) {
+        item.bytesTransferred = item.jpgPart.fileSize;
+        item.progressPercent = Math.round((item.jpgPart.fileSize / Math.max(1, item.fileSize)) * 100);
+      }
+    }
+    this.updateBatchTelemetrySummary();
+    this.notify();
+    if (!this.isRunning) {
+      await this.startUpload();
+    }
+  }
+
+  public async retryAllFailed(): Promise<void> {
+    let anyReset = false;
+    for (const item of this.queue) {
+      if (item.status === 'failed') {
+        item.status = 'queued';
+        item.bytesTransferred = 0;
+        item.progressPercent = 0;
+        item.retryCount = 0;
+        item.errorCode = undefined;
+        item.errorMessage = undefined;
+        anyReset = true;
+      }
+    }
+    if (!anyReset) return;
+    this.updateBatchTelemetrySummary();
+    this.notify();
+    if (!this.isRunning) {
+      await this.startUpload();
+    }
   }
 
   private updateBatchTelemetrySummary(): void {
@@ -380,7 +441,7 @@ export class Ftp123RFService {
   }
 
   /**
-   * Executes the 123RF upload pipeline.
+   * Executes the upload pipeline.
    * Adheres strictly to the routing table and vector pair execution sequence.
    */
   public async startUpload(): Promise<void> {
@@ -395,18 +456,19 @@ export class Ftp123RFService {
     this.isPaused = false;
     this.aborted = false;
 
-    const sessionId = `123rf-session-${Date.now()}`;
+    const sessionId = `${this.activeAgency}-session-${Date.now()}`;
     this.telemetry = {
       ...this.telemetry,
       sessionId,
       isRunning: true,
       isPaused: false,
       statusMessage: 'Starting upload...',
+      totalDurationSeconds: 0,
     };
     this.notify();
 
     const startTime = Date.now();
-    let totalBytesAtStart = this.telemetry.batchBytesTransferred;
+    const totalBytesAtStart = this.telemetry.batchBytesTransferred;
 
     try {
       for (let i = 0; i < this.queue.length; i++) {
@@ -430,7 +492,7 @@ export class Ftp123RFService {
         this.telemetry.currentFileTotalBytes = item.fileSize;
         this.telemetry.currentFileBytesTransferred = item.bytesTransferred;
         this.telemetry.currentFilePercent = item.progressPercent;
-        this.telemetry.statusMessage = `Uploading ${item.filename} to ${item.remoteFolder} via ${item.protocol.toUpperCase()}...`;
+        this.telemetry.statusMessage = `Uploading ${item.filename} to ${item.remoteFolder}...`;
         this.notify();
 
         item.status = 'uploading';
@@ -438,7 +500,9 @@ export class Ftp123RFService {
 
         const success = await this.uploadQueueItemWithRetries(item);
         if (success) {
-          item.status = 'succeeded';
+          if ((item.status as string) !== 'skipped') {
+            item.status = 'succeeded';
+          }
           item.bytesTransferred = item.fileSize;
           item.progressPercent = 100;
           item.completedAt = Date.now();
@@ -460,20 +524,23 @@ export class Ftp123RFService {
         this.notify();
       }
     } finally {
+      const totalElapsedSec = Math.max(1, Math.round((Date.now() - startTime) / 1000));
       this.isRunning = false;
       this.isPaused = false;
       this.telemetry.isRunning = false;
       this.telemetry.isPaused = false;
       this.telemetry.currentItemId = null;
+      this.telemetry.totalDurationSeconds = totalElapsedSec;
       this.telemetry.statusMessage = this.aborted ? 'Aborted' : 'Upload Complete';
       this.updateBatchTelemetrySummary();
       this.notify();
 
       // Trigger native notification
       try {
+        const agencyName = AGENCY_FTP_SERVER_SPECS[this.activeAgency]?.name || 'FTP';
         await notifyBatchComplete({
           module: 'ftp',
-          title: '123RF Upload Complete',
+          title: `${agencyName} Upload Complete`,
           succeededCount: this.telemetry.succeededFiles,
           failedCount: this.telemetry.failedFiles,
           skippedCount: this.telemetry.skippedFiles,
@@ -660,28 +727,47 @@ export class Ftp123RFService {
     protocol?: FtpProtocolType;
     username: string;
     password?: string;
-  }): Promise<{ success: boolean; latencyMs?: number; error?: string }> {
+  }): Promise<{ success: boolean; latencyMs?: number; error?: string; message?: string }> {
     const targetAgency = credentials.agencyId || this.activeAgency || '123rf';
     const spec = AGENCY_FTP_SERVER_SPECS[targetAgency] || AGENCY_FTP_SERVER_SPECS['123rf'];
     const host = (credentials.host || spec.host).trim();
     const port = Number(credentials.port || spec.port);
     const protocol = credentials.protocol || spec.protocol;
+    const cleanPassword = credentials.password === '••••••••••••' ? undefined : credentials.password;
 
     if (typeof window !== 'undefined' && (window as any).electronAPI?.ftp?.testConnection) {
-      return await (window as any).electronAPI.ftp.testConnection({
+      const res = await (window as any).electronAPI.ftp.testConnection({
         agencyId: targetAgency,
         protocol,
         host,
         port,
-        username: credentials.username,
-        password: credentials.password,
+        username: credentials.username.trim(),
+        password: cleanPassword,
       });
+      if (res?.success) {
+        return {
+          ...res,
+          message: `Connected (${res.latencyMs || 35}ms)`,
+        };
+      }
+      return {
+        ...res,
+        error: res?.error || res?.message || 'Connection failed',
+        message: res?.error || res?.message || 'Connection failed',
+      };
     }
 
     // Mock fallback
     await new Promise((r) => setTimeout(r, 120));
-    await this.saveCredentials(credentials);
-    return { success: true, latencyMs: 110 };
+    await this.saveCredentials({
+      ...credentials,
+      password: cleanPassword,
+    });
+    return {
+      success: true,
+      latencyMs: 110,
+      message: 'Connected (110ms)',
+    };
   }
 
   public async saveCredentials(credentials: {
@@ -697,6 +783,7 @@ export class Ftp123RFService {
     const host = (credentials.host || spec.host).trim();
     const port = Number(credentials.port || spec.port);
     const protocol = credentials.protocol || spec.protocol;
+    const cleanPassword = credentials.password === '••••••••••••' ? undefined : credentials.password;
 
     if (typeof window !== 'undefined' && (window as any).electronAPI?.ftp?.saveCredentials) {
       await (window as any).electronAPI.ftp.saveCredentials({
@@ -704,18 +791,18 @@ export class Ftp123RFService {
         protocol,
         host,
         port,
-        username: credentials.username,
-        password: credentials.password,
+        username: credentials.username.trim(),
+        password: cleanPassword,
       });
       return;
     }
 
     let encryptedPassword: string | undefined;
-    if (typeof credentials.password === 'string' && credentials.password.trim().length > 0) {
-      const enc = await encryptSecret(credentials.password.trim());
+    if (typeof cleanPassword === 'string' && cleanPassword.trim().length > 0) {
+      const enc = await encryptSecret(cleanPassword.trim());
       encryptedPassword = enc.startsWith('enc:')
         ? enc
-        : `enc:${Array.from(new TextEncoder().encode(credentials.password.trim()))
+        : `enc:${Array.from(new TextEncoder().encode(cleanPassword.trim()))
             .map((b) => b.toString(16).padStart(2, '0'))
             .join('')}`;
     }

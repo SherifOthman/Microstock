@@ -181,6 +181,7 @@ export interface OneTwoThreeRfTelemetryFrame {
   etaSeconds: number | null;
   activeRetryAttempt: number;
   statusMessage?: string;
+  totalDurationSeconds?: number;
 }
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.avi', '.mkv', '.m4v']);
